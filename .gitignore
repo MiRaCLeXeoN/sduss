@@ -1,2 +1,10 @@
 # vscode files
 .vscode
+
+# python cache files
+__pycache__
+dist
+*.egg-info
+
+# test files
+/test*
