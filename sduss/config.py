@@ -11,7 +11,9 @@ from typing import Optional, Union
 from transformers.configuration_utils import PretrainedConfig
 
 from sduss.logger import init_logger
+from sduss.utils import get_cpu_memory
 from sduss.transformer_utils.config import get_config
+
 
 logger = init_logger(__name__)
 
@@ -81,6 +83,8 @@ class ModelConfig:
         self.download_dir = download_dir
         self.load_format = load_format
         self.seed = seed
+        self.revision = revision
+        self.quantization = quantization
         
         self.hf_config = get_config(model, trust_remote_code, revision)
         self.dtype = _get_and_verify_dtype(self.hf_config, dtype)
@@ -117,6 +121,41 @@ class ModelConfig:
                 f"Unknown quantization: {self.quantization}. Must be one of "
                 f"{supported_quantization}.")
         self.quantization = quantization
+    
+    def verify_with_parallel_config(
+        self,
+        parallel_config: "ParallelConfig",
+    ) -> None:
+        """Verify the model config with parallel config
+        
+        Total number of attention heads must be divisible by tensor parallel size;
+        total number of hidden layers must be divisible by pipeline parallel size;
+
+        Args:
+            parallel_config (ParallelConfig): parallel configuration
+
+        Raises:
+            ValueError
+        """
+        total_num_attention_heads = self.hf_config.num_attention_heads
+        tensor_parallel_size = parallel_config.tensor_parallel_size
+        
+        if total_num_attention_heads % tensor_parallel_size != 0:
+            raise ValueError(
+                f"Total number of attention heads ({total_num_attention_heads}) "
+                f"must be divisible by tensor parallel size ({tensor_parallel_size})."
+            )
+        
+        total_num_hidden_layers = self.hf_config.num_hidden_layers
+        pipeline_parallel_size = parallel_config.pipeline_parallel_size
+        if total_num_hidden_layers % pipeline_parallel_size != 0:
+            raise ValueError(
+                f"Total number of hidden layers ({total_num_hidden_layers}) "
+                f"must be divisible by pipeline parallel size ({pipeline_parallel_size})."
+            )
+    
+    def _load_format_is_dummy(self) -> bool:
+        return self.load_format == "dummy"
 
 class CacheConfig:
     """Configuration for KV cache
@@ -150,6 +189,26 @@ class CacheConfig:
             raise ValueError(
                 "GPU memory utilization must be less than 1.0. Got "
                 f"{self.gpu_memory_utilization}.")
+    
+    def verify_with_parallel_config(
+        self,
+        parallel_config: "ParallelConfig",
+    ) -> None:
+        total_cpu_memory = get_cpu_memory()
+        
+        # ? Why these two values are same?
+        num_gpus_per_node = parallel_config.tensor_parallel_size
+        cpu_memory_usage = self.swap_space_bytes * num_gpus_per_node
+        
+        msg = (f"{cpu_memory_usage / _GB:.2f} GB out of the "
+               f"{total_cpu_memory / _GB:.2f} GB total CPU memory is allocated "
+               "for swap")
+        # ? Why this value is fixed?
+        if cpu_memory_usage > 0.7 * total_cpu_memory:
+            raise ValueError("Swap taks too much of the total memory. " + msg)
+        elif cpu_memory_usage > 0.4 * total_cpu_memory:
+            logger.warning(msg)
+        
             
 class ParallelConfig:
     def __init__(
