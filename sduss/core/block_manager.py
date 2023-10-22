@@ -131,6 +131,8 @@ class BlockSpaceManager:
         """
         seq = seq_group.get_seqs()[0]
         
+        # Block table maps: logical block number -> physical block
+        # Kind of like cache mapping mechanism
         block_table: BlockTable = []
         for logical_block_idx in range(len(seq.logical_token_blocks)):
             if (self.block_sliding_window is not None
@@ -144,51 +146,60 @@ class BlockSpaceManager:
             block_table.append(block)
         
         # Build block tables for each sequence
+        # Since all seqs are at prompt stage and share the same prompt,
+        # block_table can be shared.
         for seq in seq_group.get_seqs():
             self.block_tables[seq.seq_id] = block_table.copy()
-        # ? Why is every block table the same?
     
     def can_append_slot(self, seq_group: SequenceGroup) -> bool:
         """Whether a new slot can be appended to every sequence in the group."""
+        # ? Why do we need to append slots to every sequence?
         num_free_gpu_block = self.gpu_allocator.get_num_free_blocks()
         num_seqs = seq_group.num_seqs(status=SequenceStatus.RUNNING)
         return num_seqs <= num_free_gpu_block
     
     def append_slot(self, seq: Sequence) -> Optional[Tuple[int, int]]:
-        """Allocate a physical slot for a new token.
+        """Allocate a physical slot(block) for a new token.
+        
+        This method should be called after a real token has been added to 
+        Sequence data.
 
         Args:
             seq (Sequence): _description_
 
         Returns:
-            Optional[Tuple[int, int]]: _description_
-        """
-        # FIXME(MX): I cannot understand!
-        raise RuntimeError("Method not understood.")
-    
+            Optional[Tuple[int, int]]: If we don't need to copy an old block's
+                data to a new one, `None` will be returned. If we have to, 
+                a mapping (from_block number -> to_block number) is returned,
+                providing index for data copy.
+        """    
         logical_blocks = seq.logical_token_blocks
         block_table = self.block_tables[seq.seq_id]
         
-        #
+        # If the seq has a new block which has not been added to block table,
+        # a new logical block must have already been allocated.
+        # We have to find a corresponding physical block for it.
         if len(block_table) < len(logical_blocks):
             if (self.block_sliding_window is not None
                 and len(block_table) >= self.block_sliding_window):
                 # If we have to reuse a block, append one block reference to the end
                 block_table.append(block_table[len(block_table) % self.block_sliding_window])
             else:
-                #
-                pass
+                # Don't need to reuse, directly allocate one
+                block = self.gpu_allocator.allocate()
+                block_table.append(block)
+                return None
         
-        # Append the token to the last physical block
+        # No new logical block exists, then we
+        # append the token to the last physical block
         last_block = block_table[-1]
         assert last_block.device == Device.GPU
         if last_block.ref_count == 1:
             # Not shared with other sequences. We can append.
-            # ? Directly return???
             return None
         else:
             # The block is shared with other sequences.
-            # Copy and write
+            # Copy and write: allocate a new physical block and copy the data
             new_block = self.gpu_allocator.allocate()
             block_table[-1] = new_block
             self.gpu_allocator.free(last_block)
@@ -201,8 +212,91 @@ class BlockSpaceManager:
         num_swapped_seqs = seq_group.num_seqs(status=SequenceStatus.SWAPPED)
         num_free_blocks = self.gpu_allocator.get_num_free_blocks()
         
+        # We assume that every sequence will allocate at least one
+        # free block right after swapped in, conforming to the logic
+        # of can_append_slot()
         num_required_blocks = len(blocks) + num_swapped_seqs
         return num_free_blocks - num_required_blocks >= self.watermark_blocks
+    
+    def swap_in(self, seq_group: SequenceGroup) -> Dict[int, int]:
+        """Swap in a sequence group.
+        
+        This method won't perform real memory data transfer.
+        Only allocators are modified.
+
+        Args:
+            seq_group (SequenceGroup): Target sequence group.
+
+        Returns:
+            Dict[int, int]: Mapping (cpu block number -> gpu block number)
+        """
+        # Mapping: CPU block -> GPU block
+        mapping: Dict[PhysicalTokenBlock, PhysicalTokenBlock] = {}
+        for seq in seq_group.get_seqs(status=SequenceStatus.SWAPPED):
+            new_gpu_block_table: BlockTable = []
+            # Since the seq is swapped out, it must reside in CPU memory.
+            old_cpu_block_table = self.block_tables[seq.seq_id]
+            
+            for cpu_block in old_cpu_block_table:
+                if cpu_block in mapping.keys():
+                    # Mapping has been already added
+                    gpu_block = mapping[cpu_block]
+                    gpu_block.ref_count += 1
+                else:
+                    # A new recognized mapping
+                    gpu_block = self.gpu_allocator.allocate()
+                    mapping[cpu_block] = gpu_block
+                self.cpu_allocator.free(cpu_block)
+            
+            self.block_tables[seq.seq_id] = new_gpu_block_table
+        
+        block_number_mapping = {
+            cpu_block.block_number : gpu_block.block_number
+            for cpu_block, gpu_block in mapping.items()
+        }
+        return block_number_mapping
+    
+    def can_swap_out(self, seq_group: SequenceGroup) -> bool:
+        """Whether a seq_group can be swapped out from GPU to CPU."""
+        blocks = self._get_physical_blocks(seq_group)
+        return len(blocks) <= self.cpu_allocator.get_num_free_blocks()
+    
+    def swap_out(self, seq_group: SequenceGroup) -> Dict[int, int]:
+        """Swap out a sequence group.
+        
+        This method won't perform real memory data transfer.
+        Only allocators are modified.
+
+        Args:
+            seq_group (SequenceGroup): Target sequence group.
+
+        Returns:
+            Dict[int, int]: Mapping (gpu block number -> cpu block number)
+        """
+        # Mapping: GPU block -> CPU block
+        mapping: Dict[PhysicalTokenBlock, PhysicalTokenBlock] = {}
+        for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
+            new_cpu_block_table: BlockTable = []
+            old_gpu_block_table = self.block_tables[seq.seq_id]
+            
+            for gpu_block in old_gpu_block_table:
+                if gpu_block in mapping.keys():
+                    # Mapping has already been added
+                    cpu_block = mapping[gpu_block]
+                    cpu_block.ref_count += 1
+                else:
+                    # New mapping to be added
+                    cpu_block = self.cpu_allocator.allocate()
+                    mapping[gpu_block] = cpu_block
+                self.gpu_allocator.free(gpu_block)
+            
+            self.block_tables[seq.seq_id] = new_cpu_block_table
+        
+        block_number_mapping = {
+            gpu_block.block_number : cpu_block.block_number
+            for gpu_block, cpu_block in mapping.items()
+        }
+        return block_number_mapping
     
     def free(self, seq: Sequence) -> None:
         """Free blocks of one sequence."""
@@ -239,5 +333,19 @@ class BlockSpaceManager:
             else:
                 blocks.update(self.block_tables[seq.seq_id])
         return list(blocks)
+    
+    def get_block_table(self, seq: Sequence) -> List[int]:
+        """Get sequence's block table.
         
+        BlockTable is a mapping (logical block number -> physical block).
+        But here we return a List of all physical blocks' number.
+
+        Args:
+            seq (Sequence): Target sequence
+
+        Returns:
+            List[int]: List[block numbers]
+        """        
+        block_table = self.block_tables[seq.seq_id]
+        return [block.block_number for block in block_table]
         

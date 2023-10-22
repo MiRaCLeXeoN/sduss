@@ -61,8 +61,11 @@ class LogicalTokenBlock:
 class PhysicalTokenBlock:
     """Represents the state of a block in the KV cache.
     
+    A physical token block can be either in CPU or GPU.
+    
     Attributes:
         ref_count: How many sequences are referencing this block.
+        device: CPU or GPU
     """
 
     def __init__(
