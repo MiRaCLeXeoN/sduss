@@ -6,7 +6,7 @@ Here defines the main base Engine class
 import copy
 import ray
 
-from typing import Optional, Union, List, Any, TYPE_CHECKING
+from typing import Optional, Union, List, Any, Tuple, TYPE_CHECKING
 from functools import partial
 
 # default to regard ray as an indispensible part
@@ -18,6 +18,7 @@ from sduss.utils import Counter
 from sduss.config import (ModelConfig, CacheConfig, ParallelConfig, SchedulerConfig)
 from sduss.transformer_utils.tokenizer import get_tokenizer
 from sduss.engine.ray_utils import RayWorker
+from sduss.core.scheduler import Scheduler, SchedulerOutputs
 
 if TYPE_CHECKING:
     from ray.util.placement_group import PlacementGroup
@@ -98,10 +99,15 @@ class LLMEngine:
         # Profile the memory usage and initialize the cache
         # self._init_cache()
         
-        self.scheduler = 
+        self.scheduler = Scheduler(scheduler_config, cache_config)
         
+        # Logging.
+        self.last_logging_time = 0.0
+        # List of (timestamp, num_tokens)
+        self.num_prompt_tokens: List[Tuple[float, int]] = []
+        # List of (timestamp, num_tokens)
+        self.num_generation_tokens: List[Tuple[float, int]] = []
         
-    
     def _verify_args(self):
         """Verify args. Now only parallel config requires verification."""
         self.model_config.verify_with_parallel_config(self.parallel_config)
@@ -189,7 +195,9 @@ class LLMEngine:
         """Profiles the memory usage and initializes the KV cache."""
         # Get the maximum number of blocks that can be allocated on GPU and CPU.
         raise NotImplementedError("vllm part not implemented yet")
-        
+    
+    def _schedule(self) -> Tuple[List[Seq]]
+    
     def _run_workers(
         self,
         method: str,

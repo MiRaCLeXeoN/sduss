@@ -6,6 +6,9 @@ from typing import List, Optional, Dict
 from sduss.block import LogicalTokenBlock
 from sduss.sampling_params import SamplingParams
 
+PromptLogprobs = List[Optional[Dict[int, float]]]
+SampleLogprobs = List[Dict[int, float]]
+
 class SequenceStatus(enum.Enum):
     """Status of a sequence."""
     WAITING = enum.auto()  # Haven't started to run yet
