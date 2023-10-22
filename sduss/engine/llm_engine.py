@@ -72,6 +72,10 @@ class LLMEngine:
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
         self.log_states = log_states
+        
+        assert self.cache_config.sliding_window == getattr(
+            self.model_config.hf_config, "sliding_window", None
+        )
 
         self._verify_args()
         
@@ -92,6 +96,9 @@ class LLMEngine:
             self._init_workers(distributed_init_method)
             
         # Profile the memory usage and initialize the cache
+        # self._init_cache()
+        
+        self.scheduler = 
         
         
     
@@ -181,13 +188,7 @@ class LLMEngine:
     def _init_cache(self) -> None:
         """Profiles the memory usage and initializes the KV cache."""
         # Get the maximum number of blocks that can be allocated on GPU and CPU.
-        num_blocks = self._run_workers(
-            "profile_num_available_blocks",
-            get_all_outputs=True,
-            block_size=self.cache_config.block_size,
-            gpu_memory_utilization=self.cache_config.gpu_memory_utilization,
-            cpu_swap_space=self.cache_config.swap_space_bytes,
-        )
+        raise NotImplementedError("vllm part not implemented yet")
         
     def _run_workers(
         self,

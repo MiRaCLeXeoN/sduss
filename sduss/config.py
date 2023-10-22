@@ -26,8 +26,6 @@ class ModelConfig:
     Attributes:
         model: Name or path of the huggingface model to use.
         tokenizer: Name or path of the huggingface tokenizer to use.
-        tokenizer_mode: 
-    
     """
     
     def __init__(
@@ -166,6 +164,7 @@ class CacheConfig:
         block_size: int,
         gpu_memory_utilization: float,
         swap_space: int,
+        sliding_window: Optional[int] = None,
     ) -> None:
         """init method
 
@@ -178,6 +177,7 @@ class CacheConfig:
         self.block_size = block_size
         self.gpu_memory_utilization = gpu_memory_utilization
         self.swap_space_bytes = swap_space * _GB
+        self.sliding_window = sliding_window
         self._verify_args()
         
         # Will be set after profiling
@@ -241,21 +241,44 @@ class ParallelConfig:
                 "Pipeline parallelism is not supported yet.")
 
 class SchedulerConfig:
-    def __init__(self, max_num_batched_tokens: int, max_num_seqs: int,
-                 max_model_len: int) -> None:
-        """Init method
+    """Init method
 
-        Args:
-            max_num_batched_tokens (int): Maximum number of tokens to be processed in
-                a single iteration.
-            max_num_seqs (int): Maximum number of sequences to be processed in a 
-                single iteration.
-            max_model_len (int): Maximum length of a sequence (including prompt
-                and generated text).
-        """        
+    Args:
+        max_num_batched_tokens (int): Maximum number of tokens to be processed in
+            a single iteration.
+        max_num_seqs (int): Maximum number of sequences to be processed in a 
+            single iteration.
+        max_model_len (int): Maximum length of a sequence (including prompt
+            and generated text).
+        max_paddings (int): Maximum number of paddings to be added to a batch.
+    """   
+    def __init__(
+        self, 
+        max_num_batched_tokens: int, 
+        max_num_seqs: int,
+        max_model_len: int,
+        max_paddings: int,
+    ) -> None:
+             
         self.max_num_batched_tokens = max_num_batched_tokens
         self.max_num_seqs = max_num_seqs
         self.max_model_len = max_model_len
+        self.max_paddings = max_paddings
+        
+    def _verify_args(self) -> None:
+        if self.max_num_batched_tokens < self.max_model_len:
+            raise ValueError(
+                f"max_num_batched_tokens ({self.max_num_batched_tokens}) is "
+                f"smaller than max_model_len ({self.max_model_len}). "
+                "This effectively limits the maximum sequence length to "
+                "max_num_batched_tokens and makes vLLM reject longer "
+                "sequences. Please increase max_num_batched_tokens or "
+                "decrease max_model_len.")
+        if self.max_num_batched_tokens < self.max_num_seqs:
+            raise ValueError(
+                f"max_num_batched_tokens ({self.max_num_batched_tokens}) must "
+                "be greater than or equal to max_num_seqs "
+                f"({self.max_num_seqs}).")
         
 _STR_DTYPE_TO_TORCH_DTYPE = {
     "half": torch.float16,
