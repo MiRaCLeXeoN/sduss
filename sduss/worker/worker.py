@@ -1,11 +1,12 @@
 
 import os
-from typing import Optional
+from typing import Optional, List, Dict
 
 import torch
 import torch.distributed
 
 from sduss.config import ModelConfig, ParallelConfig, SchedulerConfig
+from sduss.sequence import SequenceGroupMetadata, SamplerOutput
 from sduss.model_executor import get_model, set_random_seed
 from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
 
@@ -75,6 +76,16 @@ class Worker:
     @torch.inference_mode()
     def profile_num_available_blocks(self) -> None:
         raise NotImplementedError("vllm parts not implemented yet")
+
+    @torch.inference_mode()
+    def execute_model(
+        self,
+        seq_group_metadata_list: List[SequenceGroupMetadata],
+        blocks_to_swap_in: Dict[int, int],
+        blocks_to_swap_out: Dict[int, int],
+        blocks_to_copy: Dict[int, List[int]],
+    ) -> SamplerOutput:
+        # Issue cache operation
         
         
 

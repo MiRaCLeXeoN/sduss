@@ -1,6 +1,10 @@
 import enum
-import psutil
+import uuid
 
+from platform import uname
+
+import psutil
+import torch
 
 class Device(enum.Enum):
     GPU = enum.auto()
@@ -22,3 +26,17 @@ class Counter:
 def get_cpu_memory() -> int:
     """Returns the total CPU memory in bytes"""
     return psutil.virtual_memory().total
+
+def get_gpu_memory(gpu: int = 0) -> int:
+    """Returns the total gpu memory in bytes."""
+    return torch.cuda.get_device_properties(gpu).total_memory
+
+def in_wsl() -> bool:
+    # Reference: https://github.com/microsoft/WSL/issues/4071
+    return "microsoft" in " ".join(uname()).lower()
+
+def random_uuid() -> str:
+    return str(uuid.uuid4().hex)
+
+def get_dtype_size(dtype: torch.dtype) -> int:
+    return torch.tensor([], dtype=dtype).element_size()

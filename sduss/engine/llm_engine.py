@@ -6,7 +6,7 @@ Here defines the main base Engine class
 import copy
 import ray
 
-from typing import Optional, Union, List, Any, Tuple, TYPE_CHECKING
+from typing import Optional, Union, List, Any, Tuple, Dict, TYPE_CHECKING
 from functools import partial
 
 # default to regard ray as an indispensible part
@@ -14,11 +14,15 @@ from ray.air.util.torch_dist import init_torch_dist_process_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from sduss.logger import init_logger
+from sduss.outputs import RequestOutputs
 from sduss.utils import Counter
 from sduss.config import (ModelConfig, CacheConfig, ParallelConfig, SchedulerConfig)
 from sduss.transformer_utils.tokenizer import get_tokenizer
 from sduss.engine.ray_utils import RayWorker
 from sduss.core.scheduler import Scheduler, SchedulerOutputs
+from sduss.sequence import (SequenceStatus, 
+                            Sequence, SequenceGroup, SequenceGroupMetadata,
+                            SequenceOutputs, SequenceGroupOutputs, SamplerOutput)
 
 if TYPE_CHECKING:
     from ray.util.placement_group import PlacementGroup
@@ -196,7 +200,79 @@ class LLMEngine:
         # Get the maximum number of blocks that can be allocated on GPU and CPU.
         raise NotImplementedError("vllm part not implemented yet")
     
-    def _schedule(self) -> Tuple[List[Seq]]
+    def _schedule(self) -> Tuple[List[SequenceGroupMetadata], SchedulerOutputs,
+                                 List[RequestOutputs]]:
+        """Scheduling for this round running.
+
+        Returns:
+            Tuple[List[SequenceGroupMetadata], SchedulerOutputs, List[RequestOutputs]]: 
+                (scheduled sequence groups' meta data list, scheduler output,
+                request output wrapper of all ignored sequence groups). Since ignored
+                sequence groups won't run any more, they will be returned as outputs.
+        """        
+        seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
+        return seq_group_metadata_list, scheduler_outputs, [
+            RequestOutputs.from_seq_group(seq_group)
+            for seq_group in scheduler_outputs.ignored_seq_groups
+        ]
+    
+    def step(self) -> List[RequestOutputs]:
+        """Performs one decoding iteration and returns newly generated results.
+
+        This function performs one decoding iteration of the engine. It first
+        schedules the sequences to be executed in the next iteration and the
+        token blocks to be swapped in/out/copy. Then, it executes the model
+        and updates the scheduler with the model outputs. Finally, it decodes
+        the sequences and returns the newly generated results.
+        """
+        seq_group_metadata_list, scheduler_outputs, ignored = self._schedule()
+        if scheduler_outputs.is_empty():
+            return ignored
+        
+        output: SamplerOutput = self._run_workers(
+            "execute_model",
+            seq_group_metadata_list=seq_group_metadata_list,
+            blocks_to_swap_in=scheduler_outputs.blocks_to_swap_in,
+            blocks_to_swap_out=scheduler_outputs.blocks_to_swap_out,
+            blocks_to_copy=scheduler_outputs.blocks_to_copy,
+        )
+        
+        return aaa
+    
+    def _process_sequence_group_outputs(
+        self,
+        seq_group: SequenceGroup,
+        outputs: SequenceGroupOutputs,
+    ) -> None:
+        """_summary_
+
+        Args:
+            seq_group (SequenceGroup): _description_
+            outputs (SequenceGroupOutputs): _description_
+        """
+        # Extract prompt logprobs
+        prompt_logprobs = outputs.prompt_logprobs
+        if prompt_logprobs is not None:
+            seq_group.prompt_logprobs = prompt_logprobs
+            
+        #
+        samples = outputs.samples
+        parent_seqs = seq_group.get_seqs(status=SequenceStatus.RUNNING)
+        existing_finished_seqs = seq_group.get_finished_seqs()
+        parent_child_dict: Dict[int, List[SequenceOutputs]] = {
+            parent_seq.seq_id : []
+            for parent_seq in parent_seqs
+        }
+        for sample in samples:
+            parent_child_dict[sample.parent_seq_id].append(sample)
+        
+    
+    def _process_model_outputs(
+        self,
+        output: SamplerOutput,
+        scheduler_outputs: SchedulerOutputs,
+    ) -> List[RequestOutputs]:
+        
     
     def _run_workers(
         self,

@@ -151,6 +151,49 @@ class ModelConfig:
                 f"Total number of hidden layers ({total_num_hidden_layers}) "
                 f"must be divisible by pipeline parallel size ({pipeline_parallel_size})."
             )
+            
+    def get_hidden_size(self) -> int:
+        return self.hf_config.hidden_size
+    
+    def get_head_size(self) -> int:
+        """Get the average hidden size for one attention head."""        
+        # FIXME: This may not be true for all models.
+        return self.hf_config.hidden_size // self.hf_config.num_attention_heads
+    
+    def get_num_kv_heads(self, parallel_config: "ParallelConfig") -> int:
+        """Returns the number of KV heads per GPU worker considering TMP."""
+        # ! This one is directly copied.
+        # For GPTBigCode & Falcon:
+        # NOTE: for falcon, when new_decoder_architecture is True, the
+        # multi_query flag is ignored and we use n_head_kv for the number of
+        # KV heads.
+        falcon_model_types = ["falcon", "RefinedWeb", "RefinedWebModel"]
+        new_decoder_arch_falcon = (
+            self.hf_config.model_type in falcon_model_types
+            and getattr(self.hf_config, "new_decoder_architecture", False))
+        if not new_decoder_arch_falcon and getattr(self.hf_config,
+                                                   "multi_query", False):
+            # Multi-query attention, only one KV head.
+            # Currently, tensor parallelism is not supported in this case.
+            return 1
+        # For Falcon:
+        if getattr(self.hf_config, "n_head_kv", None) is not None:
+            return (self.hf_config.n_head_kv //
+                    parallel_config.tensor_parallel_size)
+        if getattr(self.hf_config, "num_kv_heads", None) is not None:
+            return (self.hf_config.num_kv_heads //
+                    parallel_config.tensor_parallel_size)
+        # For LLaMA-2:
+        if getattr(self.hf_config, "num_key_value_heads", None) is not None:
+            return (self.hf_config.num_key_value_heads //
+                    parallel_config.tensor_parallel_size)
+        total_num_attention_heads = self.hf_config.num_attention_heads
+        return total_num_attention_heads // parallel_config.tensor_parallel_size
+    
+    def get_num_layers(self, parallel_config: "ParallelConfig") -> int:
+        """Get number of layers per GPU worker considering PMP."""        
+        total_layers = self.hf_config.num_hidden_layers
+        return total_layers // parallel_config.pipeline_parallel_size
     
     def _load_format_is_dummy(self) -> bool:
         return self.load_format == "dummy"

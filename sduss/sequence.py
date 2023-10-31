@@ -275,6 +275,8 @@ class SequenceGroup:
         self.seqs_dict = {seq.seq_id: seq for seq in seqs}
         self.sampling_params = sampling_params
         self.arrival_time = arrival_time
+
+        # To be assigned later
         self.prompt_logprobs: Optional[List[Optional[Dict[int, float]]]] = None
     
     @property
@@ -384,3 +386,69 @@ class SequenceGroupMetadata:
         self.seq_data = seq_data
         self.sampling_params = sampling_params
         self.block_tables = block_tables
+
+class SequenceOutputs:
+    """The model output associated with a sequence.
+    
+    This wraps output from model of one sequence in one decoding iteration.
+
+    Args:
+        parent_seq_id: The ID of the parent sequence (for forking in beam
+            search).
+        output_token: Generated token in this decoding iteration.
+        logprobs: The logprobs of the output token.
+            (Token id -> logP(x_i+1 | x_0, ..., x_i))
+    """
+
+    def __init__(
+        self,
+        parent_seq_id: int,
+        output_token: int,
+        logprobs: Dict[int, float],
+    ) -> None:
+        self.parent_seq_id = parent_seq_id
+        self.output_token = output_token
+        self.logprobs = logprobs
+
+    def __repr__(self) -> str:
+        return (f"SequenceOutputs(parent_seq_id={self.parent_seq_id}, "
+                f"output_token={self.output_token}, "
+                f"logprobs={self.logprobs})")
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, SequenceOutputs):
+            raise NotImplementedError()
+        return (self.parent_seq_id == other.parent_seq_id
+                and self.output_token == other.output_token
+                and self.logprobs == other.logprobs)
+        
+class SequenceGroupOutputs:
+    """The model outputs associated with a sequence group.
+    
+    Args:
+        samples (List[SequenceOutputs]): List of SequenceOutputs wrapper
+            of all sequences in this group.
+        prompt_logprobs (Optional[PromptLogprobs]): List of logprobs.
+    """
+
+    def __init__(
+        self,
+        samples: List[SequenceOutputs],
+        prompt_logprobs: Optional[PromptLogprobs],
+    ) -> None:     
+        self.samples = samples
+        self.prompt_logprobs = prompt_logprobs
+
+    def __repr__(self) -> str:
+        return (f"SequenceGroupOutputs(samples={self.samples}, "
+                f"prompt_logprobs={self.prompt_logprobs})")
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, SequenceGroupOutputs):
+            raise NotImplementedError()
+        return (self.samples == other.samples
+                and self.prompt_logprobs == other.prompt_logprobs)
+        
+# For each sequence group, we generate a list of SequenceOutputs object,
+# each of which contains one possible candidate for the next token.
+SamplerOutput = List[SequenceGroupOutputs]
