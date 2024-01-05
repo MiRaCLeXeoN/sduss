@@ -362,7 +362,7 @@ class Scheduler:
                     blocks_to_copy[src_block_number] = [dst_block_number]
 
     def _allocate(self, seq_group: SequenceGroup) -> None:
-        """Allocate memory blocks for a seq_group to run.
+        """Allocate physical memory blocks for a seq_group to run.
         
         SequenceStatus is changed to RUNNING.
         """

@@ -95,12 +95,20 @@ class SequenceData:
 
 class Sequence:
     """All data belonging to a sequence.
-    
+
+    `Sequence` is only responsible for logical token blocks' operations.
+    Block tables are maintained by scheduler.block_manager.
+
+    Args:
+        seq_id (int): Unique id of this sequence.
+        prompt (str): Prompt input by user.
+        prompt_token_ids (List[int]): Token ids of the prompt.
+        block_size (int): Size of cache block
+
     Attributes:
-        seq_id: The unique id of the sequence.
-        prompt: Prompt input of this sequence by user.
-        block_size: Size of the cache block
-        data: An SequenceData instance which holds the data.
+        data (SequenceData): An SequenceData instance which holds the data.
+        logical_token_blocks (List[LogicalTokenBlocks]): The logical token blocks
+            are alloacted during __init__ calls. Block numbers start from 0.
     """
     
     def __init__(
@@ -110,14 +118,6 @@ class Sequence:
         prompt_token_ids: List[int],
         block_size: int
     ) -> None:
-        """Initialization
-
-        Args:
-            seq_id (int): Unique id of this sequence.
-            prompt (str): Prompt input by user.
-            prompt_token_ids (List[int]): Token ids of the prompt.
-            block_size (int): Size of cache block
-        """        
         # TODO(MX) Maybe uuid should be better
         
         self.seq_id = seq_id

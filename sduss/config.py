@@ -22,10 +22,41 @@ class ModelConfig:
     """Configuration for model.
     
     Models are default to use from huggingface models.
-    
-    Attributes:
-        model: Name or path of the huggingface model to use.
-        tokenizer: Name or path of the huggingface tokenizer to use.
+
+    Args:
+        model (str): Name or path of the huggingface model to use.
+        tokenizer (str): Name or path of the huggingface model to use.
+        tokenizer_mode (str): Should be either 'auto' or 'slow'. 'auto' will use
+            the fast tokenizer if available, and 'slow' will always use the slow one.
+        trust_remote_code (bool): Trust code from remote, e.g. from Huggingface, when
+            downloading the model and tokenizer
+        download_dir (str): Path to download and load the weights, default to the default
+            cache directory of huggingface
+        load_format (str): The format of the model weights to load:
+            "auto" will try to load the weights in the safetensors format and
+                fall back to the pytorch bin format if safetensors format is
+                not available.
+            "pt" will load the weights in the pytorch bin format.
+            "safetensors" will load the weights in the safetensors format. More about
+                safetensors to be seen at https://github.com/huggingface/safetensors
+            "npcache" will load the weights in pytorch format and store
+                a numpy cache to speed up the loading.
+            "dummy" will initialize the weights with random values, which is
+                mainly for profiling.
+        dtype (str): data type for model weights and activations
+        seed (int): _description_
+        revision (Optional[str], optional): The specific model version to use.
+            Defaults to None.
+        max_sequence_len (Optional[str], optional): Maximum length of a sequence.
+            Defaults to None.
+        quantization_method (Optional[str], optional): Quantization method. Only
+            'awq' and None are supported. Defaults to None.
+        enforce_eager: Whether to enforce eager execution. If True, we will
+            disable CUDA graph and always execute the model in eager mode.
+            If False, we will use CUDA graph and eager execution in hybrid.
+        max_context_len_to_capture: Maximum context len covered by CUDA graphs.
+            When a sequence has context length larger than this, we fall back
+            to eager mode.
     """
     
     def __init__(
@@ -41,39 +72,9 @@ class ModelConfig:
         revision: Optional[str] = None,
         max_model_len: Optional[str] = None,
         quantization: Optional[str] = None,
+        enforce_eager: bool = False,
+        max_context_len_to_capture: Optional[int] = None,
     ) -> None:
-        """init method
-
-        Args:
-            model (str): Name or path of the huggingface model to use.
-            tokenizer (str): Name or path of the huggingface model to use.
-            tokenizer_mode (str): Should be either 'auto' or 'slow'. 'auto' will use
-                the fast tokenizer if available, and 'slow' will always use the slow one.
-            trust_remote_code (bool): Trust code from remote, e.g. from Huggingface, when
-                downloading the model and tokenizer
-            download_dir (str): Path to download and load the weights, default to the default
-                cache directory of huggingface
-            load_format (str): The format of the model weights to load:
-                "auto" will try to load the weights in the safetensors format and
-                    fall back to the pytorch bin format if safetensors format is
-                    not available.
-                "pt" will load the weights in the pytorch bin format.
-                "safetensors" will load the weights in the safetensors format. More about
-                    safetensors to be seen at https://github.com/huggingface/safetensors
-                "npcache" will load the weights in pytorch format and store
-                    a numpy cache to speed up the loading.
-                "dummy" will initialize the weights with random values, which is
-                    mainly for profiling.
-            dtype (str): data type for model weights and activations
-            seed (int): _description_
-            revision (Optional[str], optional): The specific model version to use.
-                Defaults to None.
-            max_sequence_len (Optional[str], optional): Maximum length of a sequence.
-                Defaults to None.
-            quantization_method (Optional[str], optional): Quantization method. Only
-                'awq' and None are supported. Defaults to None.
-        """
-        
         self.model = model
         self.tokenizer = tokenizer
         self.tokenizer_mode = tokenizer_mode
@@ -83,10 +84,13 @@ class ModelConfig:
         self.seed = seed
         self.revision = revision
         self.quantization = quantization
+        self.enforce_eager = enforce_eager
+        self.max_context_len_to_capture = max_context_len_to_capture
         
         self.hf_config = get_config(model, trust_remote_code, revision)
         self.dtype = _get_and_verify_dtype(self.hf_config, dtype)
         self.max_model_len = _get_and_verify_max_len(self.hf_config, max_model_len)
+
         self._verify_load_format()
         self._verify_tokenizer_mode()
         self._verify_quantization()
@@ -110,15 +114,49 @@ class ModelConfig:
         self.tokenizer_mode = tokenizer_mode
 
     def _verify_quantization(self) -> None:
-        supported_quantization = ["awq"]
-        if self.quantization is None:
-            return
-        quantization = self.quantization.lower()
-        if quantization not in supported_quantization:
-            raise ValueError(
-                f"Unknown quantization: {self.quantization}. Must be one of "
-                f"{supported_quantization}.")
-        self.quantization = quantization
+        supported_quantization = ["awq", "gptq", "squeezellm"]
+        rocm_not_supported_quantization = ["awq"]
+        if self.quantization is not None:
+            self.quantization = self.quantization.lower()
+
+        # Parse quantization method from the HF model config, if available.
+        hf_quant_config = getattr(self.hf_config, "quantization_config", None)
+        if hf_quant_config is not None:
+            hf_quant_method = str(hf_quant_config["quant_method"]).lower()
+            if self.quantization is None:
+                self.quantization = hf_quant_method
+            elif self.quantization != hf_quant_method:
+                raise ValueError(
+                    "Quantization method specified in the model config "
+                    f"({hf_quant_method}) does not match the quantization "
+                    f"method specified in the `quantization` argument "
+                    f"({self.quantization}).")
+
+        if self.quantization is not None:
+            if self.quantization not in supported_quantization:
+                raise ValueError(
+                    f"Unknown quantization method: {self.quantization}. Must "
+                    f"be one of {supported_quantization}.")
+            if is_hip(
+            ) and self.quantization in rocm_not_supported_quantization:
+                raise ValueError(
+                    f"{self.quantization} quantization is currently not supported "
+                    f"in ROCm.")
+            logger.warning(f"{self.quantization} quantization is not fully "
+                           "optimized yet. The speed can be slower than "
+                           "non-quantized models.")
+
+    def _verify_cuda_graph(self) -> None:
+        if self.max_context_len_to_capture is None:
+            self.max_context_len_to_capture = self.max_model_len
+        self.max_context_len_to_capture = min(self.max_context_len_to_capture,
+                                              self.max_model_len)
+        if (self.quantization in ["gptq", "squeezellm"]
+                and not self.enforce_eager):
+            # Related issue: https://github.com/vllm-project/vllm/issues/2147
+            logger.warning(f"{self.quantization} does not support CUDA graph "
+                           "yet. Disabling CUDA graph.")
+            self.enforce_eager = True
     
     def verify_with_parallel_config(
         self,

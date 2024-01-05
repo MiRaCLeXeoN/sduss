@@ -86,6 +86,30 @@ class Worker:
         blocks_to_copy: Dict[int, List[int]],
     ) -> SamplerOutput:
         # Issue cache operation
+        issued_cache_op = False
+        if blocks_to_swap_in:
+            self.cache_engine.swap_in(blocks_to_swap_in)
+            issued_cache_op = True
+        if blocks_to_swap_out:
+            self.cache_engine.swap_out(blocks_to_swap_out)
+            issued_cache_op = True
+        if blocks_to_copy:
+            self.cache_engine.copy(blocks_to_copy)
+            issued_cache_op = True
+
+        cache_events = self.cache_events if issued_cache_op else None
+        
+        # Wait for cache operations to finish
+        if cache_events is not None:
+            for event in cache_events:
+                event.wait()
+        
+        # If no input, return immediately
+        if not seq_group_metadata_list:
+            return []
+        
+        output = self.
+
         
         
 

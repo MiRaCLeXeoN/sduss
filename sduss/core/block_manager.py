@@ -123,7 +123,7 @@ class BlockSpaceManager:
         return num_free_gpu_blocks - num_required_blocks >= self.watermark_blocks
         
     def allocate(self, seq_group: SequenceGroup) -> None:
-        """Allocate Physical blocks for prompt only.
+        """Allocate Physical blocks for prompts only.
         
         This method should be called at initialization stage to allocate
         blocks for prompt. Should not be used to allocate blocks for outputs.
