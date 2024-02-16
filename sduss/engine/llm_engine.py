@@ -352,13 +352,35 @@ class LLMEngine:
         if self.log_states:
             self._log_system_states(scheduler_outputs.prompt_run,
                                     scheduler_outputs.num_batched_tokens)
-        return request_outputs        
+        return request_outputs
+    
+    def _run_workers_in_batch(
+        self,
+        workers: List,
+        method: str,
+        *args,
+        **kwargs,
+    ):
+        all_outputs = []
+        for worker in workers:
+            if self.parallel_config.worker_use_ray:
+                executor = partial(worker.execute_method_remote, method)
+            else:
+                executor = getattr(worker, method)
+
+            output = executor(*args, **kwargs)
+            all_outputs.append(output)
+        
+        if self.parallel_config.worker_use_ray:
+            all_outputs = ray.get(all_outputs)
+        return all_outputs
     
     def _run_workers(
         self,
         method: str,
         *args,
         get_all_outputs: bool = False,
+        max_concurrent_workers: Optional[int] = None,
         **kwargs,
     ) -> Any:
         """runs the model on all workers
@@ -369,27 +391,26 @@ class LLMEngine:
                 Defaults to False.
         """
         all_outputs = []
-        for worker in self.workers:
-            if self.parallel_config.worker_use_ray:
-                executor = partial(worker.execute_method.remote, method)
-            else:
-                executor = getattr(worker, method)
-            
-            output = executor(*args, **kwargs)
-            all_outputs.append(output)
+        if max_concurrent_workers:
+            work_groups = [
+                self.workers[i:i + max_concurrent_workers]
+                for i in range(0, len(self.workers), max_concurrent_workers)
+            ]
+        else:
+            work_groups = [self.workers]
+
+        for workers in work_groups:
+            all_outputs.extend(
+                self._run_workers_in_batch(workers, method, *args, **kwargs)
+            )
         
-        # get ray obj ref
-        if self.parallel_config.worker_use_ray:
-            all_outputs = ray.get(all_outputs)
-            
         if get_all_outputs:
             return all_outputs
-
-        # if all workers returns the same result, just return one of them
-        output = all_outputs[0]
-        for o in all_outputs[1:]:
-            assert o == output, "Detected variance between workers' result"
-        return output
+        else:
+            output = all_outputs[0]
+            for other_output in all_outputs[1:]:
+                assert output == other_output, "Trying to ignore other valid outputs."
+            return output
     
     def get_model_config(self) -> ModelConfig:
         """Gets the model configuration."""

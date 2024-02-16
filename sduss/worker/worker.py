@@ -106,7 +106,7 @@ class Worker:
         
         # If no input, return immediately
         if not seq_group_metadata_list:
-            return []
+            return {}
         
         output = self.
 

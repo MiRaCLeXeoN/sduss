@@ -40,7 +40,28 @@ def get_model(model_config: ModelConfig) -> torch.nn.Module:
     # model_class should be manually defined
     model_class = _get_model_architecture(model_config.hf_config)
     
-    # ! Quantization check is omitted from the original version
+    # Get the (maybe quantized) linear method.
+    linear_method = None
+    if model_config.quantization is not None:
+        quant_config = get_quant_config(model_config.quantization,
+                                        model_config.model,
+                                        model_config.hf_config,
+                                        model_config.download_dir)
+        capability = torch.cuda.get_device_capability()
+        capability = capability[0] * 10 + capability[1]
+        if capability < quant_config.get_min_capability():
+            raise ValueError(
+                f"The quantization method {model_config.quantization} is not "
+                "supported for the current GPU. "
+                f"Minimum capability: {quant_config.get_min_capability()}. "
+                f"Current capability: {capability}.")
+        supported_dtypes = quant_config.get_supported_act_dtypes()
+        if model_config.dtype not in supported_dtypes:
+            raise ValueError(
+                f"{model_config.dtype} is not supported for quantization "
+                f"method {model_config.quantization}. Supported dtypes: "
+                f"{supported_dtypes}")
+        linear_method = quant_config.get_linear_method()
     
     with _set_default_torch_dtype(model_config.dtype):
         model = model_class(model_config.hf_config)
