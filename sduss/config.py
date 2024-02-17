@@ -233,8 +233,13 @@ class ModelConfig:
         total_layers = self.hf_config.num_hidden_layers
         return total_layers // parallel_config.pipeline_parallel_size
     
+    def get_vocab_size(self) -> int:
+        return self.hf_config.vocab_size
+    
     def _load_format_is_dummy(self) -> bool:
         return self.load_format == "dummy"
+
+    
 
 class CacheConfig:
     """Configuration for KV cache

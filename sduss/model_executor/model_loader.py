@@ -8,7 +8,7 @@ import torch
 from transformers import PretrainedConfig
 
 from sduss.config import ModelConfig
-from sduss.model_executor.weight_utils import initialize_dummy_weights
+from sduss.model_executor.weight_utils import initialize_dummy_weights, get_quant_config
 
 _MODEL_REGISTRY = {
     # ! NOT IMPLEMENTED YET

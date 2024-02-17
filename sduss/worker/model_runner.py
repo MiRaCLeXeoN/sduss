@@ -388,6 +388,35 @@ class ModelRunner:
             sampling_metadata=sampling_metadata,
         )
         return output
+
+    @torch.inference_mode()
+    def profile_run(self) -> None:
+        # We need to enable top-k to reflect the accurate memeory usage
+        vocab_size = self.model_config.get_vocab_size()
+        sampling_params = SamplingParams(top_p=0.99, top_k=vocab_size - 1)
+        max_num_batched_tokens = self.scheduler_config.max_num_batched_tokens
+        max_num_seqs = self.scheduler_config.max_num_seqs
+        
+        # Prepare input dummy sequences
+        seqs: List[SequenceGroupMetadata] = []
+        for group_id in range(max_num_seqs):
+            seq_len = (max_num_batched_tokens // max_num_seqs +
+                       (group_id < max_num_batched_tokens % max_num_seqs))
+            seq_data = SequenceData([0] * seq_len)
+            seq = SequenceGroupMetadata(
+                request_id=str(group_id),
+                is_prompt=True,
+                seq_data={group_id: seq_data},
+                sampling_params=sampling_params,
+                block_tables=None,
+            )
+            seqs.append(seq)
+            
+        # Run
+        num_layers = self.model_config.get_num_layers(self.parallel_config)
+        kv_caches = [(None, None)] * num_layers
+        self.execute_model(seqs, kv_caches=kv_caches)
+        torch.cuda.synchronize()
         
     @torch.inference_mode()
     def capture_model(self, kv_caches: List[KVCache]) -> None:

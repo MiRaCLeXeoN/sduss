@@ -156,7 +156,7 @@ class CacheEngine:
         model_config: ModelConfig,
         parallel_config: ParallelConfig,
     ) -> int:
-        """Get the size of all cache blocks together in bytes.
+        """Get the size of all cache blocks together of current worker in bytes.
 
         Args:
             block_size (int): _description_

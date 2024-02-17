@@ -5,10 +5,12 @@ from typing import Optional, List, Dict
 import torch
 import torch.distributed
 
-from sduss.config import ModelConfig, ParallelConfig, SchedulerConfig
+from sduss.config import ModelConfig, ParallelConfig, SchedulerConfig, CacheConfig
 from sduss.sequence import SequenceGroupMetadata, SamplerOutput
 from sduss.model_executor import get_model, set_random_seed
 from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
+from sduss.worker.model_runner import ModelRunner
+from sduss.worker.cache_engine import CacheEngine
 
 class Worker:
     """A worker GPU class
@@ -41,6 +43,7 @@ class Worker:
         self.rank = rank
         self.distributed_init_method = distributed_init_method
 
+        self.model_runner = ModelRunner(model_config, parallel_config, scheduler_config)
         # Uninitialized cache engine. Will be initialized by
         # self.init_cache_engine().
         self.cache_config = None
@@ -71,12 +74,55 @@ class Worker:
                                       self.distributed_init_method)
         
         set_random_seed(self.model_config.seed)
-        self.model = get_model(self.model_config) # ? How to init distributed model?
+    
+    def load_model(self):
+        self.model_runner.load_model()
         
     @torch.inference_mode()
-    def profile_num_available_blocks(self) -> None:
-        raise NotImplementedError("vllm parts not implemented yet")
+    def profile_num_available_blocks(
+        self,
+        block_size: int,
+        gpu_memory_utilization: float,
+        cpu_swap_space: int,
+    ) -> None:
+        # Profile the memory usage of the model and get the maximum number of
+        # cache blocks that can be allocated with the remaining free memory.
+        torch.cuda.empty_cache()
+        
+        # Execute a forward pass with dummy inputs to profile the memory
+        # usage of the model
+        self.model_runner.profile_run()
+        
+        # Calculate
+        free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info()
+        peak_memory = total_gpu_memory - free_gpu_memory
+        cache_block_size = CacheEngine.get_cache_block_size(
+            block_size, self.model_config, self.parallel_config)
+        num_gpu_blocks = int(
+            (total_gpu_memory * gpu_memory_utilization - peak_memory) // cache_block_size)
+        num_cpu_blocks = int(cpu_swap_space // cache_block_size)
+        
+        num_cpu_blocks = max(num_cpu_blocks, 0)
+        num_gpu_blocks = max(num_gpu_blocks, 0)
+        torch.cuda.empty_cache()
+        return num_gpu_blocks, num_cpu_blocks
 
+    def init_cache_engine(self, cache_config: CacheConfig) -> None:
+        self.cache_config = cache_config
+        self.cache_engine = CacheEngine(self.cache_config, self.model_config,
+                                        self.parallel_config)
+        self.cache_events = self.cache_engine.events
+        self.gpu_cache = self.cache_engine.gpu_cache
+        self.model_runner.set_block_size(self.cache_engine.block_size)
+
+    def warm_up_model(self) -> None:
+        """Capture the model and set seeds"""
+        if not self.model_config.enforce_eager:
+            self.model_runner.capture_model(self.gpu_cache)
+        # Reset the seed to ensure that the random state is not affected by
+        # the model initialization and profiling.
+        set_random_seed(self.model_config.seed)
+    
     @torch.inference_mode()
     def execute_model(
         self,
@@ -108,9 +154,9 @@ class Worker:
         if not seq_group_metadata_list:
             return {}
         
-        output = self.
-
-        
+        output = self.model_runner.execute_model(seq_group_metadata_list,
+                                                 self.gpu_cache)
+        return output
         
 
 def _init_distributed_environment(
