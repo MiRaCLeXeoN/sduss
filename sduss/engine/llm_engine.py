@@ -21,6 +21,7 @@ from sduss.sampling_params import SamplingParams
 from sduss.utils import Counter
 from sduss.config import (ModelConfig, CacheConfig, ParallelConfig, SchedulerConfig)
 from sduss.transformer_utils.tokenizer import get_tokenizer
+from sduss.engine.arg_utils import EngineArgs
 from sduss.engine.ray_utils import RayWorker
 from sduss.engine.metrics import record_metrics
 from sduss.core.scheduler import Scheduler, SchedulerOutputs
@@ -103,7 +104,7 @@ class LLMEngine:
             self._init_workers(distributed_init_method)
             
         # Profile the memory usage and initialize the cache
-        # self._init_cache()
+        self._init_cache()
         
         self.scheduler = Scheduler(scheduler_config, cache_config)
         
@@ -113,6 +114,11 @@ class LLMEngine:
         self.num_prompt_tokens: List[Tuple[float, int]] = []
         # List of (timestamp, num_tokens)
         self.num_generation_tokens: List[Tuple[float, int]] = []
+    
+    @classmethod
+    def from_engine_args(cls, engine_args: EngineArgs):
+        """Create an LLM engine from arguments"""
+        engine_configs = engine_args.
         
     def _verify_args(self):
         """Verify args. Now only parallel config requires verification."""
@@ -294,18 +300,18 @@ class LLMEngine:
         seq_group: SequenceGroup,
         outputs: SequenceGroupOutputs,
     ) -> None:
-        """_summary_
+        """Process the sampling output of one sequence group.
 
         Args:
             seq_group (SequenceGroup): _description_
-            outputs (SequenceGroupOutputs): _description_
+            outputs (SequenceGroupOutputs): Sampling results.
         """
         # Extract prompt logprobs
         prompt_logprobs = outputs.prompt_logprobs
         if prompt_logprobs is not None:
             seq_group.prompt_logprobs = prompt_logprobs
             
-        #
+        # Categorize samples
         samples = outputs.samples
         parent_seqs = seq_group.get_seqs(status=SequenceStatus.RUNNING)
         existing_finished_seqs = seq_group.get_finished_seqs()
@@ -315,6 +321,23 @@ class LLMEngine:
         }
         for sample in samples:
             parent_child_dict[sample.parent_seq_id].append(sample)
+        # List of (child, parent)
+        child_seqs: List[Tuple[Sequence, Sequence]] = []
+        
+        # Process the child samples for each parent sequence
+        for parent in parent_seqs:
+            child_samples: List[SequenceOutputs] = parent_child_dict[parent.seq_id]
+            
+            if len(child_samples) == 0:
+                # ? This parent sequence has no children samples. Remove
+                # ? the parent sequence from the sequence group since it will
+                # ? not be used in the future iterations.
+                parent.status = SequenceStatus.FINISHED_ABORTED
+                seq_group.remove(parent.seq_id)
+                self.scheduler.free_seq(parent)
+                continue
+
+            # F
         
     
     def _process_model_outputs(
@@ -383,7 +406,7 @@ class LLMEngine:
         max_concurrent_workers: Optional[int] = None,
         **kwargs,
     ) -> Any:
-        """runs the model on all workers
+        """Runs the method on all workers
 
         Args:
             method (str): the name of the method to be executed
