@@ -20,7 +20,7 @@ from sduss.outputs import RequestOutputs
 from sduss.sampling_params import SamplingParams
 from sduss.utils import Counter
 from sduss.config import (ModelConfig, CacheConfig, ParallelConfig, SchedulerConfig)
-from sduss.transformer_utils.tokenizer import get_tokenizer
+from sduss.transformer_utils.tokenizer import get_tokenizer, detokenize_incrementally
 from sduss.engine.arg_utils import EngineArgs
 from sduss.engine.ray_utils import RayWorker
 from sduss.engine.metrics import record_metrics
@@ -94,7 +94,6 @@ class LLMEngine:
             tokenizer_revision=model_config.tokenizer_revision,
             revision=model_config.revision
         )
-        # ? What's this counter for?
         self.seq_counter = Counter()
         
         # Create the parallel GPU workers
@@ -116,9 +115,10 @@ class LLMEngine:
         self.num_generation_tokens: List[Tuple[float, int]] = []
     
     @classmethod
-    def from_engine_args(cls, engine_args: EngineArgs):
+    def from_engine_args(cls, engine_args: EngineArgs) -> "LLMEngine":
         """Create an LLM engine from arguments"""
-        engine_configs = engine_args.
+        engine_configs = engine_args.create_engine_configs()
+        parallel_config = engine_configs[2]
         
     def _verify_args(self):
         """Verify args. Now only parallel config requires verification."""
@@ -209,7 +209,43 @@ class LLMEngine:
     def _init_cache(self) -> None:
         """Profiles the memory usage and initializes the KV cache."""
         # Get the maximum number of blocks that can be allocated on GPU and CPU.
-        raise NotImplementedError("vllm part not implemented yet")
+        num_blocks = self._run_workers(
+            "profile_num_available_blocks",
+            get_all_outputs=True,
+            block_size=self.cache_config.block_size,
+            gpu_memory_utilization=self.cache_config.gpu_memory_utilization,
+            cpu_swap_space=self.cache_config.swap_space_bytes,
+        )
+
+        # Since we use a shared centralized controller, we take the minimum
+        # number of blocks across all workers to make sure all the memory
+        # operators can be applied to all workers.
+        num_gpu_blocks = min(b[0] for b in num_blocks)
+        num_cpu_blocks = min(b[1] for b in num_blocks)
+        logger.debug(f"GPU blocks: {num_gpu_blocks}, "
+                     f"CPU blocks: {num_cpu_blocks}.")
+        
+        if num_gpu_blocks <= 0:
+            raise ValueError("No available memory for the cache blocks. "
+                             "Try increasing `gpu_memory_utilization` when "
+                             "initializing the engine.")
+        max_seq_len = self.cache_config.block_size * num_gpu_blocks
+        if self.model_config.max_model_len > max_seq_len:
+            raise ValueError(
+                f"The model's max seq len ({self.model_config.max_model_len}) "
+                "is larger than the maximum number of tokens that can be "
+                f"stored in KV cache ({max_seq_len}). Try increasing "
+                "`gpu_memory_utilization` or decreasing `max_model_len` when "
+                "initializing the engine.")
+        
+        self.cache_config.num_gpu_blocks = num_gpu_blocks
+        self.cache_config.num_cpu_blocks = num_cpu_blocks
+
+        # Initialize the cache.
+        self._run_workers("init_cache_engine", cache_config=self.cache_config)
+        # Warm up the model. This includes capturing the model into CUDA graph
+        # if enforce_eager is False.
+        self._run_workers("warm_up_model")
 
     def add_request(
         self,
@@ -294,6 +330,54 @@ class LLMEngine:
         )
         
         return self._process_model_outputs(output, scheduler_outputs)
+
+    def _decode_sequence(
+        self,
+        seq: Sequence,
+        sampling_params: SamplingParams,
+    ) -> None:
+        """Decode the new token for a sequence."""
+        (new_tokens, new_output_text, 
+         prefix_offset, read_offset) = detokenize_incrementally(
+             tokenizer=self.tokenizer,
+             all_input_ids=seq.get_token_ids(),
+             prev_tokens=seq.tokens,
+             prefix_offset=seq.prefix_offset,
+             read_offset=seq.read_offset,
+             skip_special_tokens=sampling_params.skip_special_tokens,
+             spaces_between_special_tokens=sampling_params.spaces_between_special_tokens,
+         )
+        if seq.tokens is None:
+            seq.tokens = new_tokens
+        else:
+            seq.tokens.extend(new_tokens)
+        seq.prefix_offset = prefix_offset
+        seq.read_offset = read_offset
+        seq.output_text += new_output_text
+
+    def _check_stop(
+        self,
+        seq: Sequence,
+        sampling_params: SamplingParams,
+    ) -> None:
+        """Stop the finished sequences."""
+        for stop_str in sampling_params.stop:
+            if seq.output_text.endswith(stop_str):
+                if not sampling_params.include_stop_str_in_output:
+                    # Truncate the output text
+                    seq.output_text = seq.output_text[:-len(stop_str)]
+                seq.status = SequenceStatus.FINISHED_STOPPED
+                return
+        
+        if seq.get_last_token_id() in sampling_params.stop_token_ids:
+            seq.status = SequenceStatus.FINISHED_STOPPED
+        elif seq.get_len() > self.scheduler_config.max_model_len:
+            seq.status = SequenceStatus.FINISHED_LENGTH_CAPPED
+        elif seq.get_output_len() == sampling_params.max_tokens:
+            seq.status = SequenceStatus.FINISHED_LENGTH_CAPPED
+        elif ((not sampling_params.ignore_eos) 
+                and seq.get_last_token_id() == self.tokenizer.eos_token_id):
+            seq.status = SequenceStatus.FINISHED_STOPPED
     
     def _process_sequence_group_outputs(
         self,
@@ -337,7 +421,38 @@ class LLMEngine:
                 self.scheduler.free_seq(parent)
                 continue
 
-            # F
+            # Fork the parent sequence if there are multiple child samples
+            for child_sample in child_samples[:-1]:
+                # The last child is not involved here
+                new_child_seq_id = next(self.seq_counter)
+                child = parent.fork(new_child_seq_id)
+                child.append_token_id(child_sample.output_token,
+                                      child_sample.logprobs)
+                child_seqs.append((child, parent))
+            
+            # Continue the parent sequence for the last child sample.
+            # We reuse the parent sequence here to reduce redundant memory
+            # copies, especially when using non-beam search sampling method
+            last_child_sample = child_samples[-1]
+            parent.append_token_id(last_child_sample.output_token,
+                                   last_child_sample.logprobs)
+            child_seqs.append((parent, parent))
+            
+        # Decode child sequences
+        for child_seq, _ in child_seqs:
+            self._decode_sequence(child_seq, seq_group.sampling_params)
+            self._check_stop(child_seq, seq_group.sampling_params)
+        
+        # Non-beam search case
+        if not seq_group.sampling_params.use_beam_search:
+            # For newly created child sequences, add them to the sequence group
+            # and fork them in block manager if they are not finished.
+            for child, parent in child_seqs:
+                if child is not parent:
+                    seq_group.add(child)
+                    if not child.is_finished():
+                        self.scheduler.
+            
         
     
     def _process_model_outputs(

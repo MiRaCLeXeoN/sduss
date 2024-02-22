@@ -3,16 +3,21 @@
 
 from enum import IntEnum
 from functools import cached_property
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Callable
+
+import torch
 
 _SAMPLING_EPS = 1e-5
-
 
 class SamplingType(IntEnum):
     GREEDY = 0
     RANDOM = 1
     BEAM = 2
 
+LogitsProcessor = Callable[[List[int], torch.Tensor], torch.Tensor]
+"""LogitsProcessor is a function that takes a list of previously generated
+tokens and a tensor of the logits for the next token, and returns a modified
+tensor of logits to sample from."""
 
 class SamplingParams:
     """Sampling parameters for text generation.
@@ -69,6 +74,12 @@ class SamplingParams:
             `logprobs+1` elements in the response.
         prompt_logprobs: Number of log probabilities to return per prompt token.
         skip_special_tokens: Whether to skip special tokens in the output.
+        spaces_between_special_tokens: Whether to add spaces between special
+            tokens in the output.  Defaults to True.
+        logits_processors: List of functions that modify logits based on
+            previously generated tokens.
+        include_stop_str_in_output: Whether to include the stop strings in output
+            text. Defaults to False.
     """
 
     def __init__(
@@ -90,6 +101,9 @@ class SamplingParams:
         logprobs: Optional[int] = None,
         prompt_logprobs: Optional[int] = None,
         skip_special_tokens: bool = True,
+        spaces_between_special_tokens: bool = True,
+        logits_processors: Optional[List[LogitsProcessor]] = None,
+        include_stop_str_in_output: bool = False,
     ) -> None:
         self.n = n
         self.best_of = best_of if best_of is not None else n
@@ -116,6 +130,9 @@ class SamplingParams:
         self.logprobs = logprobs
         self.prompt_logprobs = prompt_logprobs
         self.skip_special_tokens = skip_special_tokens
+        self.spaces_between_special_tokens = spaces_between_special_tokens
+        self.logits_processors = logits_processors
+        self.include_stop_str_in_output = include_stop_str_in_output
 
         self._verify_args()
         if self.use_beam_search:
