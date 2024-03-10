@@ -9,22 +9,19 @@ from transformers import PretrainedConfig
 
 from sduss.config import ModelConfig
 from sduss.model_executor.weight_utils import initialize_dummy_weights, get_quant_config
-
-_MODEL_REGISTRY = {
-    # ! NOT IMPLEMENTED YET
-}
+from sduss.model_executor.models import ModelRegistry
 
 def _get_model_architecture(config: PretrainedConfig) -> Type[torch.nn.Module]:
     """Get the model architecture(nn.Module) based on PretrainedConfig."""
     architectures = getattr(config, "architectures", [])
-    if not architectures:
-        raise ValueError(
-            f"Model architectures {architectures} are not supported for now. "
-            f"Supported architectures: {list(_MODEL_REGISTRY.keys())}"
-        )
     for arch in architectures:
-        if arch in _MODEL_REGISTRY:
-            return _MODEL_REGISTRY[arch]
+        model_cls = ModelRegistry.load_model_cls(arch)
+        if model_cls is not None:
+            return model_cls
+    
+    raise ValueError(
+        f"This model {architectures} is currently not supported yet."
+    )
 
 @contextlib.contextmanager
 def _set_default_torch_dtype(dtype: torch.dtype):

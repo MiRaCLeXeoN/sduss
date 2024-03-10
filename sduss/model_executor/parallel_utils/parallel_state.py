@@ -1,3 +1,7 @@
+# Copyright 2023 The vLLM team.
+# Adapted from
+# https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/parallel_state.py
+# Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
 import torch
 import torch.distributed
 
@@ -66,4 +70,97 @@ def initialize_model_parallel(
             _PIPELINE_GLOBAL_RANKS = ranks
             _PIPELINE_MODEL_PARALLEL_GROUP = group
         
-    
+
+def model_parallel_is_initialized():
+    """Check if tensor and pipeline parallel groups are initialized."""
+    return (_TENSOR_MODEL_PARALLEL_GROUP is not None
+            and _PIPELINE_MODEL_PARALLEL_GROUP is not None)
+
+
+def get_tensor_model_parallel_group():
+    """Get the tensor model parallel group the caller rank belongs to."""
+    assert _TENSOR_MODEL_PARALLEL_GROUP is not None, (
+        "tenosr model parallel group is not initialized")
+    return _TENSOR_MODEL_PARALLEL_GROUP
+
+
+def get_pipeline_model_parallel_group():
+    """Get the pipeline model parallel group the caller rank belongs to."""
+    assert _PIPELINE_MODEL_PARALLEL_GROUP is not None, (
+        "pipeline model parallel group is not initialized")
+    return _PIPELINE_MODEL_PARALLEL_GROUP
+
+
+def get_tensor_model_parallel_world_size():
+    """Return world size for the tensor model parallel group."""
+    return torch.distributed.get_world_size(
+        group=get_tensor_model_parallel_group())
+
+
+def get_pipeline_model_parallel_world_size():
+    """Return world size for the pipeline model parallel group."""
+    return torch.distributed.get_world_size(
+        group=get_pipeline_model_parallel_group())
+
+
+def get_tensor_model_parallel_rank():
+    """Return my rank for the tensor model parallel group."""
+    return torch.distributed.get_rank(group=get_tensor_model_parallel_group())
+
+
+def get_pipeline_model_parallel_rank():
+    """Return my rank for the pipeline model parallel group."""
+    return torch.distributed.get_rank(
+        group=get_pipeline_model_parallel_group())
+
+
+def get_tensor_model_parallel_src_rank():
+    """Calculate the global rank corresponding to the first local rank
+    in the tensor model parallel group."""
+    # ? When do we need to get the global rank of the first process in the group?
+    global_rank = torch.distributed.get_rank()
+    local_world_size = get_tensor_model_parallel_world_size()
+    return (global_rank // local_world_size) * local_world_size
+
+def get_pipeline_model_parallel_first_rank():
+    """Return the global rank of the first process in the pipeline for the
+    current tensor parallel group"""
+    assert _PIPELINE_GLOBAL_RANKS is not None, (
+        "Pipeline parallel group is not initialized")
+    return _PIPELINE_GLOBAL_RANKS[0]
+
+
+def get_pipeline_model_parallel_last_rank():
+    """Return the global rank of the last process in the pipeline for the
+    current tensor parallel group"""
+    assert _PIPELINE_GLOBAL_RANKS is not None, (
+        "Pipeline parallel group is not initialized")
+    last_rank_local = get_pipeline_model_parallel_world_size() - 1
+    return _PIPELINE_GLOBAL_RANKS[last_rank_local]
+
+
+def get_pipeline_model_parallel_next_rank():
+    """Return the global rank that follows the caller in the pipeline"""
+    assert _PIPELINE_GLOBAL_RANKS is not None, (
+        "Pipeline parallel group is not initialized")
+    rank_in_pipeline = get_pipeline_model_parallel_rank()
+    world_size = get_pipeline_model_parallel_world_size()
+    return _PIPELINE_GLOBAL_RANKS[(rank_in_pipeline + 1) % world_size]
+
+
+def get_pipeline_model_parallel_prev_rank():
+    """Return the global rank that preceeds the caller in the pipeline"""
+    assert _PIPELINE_GLOBAL_RANKS is not None, (
+        "Pipeline parallel group is not initialized")
+    rank_in_pipeline = get_pipeline_model_parallel_rank()
+    world_size = get_pipeline_model_parallel_world_size()
+    return _PIPELINE_GLOBAL_RANKS[(rank_in_pipeline - 1) % world_size]
+
+def destroy_model_parallel():
+    """Set the groups to none."""
+    global _TENSOR_MODEL_PARALLEL_GROUP
+    _TENSOR_MODEL_PARALLEL_GROUP = None
+    global _PIPELINE_MODEL_PARALLEL_GROUP
+    _PIPELINE_MODEL_PARALLEL_GROUP = None
+    global _PIPELINE_GLOBAL_RANKS
+    _PIPELINE_GLOBAL_RANKS = None
