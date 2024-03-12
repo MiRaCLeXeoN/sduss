@@ -24,6 +24,10 @@ class Counter:
     def reset(self) -> None:
         self.counter = 0
 
+
+def is_hip() -> bool:
+    return torch.version.hip is not None
+
 def get_cpu_memory() -> int:
     """Returns the total CPU memory in bytes"""
     return psutil.virtual_memory().total

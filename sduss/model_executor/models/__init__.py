@@ -18,7 +18,7 @@ class ModelRegistry:
         
         module_name, model_cls_name = _MODELS[model_arch]
         module = importlib.import_module(
-            f"vllm.model_executor.models.{module_name}")
+            f"sduss.model_executor.models.{module_name}")
         return getattr(module, model_cls_name, None)
     
     @staticmethod

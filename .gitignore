@@ -7,7 +7,7 @@ dist
 *.egg-info
 
 # test files
-/test*
+/tests
 
 # output files
 /outputs
