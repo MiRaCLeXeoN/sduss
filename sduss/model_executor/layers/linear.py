@@ -505,7 +505,7 @@ class RowParallelLinear(torch.nn.Module):
         if self.reduce_results and self.tp_size > 1:
             output_ = tensor_model_parallel_all_reduce(output_parallel)
         else:
-            output_
+            output_ = output_parallel
         
         if not self.skip_bias_add:
             output = output_ + self.bias if self.bias is not None else output_

@@ -13,6 +13,7 @@ from transformers.configuration_utils import PretrainedConfig
 from sduss.logger import init_logger
 from sduss.utils import get_cpu_memory
 from sduss.transformer_utils.config import get_config
+from sduss.utils import is_hip
 
 
 logger = init_logger(__name__)
@@ -70,6 +71,7 @@ class ModelConfig:
         dtype: str,
         seed: int,
         revision: Optional[str] = None,
+        tokenizer_revision: Optional[str] = None,
         max_model_len: Optional[str] = None,
         quantization: Optional[str] = None,
         enforce_eager: bool = False,
@@ -83,6 +85,7 @@ class ModelConfig:
         self.load_format = load_format
         self.seed = seed
         self.revision = revision
+        self.tokenizer_revision = tokenizer_revision
         self.quantization = quantization
         self.enforce_eager = enforce_eager
         self.max_context_len_to_capture = max_context_len_to_capture
@@ -236,9 +239,11 @@ class ModelConfig:
     def get_vocab_size(self) -> int:
         return self.hf_config.vocab_size
     
+    def get_sliding_window(self) -> Optional[int]:
+        return getattr(self.hf_config, "sliding_window", None)
+    
     def _load_format_is_dummy(self) -> bool:
         return self.load_format == "dummy"
-
     
 
 class CacheConfig:
@@ -302,6 +307,7 @@ class ParallelConfig:
         pipeline_parallel_size: int,
         tensor_parallel_size: int,
         worker_use_ray: bool,
+        max_parallel_loading_workers: Optional[int] = None,
     ) -> None:
         """Configuration for the distributed execution.
 
@@ -315,6 +321,7 @@ class ParallelConfig:
         self.pipeline_parallel_size = pipeline_parallel_size
         self.tensor_parallel_size = tensor_parallel_size
         self.worker_use_ray = worker_use_ray
+        self.max_parallel_loading_workers = max_parallel_loading_workers
 
         self.world_size = pipeline_parallel_size * tensor_parallel_size
         if self.world_size > 1:
@@ -345,11 +352,18 @@ class SchedulerConfig:
         max_model_len: int,
         max_paddings: int,
     ) -> None:
+
+        if max_num_batched_tokens is not None:
+            self.max_num_batched_tokens = max_num_batched_tokens
+        else:
+            # If max_model_len is too short, use 2048 as the default value for
+            # higher throughput.
+            self.max_num_batched_tokens = max(max_model_len, 2048)
              
-        self.max_num_batched_tokens = max_num_batched_tokens
         self.max_num_seqs = max_num_seqs
         self.max_model_len = max_model_len
         self.max_paddings = max_paddings
+        self._verify_args()
         
     def _verify_args(self) -> None:
         if self.max_num_batched_tokens < self.max_model_len:
@@ -453,6 +467,28 @@ def _get_and_verify_max_len(
         max_len_key = getattr(hf_config, key, None)
         if max_len_key is not None:
             derived_max_model_len = min(derived_max_model_len, max_len_key)
+    
+    if derived_max_model_len == float("inf"):
+        if max_model_len is not None:
+            # If max_model_len is specified, we use it.
+            return max_model_len
+
+        default_max_len = 2048
+        logger.warning(
+            "The model's config.json does not contain any of the following "
+            "keys to determine the original maximum length of the model: "
+            f"{possible_keys}. Assuming the model's maximum length is "
+            f"{default_max_len}.")
+        derived_max_model_len = default_max_len
+
+    rope_scaling = getattr(hf_config, "rope_scaling", None)
+    if rope_scaling is not None:
+        assert "factor" in rope_scaling
+        scaling_factor = rope_scaling["factor"]
+        if rope_scaling["type"] == "yarn":
+            derived_max_model_len = rope_scaling[
+                "original_max_position_embeddings"]
+        derived_max_model_len *= scaling_factor
     
     if max_model_len is None:
         max_model_len = derived_max_model_len

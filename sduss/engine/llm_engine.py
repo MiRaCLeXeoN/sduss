@@ -16,7 +16,7 @@ from ray.air.util.torch_dist import init_torch_dist_process_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from sduss.logger import init_logger
-from sduss.outputs import RequestOutputs
+from sduss.outputs import RequestOutput
 from sduss.sampling_params import SamplingParams
 from sduss.utils import Counter
 from sduss.config import (ModelConfig, CacheConfig, ParallelConfig, SchedulerConfig)
@@ -127,7 +127,7 @@ class LLMEngine:
         return cls(*engine_configs,
                    distributed_init_method, 
                    placement_group,
-                   log_stats=not engine_args.disable_log_stats)
+                   log_states=not engine_args.disable_log_stats)
         
     def _verify_args(self):
         """Verify args. Now only parallel config requires verification."""
@@ -302,22 +302,22 @@ class LLMEngine:
         self.scheduler.abort_seq_group(request_id)
     
     def _schedule(self) -> Tuple[List[SequenceGroupMetadata], SchedulerOutputs,
-                                 List[RequestOutputs]]:
+                                 List[RequestOutput]]:
         """Scheduling for this round running.
 
         Returns:
-            Tuple[List[SequenceGroupMetadata], SchedulerOutputs, List[RequestOutputs]]: 
+            Tuple[List[SequenceGroupMetadata], SchedulerOutputs, List[RequestOutput]]: 
                 (scheduled sequence groups' meta data list, scheduler output,
                 request output wrapper of all ignored sequence groups). Since ignored
                 sequence groups won't run any more, they will be returned as outputs.
         """        
         seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
         return seq_group_metadata_list, scheduler_outputs, [
-            RequestOutputs.from_seq_group(seq_group)
+            RequestOutput.from_seq_group(seq_group)
             for seq_group in scheduler_outputs.ignored_seq_groups
         ]
     
-    def step(self) -> List[RequestOutputs]:
+    def step(self) -> List[RequestOutput]:
         """Performs one decoding iteration and returns newly generated results.
 
         This function performs one decoding iteration of the engine. It first
@@ -621,7 +621,7 @@ s
         self,
         output: SamplerOutput,
         scheduler_outputs: SchedulerOutputs,
-    ) -> List[RequestOutputs]:
+    ) -> List[RequestOutput]:
         """Process the model outputs from sampler and wrap them as
         `RequestOutputs`.
 
@@ -630,7 +630,7 @@ s
             scheduler_outputs (SchedulerOutputs): Output from the scheduler
 
         Returns:
-            List[RequestOutputs]: Request outputs
+            List[RequestOutput]: Request outputs
             
         Finished sequence groups are freed here.
         """
@@ -644,9 +644,9 @@ s
         self.scheduler.free_finished_seq_groups()
         
         # Wraps sampler outputs as request_outputs
-        request_outputs: List[RequestOutputs] = []
+        request_outputs: List[RequestOutput] = []
         for seq_group in (scheduled_seq_groups + scheduler_outputs.ignored_seq_groups):
-            request_output = RequestOutputs.from_seq_group(seq_group)
+            request_output = RequestOutput.from_seq_group(seq_group)
             request_outputs.append(request_output)
         
         if self.log_states:
@@ -664,7 +664,7 @@ s
         all_outputs = []
         for worker in workers:
             if self.parallel_config.worker_use_ray:
-                executor = partial(worker.execute_method_remote, method)
+                executor = partial(worker.execute_method.remote, method)
             else:
                 executor = getattr(worker, method)
 

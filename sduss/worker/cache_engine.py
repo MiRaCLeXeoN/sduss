@@ -3,7 +3,7 @@ from typing import Tuple, List, Dict
 import torch
 
 # ! cache_ops is not currently available via sduss
-from vllm import cache_ops
+from vllm._C import cache_ops
 from sduss.config import CacheConfig, ModelConfig, ParallelConfig
 from sduss.utils import in_wsl, get_dtype_size
 from sduss.logger import init_logger

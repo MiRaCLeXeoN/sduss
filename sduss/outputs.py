@@ -46,7 +46,7 @@ class CompletionOutput:
                 f"finish_reason={self.finish_reason})")
 
 
-class RequestOutputs:
+class RequestOutput:
     """The output wrapper of a request.
     
     Args:
@@ -73,7 +73,7 @@ class RequestOutputs:
         self.finished = finished
         
     @classmethod
-    def from_seq_group(cls: Type["RequestOutputs"], seq_group: SequenceGroup) -> "RequestOutputs":
+    def from_seq_group(cls: Type["RequestOutput"], seq_group: SequenceGroup) -> "RequestOutput":
         # Get the top-n sequences.
         n = seq_group.sampling_params.n
         seqs = seq_group.get_seqs()

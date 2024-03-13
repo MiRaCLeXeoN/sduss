@@ -133,7 +133,7 @@ class ModelRunner:
                 slot_mappings[-1].append(slot)
 
         # Prepare input data
-        max_prompt_len = max(prompt_len)  # For padding
+        max_prompt_len = max(prompt_lens)  # For padding
         input_tokens = _make_tensor_with_pad(input_tokens,
                                              max_prompt_len,
                                              pad=0,
@@ -244,7 +244,7 @@ class ModelRunner:
                                                 dtype=torch.long,
                                                 device=device,
                                                 pin_memory=pin_memory)
-        slot_mapping = _make_tensor_with_pad(slot_mapping,
+        slot_mapping = _make_tensor_with_pad(slot_mappings,
                                              max_len=1,
                                              pad=_PAD_SLOT_ID,
                                              dtype=torch.long,
@@ -477,10 +477,10 @@ class CUDAGraphRunner:
     """
     def __init__(self, model: nn.Module) -> None:
         self.model = model
-        self.graph: torch.cuda.CUDAGraph
+        self.graph: torch.cuda.CUDAGraph = None
         # mapping: name -> tensors as buffer
-        self.input_buffers = Dict[str, torch.Tensor] = {}
-        self.output_buffers = Dict[str, torch.Tensor] = {}
+        self.input_buffers: Dict[str, torch.Tensor] = {}
+        self.output_buffers: Dict[str, torch.Tensor] = {}
         
     def capture(
         self,
@@ -503,7 +503,7 @@ class CUDAGraphRunner:
         torch.cuda.synchronize()
         
         # Capture the graph
-        self.graph = torch.nn.CUDAGraph()
+        self.graph = torch.cuda.CUDAGraph()
         # Pass the previous memory pool to share it among the graphs
         with torch.cuda.graph(self.graph, pool=memory_pool):
             hidden_states = self.model(
@@ -603,7 +603,7 @@ def _make_tensor_with_pad(
     return torch.tensor(padded_x, dtype=dtype, device=device,
                         pin_memory=pin_memory and str(device) == "cpu")
 
-def _get_graph_batch_size(self, batch_size: int) -> int:
+def _get_graph_batch_size(batch_size: int) -> int:
     """Get the appropriate batch size for inference
 
     Args:
@@ -634,5 +634,5 @@ def _async_host2device(
     Returns:
         torch.Tensor: The tensor on device
     """
-    return torch.tensor(data, dtype, pin_memory
+    return torch.tensor(data, dtype=dtype, pin_memory=pin_memory
                         ).to(device="cuda", non_blocking=True)

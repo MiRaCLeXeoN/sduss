@@ -20,7 +20,7 @@ try:
         
         def __init__(self, init_cached_hf_modules=False) -> None:
             if init_cached_hf_modules:
-                # ! why here create cache directory and add it to python path
+                # ? why here create cache directory and add it to python path?
                 from transformers.dynamic_module_utils import init_hf_modules
                 init_hf_modules()
             self.worker = None
@@ -28,8 +28,8 @@ try:
         def init_worker(self, worker_init_fn) -> None:
             self.worker = worker_init_fn()
         
-        def __getattribute__(self, __name: str) -> Any:
-            return getattr(self.worker, __name)
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self.worker, name)
         
         def execute_method(self, method: str, *method_args, **method_kwargs):
             task_handler = getattr(self, method)

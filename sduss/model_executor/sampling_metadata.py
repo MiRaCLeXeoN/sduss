@@ -1,11 +1,14 @@
 
 from typing import List, Dict, Tuple
+from dataclasses import dataclass
 
 import torch
 
 from sduss.sampling_params import SamplingParams, SamplingType
 from sduss.sequence import SequenceData
+from sduss.utils import in_wsl
 
+_SAMPLING_EPS = 1e-5
 class SamplingMetadata:
     """Metadata for input sequences. Used in sampler.
 

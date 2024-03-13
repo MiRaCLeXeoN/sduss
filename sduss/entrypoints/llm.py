@@ -5,7 +5,7 @@ import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from sduss.utils import Counter
-from sduss.outputs import RequestOutputs
+from sduss.outputs import RequestOutput
 from sduss.sampling_params import SamplingParams
 from sduss.engine.arg_utils import EngineArgs
 from sduss.engine.llm_engine import LLMEngine
@@ -111,7 +111,7 @@ class LLM:
         sampling_params: Optional[SamplingParams] = None,
         prompt_token_ids: Optional[List[List[int]]] = None,
         use_tqdm: bool = True,
-    ) -> List[RequestOutputs]:
+    ) -> List[RequestOutput]:
         """Generates the completions for the input prompts.
 
         NOTE: This class automatically batches the given prompts, considering
@@ -166,12 +166,12 @@ class LLM:
     def _run_engine(
         self,
         use_tqdm: bool,
-    ) -> List[RequestOutputs]:
+    ) -> List[RequestOutput]:
         if use_tqdm:
             num_requests = self.llm_engine.get_num_unfinished_requests()
-            pbar = tqdm(total=num_requests, desc="Processed prompts")       
+            pbar = tqdm.tqdm(total=num_requests, desc="Processed prompts")       
         
-        outputs: List[RequestOutputs] = []
+        outputs: List[RequestOutput] = []
         while self.llm_engine.has_unfinished_requests():
             step_outputs = self.llm_engine.step()
             for output in step_outputs:
