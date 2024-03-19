@@ -108,6 +108,3 @@ def initialize_cluster(
         ray.get(current_placement_group.ready(), timeout=1800)
     
     return None, current_placement_group
-
-        
-            

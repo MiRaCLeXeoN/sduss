@@ -1,0 +1,2 @@
+
+from .outputs import BaseOutput
