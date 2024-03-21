@@ -1,49 +1,36 @@
 import argparse
-import dataclasses
 
+from dataclasses import dataclass, fields
 from typing import Optional, Tuple
 
 from sduss.config import ModelConfig, ParallelConfig, CacheConfig, SchedulerConfig
-@dataclasses.dataclass
+@dataclass
 class EngineArgs:
     """Arguments for the base class Engine
     """
     # Model configs
     model: str
-    tokenizer: Optional[str] = None
-    tokenizer_mode: str = 'auto'
-    tokenizer_revision: Optional[str] = None
-    trust_remote_code: bool = False
     download_dir: Optional[str] = None
+    trust_remote_code: bool = False
     revision: Optional[str] = None
     load_format: str = 'auto'
     dtype: str = 'auto'
     seed: int = 0
-    max_model_len: Optional[int] = None
     # Distributed configs
     worker_use_ray: bool = False
     pipeline_parallel_size: int = 1
     tensor_parallel_size: int = 1
     max_parallel_loading_workers: Optional[int] = None
-    # Cache configs
-    block_size: int = 16
-    swap_space: int = 4  # GiB
-    gpu_memory_utilization: float = 0.90
     # Scheduler configs
-    max_num_batched_tokens: Optional[int] = None
-    max_num_seqs: int = 256
-    max_paddings: int = 256
-    quantization: Optional[str] = None
-    enforce_eager: bool = False
-    max_context_len_to_capture: int = 8192
+    max_batchsize: int = 32
     # Engine configs
-    disable_log_stats: bool = False
+    disable_log_status: bool = False
     
 
     def __post_init__(self):
-        if self.tokenizer is None:
-            self.tokenizer = self.model
-    
+        pass
+
+
     @staticmethod
     def add_args_to_parser(
         parser: argparse.ArgumentParser
@@ -57,13 +44,16 @@ class EngineArgs:
         parser.add_argument(
             '--model',
             type=str,
-            default='facebook/opt-125m',
+            default='runwayml/stable-diffusion-v1-5',
             help='name or path of the huggingface model to use')
-        parser.add_argument(
-            '--tokenizer',
-            type=str,
-            default=EngineArgs.tokenizer,
-            help='name or path of the huggingface tokenizer to use')
+        parser.add_argument('--download-dir',
+                            type=str,
+                            default=EngineArgs.download_dir,
+                            help='directory to download and load the weights, '
+                            'default to the default cache dir of huggingface')
+        parser.add_argument('--trust-remote-code',
+                            action='store_true',
+                            help='trust remote code from huggingface')
         parser.add_argument(
             '--revision',
             type=str,
@@ -71,29 +61,6 @@ class EngineArgs:
             help='the specific model version to use. It can be a branch '
             'name, a tag name, or a commit id. If unspecified, will use '
             'the default version.')
-        parser.add_argument(
-            '--tokenizer-revision',
-            type=str,
-            default=None,
-            help='the specific tokenizer version to use. It can be a branch '
-            'name, a tag name, or a commit id. If unspecified, will use '
-            'the default version.')
-        parser.add_argument('--tokenizer-mode',
-                            type=str,
-                            default=EngineArgs.tokenizer_mode,
-                            choices=['auto', 'slow'],
-                            help='tokenizer mode. "auto" will use the fast '
-                            'tokenizer if available, and "slow" will '
-                            'always use the slow tokenizer.')
-        parser.add_argument('--trust-remote-code',
-                            action='store_true',
-                            help='trust remote code from huggingface')
-        parser.add_argument('--download-dir',
-                            type=str,
-                            default=EngineArgs.download_dir,
-                            help='directory to download and load the weights, '
-                            'default to the default cache dir of '
-                            'huggingface')
         parser.add_argument(
             '--load-format',
             type=str,
@@ -120,11 +87,12 @@ class EngineArgs:
             'The "auto" option will use FP16 precision '
             'for FP32 and FP16 models, and BF16 precision '
             'for BF16 models.')
-        parser.add_argument('--max-model-len',
+        # TODO: Support fine-grained seeds (e.g., seed per request).
+        parser.add_argument('--seed',
                             type=int,
-                            default=None,
-                            help='model context length. If unspecified, '
-                            'will be automatically derived from the model.')
+                            default=EngineArgs.seed,
+                            help='random seed')
+        
         # Parallel arguments
         parser.add_argument('--worker-use-ray',
                             action='store_true',
@@ -146,103 +114,43 @@ class EngineArgs:
             help='load model sequentially in multiple batches, '
             'to avoid RAM OOM when using tensor '
             'parallel and large models')
-        # KV cache arguments
-        parser.add_argument('--block-size',
+
+        # Scheduler configs
+        parser.add_argument('--max-batchsize',
                             type=int,
-                            default=EngineArgs.block_size,
-                            choices=[8, 16, 32],
-                            help='token block size')
-        # TODO(woosuk): Support fine-grained seeds (e.g., seed per request).
-        parser.add_argument('--seed',
-                            type=int,
-                            default=EngineArgs.seed,
-                            help='random seed')
-        parser.add_argument('--swap-space',
-                            type=int,
-                            default=EngineArgs.swap_space,
-                            help='CPU swap space size (GiB) per GPU')
-        parser.add_argument(
-            '--gpu-memory-utilization',
-            type=float,
-            default=EngineArgs.gpu_memory_utilization,
-            help='the fraction of GPU memory to be used for '
-            'the model executor, which can range from 0 to 1.'
-            'If unspecified, will use the default value of 0.9.')
-        parser.add_argument('--max-num-batched-tokens',
-                            type=int,
-                            default=EngineArgs.max_num_batched_tokens,
-                            help='maximum number of batched tokens per '
-                            'iteration')
-        parser.add_argument('--max-num-seqs',
-                            type=int,
-                            default=EngineArgs.max_num_seqs,
+                            default=EngineArgs.max_batchsize,
                             help='maximum number of sequences per iteration')
-        parser.add_argument('--max-paddings',
-                            type=int,
-                            default=EngineArgs.max_paddings,
-                            help='maximum number of paddings in a batch')
-        parser.add_argument('--disable-log-stats',
+
+        parser.add_argument('--disable-log-status',
                             action='store_true',
-                            help='disable logging statistics')
-        # Quantization settings.
-        parser.add_argument('--quantization',
-                            '-q',
-                            type=str,
-                            choices=['awq', 'gptq', 'squeezellm', None],
-                            default=None,
-                            help='Method used to quantize the weights. If '
-                            'None, we first check the `quantization_config` '
-                            'attribute in the model config file. If that is '
-                            'None, we assume the model weights are not '
-                            'quantized and use `dtype` to determine the data '
-                            'type of the weights.')
-        parser.add_argument('--enforce-eager',
-                            action='store_true',
-                            help='Always use eager-mode PyTorch. If False, '
-                            'will use eager mode and CUDA graph in hybrid '
-                            'for maximal performance and flexibility.')
-        parser.add_argument('--max-context-len-to-capture',
-                            type=int,
-                            default=EngineArgs.max_context_len_to_capture,
-                            help='maximum context length covered by CUDA '
-                            'graphs. When a sequence has context length '
-                            'larger than this, we fall back to eager mode.')
+                            help="disable engine's periodical status log "
+                            "for better performance.")
         return parser
     
+
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace) -> 'EngineArgs':
         # get all the attributes into the form of list
-        attr_names = [attr.name for attr in dataclasses.fields(cls)]
+        attr_names = [attr.name for attr in fields(cls)]
         # generate an instance
         return cls(**{attr_name: getattr(args, attr_name) for attr_name in attr_names})
     
     def create_engine_configs(
         self,
-    ) -> Tuple[ModelConfig, CacheConfig, ParallelConfig, SchedulerConfig]:
-        model_config = ModelConfig(self.model, self.tokenizer,
-                                   self.tokenizer_mode, self.trust_remote_code,
+    ) -> Tuple[ModelConfig, ParallelConfig, SchedulerConfig]:
+        model_config = ModelConfig(self.model, 
+                                   self.trust_remote_code,
                                    self.download_dir, self.load_format,
-                                   self.dtype, self.seed, self.revision,
-                                   self.tokenizer_revision, self.max_model_len,
-                                   self.quantization, self.enforce_eager,
-                                   self.max_context_len_to_capture)
-        cache_config = CacheConfig(self.block_size,
-                                   self.gpu_memory_utilization,
-                                   self.swap_space,
-                                   model_config.get_sliding_window())
+                                   self.dtype, self.seed, self.revision)
         parallel_config = ParallelConfig(self.pipeline_parallel_size,
                                          self.tensor_parallel_size,
                                          self.worker_use_ray,
                                          self.max_parallel_loading_workers)
-        scheduler_config = SchedulerConfig(self.max_num_batched_tokens,
-                                           self.max_num_seqs,
-                                           model_config.max_model_len,
-                                           self.max_paddings)
-        return model_config, cache_config, parallel_config, scheduler_config
+        scheduler_config = SchedulerConfig(self.max_batchsize)
+        return model_config, parallel_config, scheduler_config
 
 
-
-@dataclasses.dataclass
+@dataclass
 class AsyncEngineArgs(EngineArgs):
     """Arguments for asynchronous engine, inherited from EngineArgs
     """

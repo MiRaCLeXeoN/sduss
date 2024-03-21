@@ -54,7 +54,7 @@ def initialize_cluster(
     """Initialize the distributed cluster with ray.
     
     We will check the number of available gpus in the cluster and the
-    number specified by the 
+    number specified by the parallel utils.
 
     Returns:
         A tuple of (`distributed_init_method`, `placement_group`). The

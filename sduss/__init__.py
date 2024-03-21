@@ -1,19 +1,19 @@
 
 from sduss.engine.arg_utils import AsyncEngineArgs, EngineArgs
-from sduss.engine.llm_engine import LLMEngine
+from sduss.engine.engine import Engine
 from sduss.engine.ray_utils import initialize_cluster
-from sduss.entrypoints.llm import LLM
+from sduss.entrypoints.diffusion_pipeline import DiffusionPipeline
 from sduss.outputs import CompletionOutput, RequestOutput
 from sduss.sampling_params import SamplingParams
 
 __version__ = "0.2.6"
 
 __all__ = [
-    "LLM",
+    "DiffusionPipeline",
     "SamplingParams",
     "RequestOutput",
     "CompletionOutput",
-    "LLMEngine",
+    "Engine",
     "EngineArgs",
     "AsyncEngineArgs",
     "initialize_cluster",
