@@ -15,6 +15,9 @@ import ray
 from ray.air.util.torch_dist import init_torch_dist_process_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
+from sduss.scheduler.wrappers import Request
+from sduss.scheduler import Scheduler
+
 from sduss.logger import init_logger
 from sduss.outputs import RequestOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
@@ -24,10 +27,7 @@ from sduss.transformer_utils.tokenizer import get_tokenizer, detokenize_incremen
 from sduss.engine.arg_utils import EngineArgs
 from sduss.engine.ray_utils import RayWorker, initialize_cluster
 from sduss.engine.metrics import record_metrics
-from sduss.core.scheduler import Scheduler, SchedulerOutputs
-from sduss.sequence import (SequenceStatus, 
-                            Sequence, SequenceGroup, SequenceGroupMetadata,
-                            SequenceOutputs, SequenceGroupOutputs, SamplerOutput)
+
 
 if TYPE_CHECKING:
     from ray.util.placement_group import PlacementGroup
@@ -79,6 +79,8 @@ class Engine:
             self._init_workers_ray(placement_group)
         else:
             self._init_workers(distributed_init_method)
+        
+        self.scheduler = Scheduler(scheduler_config)
             
         # Logging.
         self.last_logging_time = 0.0
@@ -188,8 +190,6 @@ class Engine:
     def add_request(
         self,
         request_id: int,
-        prompt: Optional[str],
-        negative_prompt: Optional[str],
         sampling_params: BaseSamplingParams,
         arrival_time: Optional[float] = None,
     ) -> None:
@@ -205,17 +205,13 @@ class Engine:
         if arrival_time is None:
             arrival_time = time.monotonic()
 
-        # Create the sequences.
-        block_size = self.cache_config.block_size
-        seq_id = next(self.seq_counter)
-        seq = Sequence(seq_id, prompt, prompt_token_ids, block_size)
+        # Create a new Request
+        req = Request(request_id=request_id, 
+                      arrival_time=arrival_time, 
+                      sampling_params=sampling_params)
 
-        # Create the sequence group.
-        seq_group = SequenceGroup(request_id, [seq], sampling_params,
-                                  arrival_time)
-
-        # Add the sequence group to the scheduler.
-        self.scheduler.add_seq_group(seq_group)
+        # Add the request to the scheduler.
+        self.scheduler.add_request(req)
     
     def abort_request(self, request_id: Union[str, Iterable[str]]) -> None:
         """Aborts a request(s) with the given ID.

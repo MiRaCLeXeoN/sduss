@@ -25,9 +25,7 @@ class DiffusionPipeline:
         
     def generate(
         self,
-        prompts: Optional[Union[str, List[str]]] = None,
-        negative_prompts: Optional[Union[str, List[str]]] = None,
-        sampling_params: Optional[BaseSamplingParams] = None,
+        sampling_params: Optional[Union[BaseSamplingParams, List[BaseSamplingParams]]] = None,
         use_tqdm: bool = True,
     ) -> List[RequestOutput]:
         """Generates images according to prompts.
@@ -37,48 +35,35 @@ class DiffusionPipeline:
         into a single list and pass it to this method.
 
         Args:
-            prompts: A list of prompts based on which sampling will be performed.
-            negative_prompts: A list of negative prompts based on which sampling will be performed.
-            sampling_params: The sampling parameters for diffusion procedure. 
+            sampling_params: The sampling parameters for diffusion procedure. Each prompt can have
+                its own sampling parameter. The provided number must be either 1 or len(prompts).
+                If 1 is provided, the sampling params will be applied to all prompts.
             use_tqdm: Whether to use tqdm to display the progress bar.
 
         Returns:
             A list of `RequestOutput` objects containing the generated
             images in the same order as the input prompts.
         """
-        if prompts is None:
-            raise ValueError("Prompts must be provided.")
         if sampling_params is None:
             raise ValueError("Sampling parameters must be provided.")
-        if len(prompts) != len(negative_prompts):
-            raise ValueError(f"The length of prompts(len={len(prompts)}) doesn't equal to "
-                             f"the length of negative prompts(len={len(negative_prompts)}).")
-        
-
-        if isinstance(prompts, str):
-            prompts = [prompts]
-        if isinstance(negative_prompts, str):
-            negative_prompts = [negative_prompts]
 
         # Add requests to the engine
-        num_requests = len(prompts)
+        num_requests = len(sampling_params)
         for i in range(num_requests):
-            self._add_request_to_engine(prompts[i], negative_prompts[i], sampling_params)
+            self._add_request_to_engine(sampling_params[i])
         
         return self._run_engine(use_tqdm)  
+
     
     def _add_request_to_engine(
         self,
-        prompt: Optional[str],
-        negative_prompt: Optional[str],
         sampling_params: BaseSamplingParams,
     ) -> None:
         request_id = next(self.request_counter)
         self.engine.add_request(
             request_id,
-            prompt,
-            negative_prompt,
             sampling_params)
+
 
     def _run_engine(
         self,
@@ -86,7 +71,7 @@ class DiffusionPipeline:
     ) -> List[RequestOutput]:
         if use_tqdm:
             num_requests = self.engine.get_num_unfinished_requests()
-            pbar = tqdm.tqdm(total=num_requests, desc="Processed prompts")       
+            pbar = tqdm.tqdm(total=num_requests, desc="Processed requests")       
         
         outputs: List[RequestOutput] = []
         while self.engine.has_unfinished_requests():

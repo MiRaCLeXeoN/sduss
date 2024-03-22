@@ -17,14 +17,13 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
     
     def prepare_inference(
         self,
-        prompt: Union[str, List[str]] = None,
+        prompt: List[str] = None,
+        negative_prompt: Optional[Union[str, List[str]]] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
         num_inference_steps: int = 50,
         timesteps: List[int] = None,
         guidance_scale: float = 7.5,
-        negative_prompt: Optional[Union[str, List[str]]] = None,
-        num_images_per_prompt: Optional[int] = 1,
         eta: float = 0.0,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.FloatTensor] = None,
@@ -167,7 +166,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
         prompt_embeds, negative_prompt_embeds = self.encode_prompt(
             prompt,
             device,
-            num_images_per_prompt,
+            1,
             self.do_classifier_free_guidance,
             negative_prompt,
             prompt_embeds=prompt_embeds,
@@ -187,7 +186,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
                 ip_adapter_image,
                 ip_adapter_image_embeds,
                 device,
-                batch_size * num_images_per_prompt,
+                batch_size,
                 self.do_classifier_free_guidance,
             )
             
@@ -197,7 +196,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
         # 5. Prepare latent variables
         num_channels_latents = self.unet.config.in_channels
         latents = self.prepare_latents(
-            batch_size * num_images_per_prompt,
+            batch_size,
             num_channels_latents,
             height,
             width,
@@ -220,7 +219,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
         # 6.2 Optionally get Guidance Scale Embedding
         timestep_cond = None
         if self.unet.config.time_cond_proj_dim is not None:
-            guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(batch_size * num_images_per_prompt)
+            guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(batch_size)
             timestep_cond = self.get_guidance_scale_embedding(
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
             ).to(device=device, dtype=latents.dtype)

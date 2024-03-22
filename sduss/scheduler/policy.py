@@ -25,6 +25,7 @@ class Policy:
             reverse=True,
         )
 
+
 class FCFS(Policy):
     """First Come First Serve."""
     def get_priority(self, now: float, seq_group: SequenceGroup) -> float:
@@ -38,6 +39,7 @@ class FCFS(Policy):
             float: Comparison result.
         """        
         return now - seq_group.arrival_time
+
 
 class PolicyFactory:
     

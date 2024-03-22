@@ -35,7 +35,6 @@ class EngineArgs:
     def add_args_to_parser(
         parser: argparse.ArgumentParser
     ) -> argparse.ArgumentParser:
-        
         # NOTE: If you update any of the arguments below, please also
         # make sure to update docs/source/models/engine_args.rst
         

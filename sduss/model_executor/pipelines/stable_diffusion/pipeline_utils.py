@@ -1,5 +1,5 @@
 from dataclasses import dataclass, fields
-from typing import Union, Optional, List, Dict, Callable
+from typing import Union, Optional, List, Dict, Callable, Any
 
 import PIL
 import numpy as np
@@ -9,6 +9,7 @@ from ..pipeline_utils import (BasePipelineStepInput, BasePipelinePostInput)
 
 from sduss.model_executor.utils import BaseOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
+from sduss.model_executor.image_processor import PipelineImageInput
 from sduss.logger import init_logger
 
 logger = init_logger(__name__)
@@ -16,28 +17,29 @@ logger = init_logger(__name__)
 
 @dataclass
 class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
-    """Sampling parameters for StableDiffusionPipeline"""
-    height: Optional[int] = None,
-    width: Optional[int] = None,
-    num_inference_steps: int = 50,
-    timesteps: List[int] = None,
-    guidance_scale: float = 7.5,
-    negative_prompt: Optional[Union[str, List[str]]] = None,
-    num_images_per_prompt: Optional[int] = 1,
-    eta: float = 0.0,
-    generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-    latents: Optional[torch.FloatTensor] = None,
-    prompt_embeds: Optional[torch.FloatTensor] = None,
-    negative_prompt_embeds: Optional[torch.FloatTensor] = None,
-    ip_adapter_image: Optional[PipelineImageInput] = None,
-    ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = None,
-    output_type: Optional[str] = "pil",
-    return_dict: bool = True,
-    cross_attention_kwargs: Optional[Dict[str, Any]] = None,
-    guidance_rescale: float = 0.0,
-    clip_skip: Optional[int] = None,
-    callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
-    callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+    """Sampling parameters for StableDiffusionPipeline."""
+    # Params that must be the same if to be batched
+    height: Optional[int] = None
+    width: Optional[int] = None
+    guidance_scale: float = 7.5
+    eta: float = 0.0
+    generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None
+    ip_adapter_image: Optional[PipelineImageInput] = None
+    ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = None
+    output_type: Optional[str] = "pil"
+    return_dict: bool = True
+    cross_attention_kwargs: Optional[Dict[str, Any]] = None
+    guidance_rescale: float = 0.0
+    clip_skip: Optional[int] = None
+    callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None
+    callback_on_step_end_tensor_inputs: List[str] = ["latents"]
+    # Params that can vary even when batched
+    prompt: str = None
+    negative_prompt: Optional[str] = None
+    num_imgs: int = 1
+    num_inference_steps: int = 50
+    timesteps: List[int] = None
+    latents: Optional[torch.FloatTensor] = None
 
 
 @dataclass
