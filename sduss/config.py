@@ -10,13 +10,13 @@ from sduss.utils import is_hip
 logger = init_logger(__name__)
 
 _GB = 1 << 30
-class ModelConfig:
-    """Configuration for model.
+class PipelineConfig:
+    """Configuration for Pipeline.
     
-    Models are default to use from huggingface models.
+    Pipelines are default to use diffusers' pipelines.
 
     Args:
-        model (str): Name or path of the huggingface model to use.
+        pipeline (str): Name or path of the huggingface pipeline to use.
         trust_remote_code (bool): Trust code from remote, e.g. from Huggingface, when
             downloading the model and tokenizer
         download_dir (str): Path to download and load the weights, default to the default
@@ -40,7 +40,7 @@ class ModelConfig:
     
     def __init__(
         self,
-        model: str,
+        pipeline: str,
         trust_remote_code: bool,
         download_dir: str,
         load_format: str,
@@ -48,7 +48,7 @@ class ModelConfig:
         seed: int,
         revision: Optional[str] = None,
     ) -> None:
-        self.model = model
+        self.pipeline = pipeline
         self.trust_remote_code = trust_remote_code
         self.download_dir = download_dir
         self.load_format = load_format

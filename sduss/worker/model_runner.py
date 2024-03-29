@@ -6,9 +6,9 @@ import numpy as np
 
 from torch import nn
 
-from sduss.config import ModelConfig, ParallelConfig, SchedulerConfig
+from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
 from sduss.worker.cache_engine import KVCache
-from sduss.model_executor import InputMetadata, get_model, SamplingMetadata
+from sduss.model_executor import InputMetadata, get_pipeline, SamplingMetadata
 from sduss.sequence import SequenceGroupMetadata, SequenceData, SamplerOutput
 from sduss.sampling_params import SamplingParams, SamplingType
 from sduss.utils import in_wsl
@@ -30,7 +30,7 @@ class ModelRunner:
     """
     def __init__(
         self,
-        model_config: ModelConfig,
+        model_config: PipelineConfig,
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
     ):
@@ -40,9 +40,7 @@ class ModelRunner:
         self.scheduler_config = scheduler_config
 
         # model_config can be None in tests/samplers/test_sampler.py.
-        # FIXME(woosuk): This is a hack to make the tests work. Refactor this.
-        self.sliding_window = (model_config.get_sliding_window()
-                               if model_config is not None else None)
+
         self.model = None  # Set in load_model
         self.block_size = None  # Set after initial profiling.
 
@@ -62,14 +60,17 @@ class ModelRunner:
         # cache in_wsl result
         self.in_wsl = in_wsl()
 
+
     def load_model(self) -> None:
-        self.model = get_model(self.model_config)
+        self.model = get_pipeline(self.model_config)
+
         
     def set_block_size(self, block_size: int) -> None:
         self. block_size = block_size
         max_num_blocks = (self.max_context_len_to_capture + block_size - 1) // block_size
         self.graph_block_tables = np.zeros(
             (max(_BATCH_SIZES_TO_CAPTURE), max_num_blocks), dtype=np.int32)
+
         
     def _prepare_prompt(
         self,

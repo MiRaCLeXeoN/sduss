@@ -15,15 +15,14 @@ import ray
 from ray.air.util.torch_dist import init_torch_dist_process_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-from sduss.scheduler.wrappers import Request
-from sduss.scheduler import Scheduler
+from sduss.scheduler import Scheduler, SchedulerOutput, Request, RequestStatus
+from sduss.worker import WorkerOutput
 
 from sduss.logger import init_logger
 from sduss.outputs import RequestOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.utils import Counter
-from sduss.config import (ModelConfig, CacheConfig, ParallelConfig, SchedulerConfig)
-from sduss.transformer_utils.tokenizer import get_tokenizer, detokenize_incrementally
+from sduss.config import (PipelineConfig, ParallelConfig, SchedulerConfig)
 from sduss.engine.arg_utils import EngineArgs
 from sduss.engine.ray_utils import RayWorker, initialize_cluster
 from sduss.engine.metrics import record_metrics
@@ -42,7 +41,7 @@ class Engine:
     
     def __init__(
         self,
-        model_config: ModelConfig,
+        model_config: PipelineConfig,
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
         distributed_init_method: str,
@@ -64,7 +63,7 @@ class Engine:
         """
         logger.info(
             "Initializing an LLM engine with config: "
-            f"model={model_config.model!r}, "
+            f"model={model_config.pipeline!r}, "
             f"seed={model_config.seed})") 
         
         self.model_config = model_config
@@ -131,7 +130,7 @@ class Engine:
         )
         self.workers.append(worker)
         # initialize model on all workers
-        self._run_workers("init_model", get_all_outputs=True)
+        self._run_workers("init_dis_env", get_all_outputs=True)
         self._run_workers("load_model", get_all_outputs=True)
         
     def _init_workers_ray(
@@ -183,7 +182,7 @@ class Engine:
                 None,
             )
         )
-        self._run_workers("init_model", get_all_outputs=True)
+        self._run_workers("init_dis_env", get_all_outputs=True)
         self._run_workers("load_model", get_all_outputs=True)
     
 
@@ -220,25 +219,16 @@ class Engine:
             request_id: The ID(s) of the request to abort.
         """
         self.scheduler.abort_seq_group(request_id)
-    
-    def _schedule(self) -> Tuple[List[SequenceGroupMetadata], SchedulerOutputs,
-                                 List[RequestOutput]]:
-        """Scheduling for this round running.
 
-        Returns:
-            Tuple[List[SequenceGroupMetadata], SchedulerOutputs, List[RequestOutput]]: 
-                (scheduled sequence groups' meta data list, scheduler output,
-                request output wrapper of all ignored sequence groups). Since ignored
-                sequence groups won't run any more, they will be returned as outputs.
-        """        
-        seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
-        return seq_group_metadata_list, scheduler_outputs, [
-            RequestOutput.from_seq_group(seq_group)
-            for seq_group in scheduler_outputs.ignored_seq_groups
-        ]
+    
+    def _schedule(self) -> SchedulerOutput:
+        """Scheduling for this round running.  """        
+        scheduler_outputs = self.scheduler.schedule()
+        return scheduler_outputs
+
     
     def step(self) -> List[RequestOutput]:
-        """Performs one decoding iteration and returns newly generated results.
+        """Performs one denoising iteration and returns newly generated results.
 
         This function performs one decoding iteration of the engine. It first
         schedules the sequences to be executed in the next iteration and the
@@ -246,25 +236,22 @@ class Engine:
         and updates the scheduler with the model outputs. Finally, it decodes
         the sequences and returns the newly generated results.
         """
-        seq_group_metadata_list, scheduler_outputs, ignored = self._schedule()
-        if scheduler_outputs.is_empty():
+        scheduler_output = self._schedule()
+        if scheduler_output.is_empty():
             return ignored
         
-        output: SamplerOutput = self._run_workers(
+        output: WorkerOutput = self._run_workers(
             "execute_model",
-            seq_group_metadata_list=seq_group_metadata_list,
-            blocks_to_swap_in=scheduler_outputs.blocks_to_swap_in,
-            blocks_to_swap_out=scheduler_outputs.blocks_to_swap_out,
-            blocks_to_copy=scheduler_outputs.blocks_to_copy,
+            scheduler_output=scheduler_output,
         )
         
-        return self._process_model_outputs(output, scheduler_outputs)
+        return self._process_model_outputs(output, scheduler_output)
 
     
     def _process_model_outputs(
         self,
-        output: SamplerOutput,
-        scheduler_outputs: SchedulerOutputs,
+        output: WorkerOutput,
+        scheduler_outputs: SchedulerOutput,
     ) -> List[RequestOutput]:
         """Process the model outputs from sampler and wrap them as
         `RequestOutputs`.
@@ -356,7 +343,7 @@ class Engine:
                 assert output == other_output, "Trying to ignore other valid outputs."
             return output
     
-    def get_model_config(self) -> ModelConfig:
+    def get_model_config(self) -> PipelineConfig:
         """Gets the model configuration."""
         return self.model_config
 

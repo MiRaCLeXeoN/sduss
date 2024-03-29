@@ -3,10 +3,11 @@ import time
 
 from typing import List, Optional, Tuple, Dict, Union, Iterable
 
-from sduss.config import SchedulerConfig
 from .policy import PolicyFactory
-from .wrappers import Request, RequestStatus, InferenceStage
+from .wrappers import Request, RequestStatus, SchedulerOutput
+from sduss.config import SchedulerConfig
 from sduss.logger import init_logger
+from sduss.utils import Counter
 
 logger = init_logger(__name__)
 
@@ -23,25 +24,8 @@ class PreemptionMode(enum.Enum):
     SWAP = enum.auto()
     RECOMPUTE  = enum.auto()
 
-class SchedulerOutput:    
-    """Wrapper of scheduler output.
-    
-    Args:
-        scheduled_requests: List[Request]
-            Requests to run in next iteration.
-        stage: InferenceStage
-            The inference stage at which the selected requests are. All the
-            selected requests must be in the same stage.
-    """
-    
-    def __init__(
-        self,
-        scheduled_requests: List[Request],
-        stage: InferenceStage,
-    ) -> None:
-        self.scheduled_requests = scheduled_requests  
-        self.stage = stage  
-    
+
+StateQueue = Tuple[List[Request], int, RequestStatus]
         
 class Scheduler:
     """Main scheduler which arranges tasks.
@@ -55,21 +39,36 @@ class Scheduler:
         scheduler_config: SchedulerConfig,
     ) -> None:
         self.scheduler_config = scheduler_config
+
+        # Unpack scheduler config's argumnents
         self.max_batchsize = scheduler_config.max_batchsize
         
         # Scheduler policy
         self.policy = PolicyFactory.get_policy(policy_name="fcfs")
+
+        # name -> (list, priority, RequestStatus)
+        # Priority here only reflects the order of process stage
+        self.state_queue: Dict[str, StateQueue]= {}
         
-        # Sequence groups in the WAITING state. Haven't started to run.
-        self.waiting: List[Request] = []
-        # Sequence groups in the RUNNING state.
-        self.running: List[Request] = []
-        # Sequence groups in the SWAPPED state.
+        # Requests in the SWAPPED state.
         self.swapped: List[Request] = []
+        self._register_state_queue("swapped", 0, RequestStatus.SWAPPED)
+        # Requests in the WAITING state. Haven't started to run.
+        self.waiting: List[Request] = []
+        self._register_state_queue("waiting", 10, RequestStatus.WAITING)
+        # Requests in the RUNNING state.
+        self.prepare: List[Request] = []
+        self._register_state_queue("prepare", 20, RequestStatus.PREPARE)
+        self.denoising: List[Request] = []
+        self._register_state_queue("denoising", 30, RequestStatus.DENOISING)
+        self.postprocess: List[Request] = []
+        self._register_state_queue("postprocessing", 40, RequestStatus.POSTPROCESSING)
+
         
     def add_request(self, req: Request) -> None:
         """Add a new request to waiting queue."""
         self.waiting.append(req)
+
         
     def abort_request(self, request_ids: Union[int, Iterable[int]]) -> None:
         """Abort a handful of requests.
@@ -81,9 +80,9 @@ class Scheduler:
             request_ids = (request_ids, )  # transform into an iterable
         request_ids = set(request_ids)
         
-        for state_queue in [self.running, self.waiting, self.swapped]:
+        for state_queue in self.state_queue.values():
             # To perform removal correctly, we have to iterate reversely.
-            for req in reversed(state_queue):
+            for req in reversed(state_queue[0]):
                 if req.request_id in request_ids:
                     state_queue.remove(req)  # Untrack
                     req.status = RequestStatus.FINISHED_ABORTED
@@ -98,12 +97,34 @@ class Scheduler:
             req for req in self.running
             if not req.is_finished()
         ]
+
     
     def has_unfinished_requests(self) -> bool:
         return self.waiting or self.running or self.swapped
 
+
     def get_num_unfinished_requests(self) -> int:
         return len(self.waiting) + len(self.running) + len(self.swapped)
+
+    
+    def _decide_stage(self) -> RequestStatus:
+        target_queue = self.policy.decide_stage(self.state_queue)
+        if target_queue is None:
+            raise RuntimeError("No queue in scheduler has remaining requsts to process.")
+        return target_queue
+
+    
+    def _get_next_stage(self, target: List[Request]) -> Optional[List[Request]]:
+        # TODO(MX): Swapped stage may not be properly handled
+        if target is self.waiting:
+            return self.prepare
+        elif target is self.swapped or target is self.prepare:
+            return self.denoising
+        elif target is self.denoising:
+            return self.postprocess
+        elif target is self.postprocess:
+            return None
+        
     
     def _schedule(self) -> SchedulerOutput:
         """Schedules running and swapping operations.
@@ -115,58 +136,71 @@ class Scheduler:
         # Fix the current time
         now = time.monotonic()
         
-        # TODO(MX): Currently we assume that 1 req has only one Image
-        num_collected_req = 0
+        # Decide which stage for this iteration
+        target_status = self._decide_stage()
+        target_queue = self._get_queue_from_status(target_status)
         
+        cur_batchsize = 0
+        collected_reqs = []
+        sorted_queue = self.policy.sort_by_priority(now, target_queue)
+        for req in sorted_queue:
+            # TODO(MX): Currently we cannot handle any single request
+            # that contains num_imgs > self.max_batchsize.
+            req_size = req.sampling_params.num_imgs
+            if req_size + cur_batchsize > self.max_batchsize:
+                break
             
-        
+            collected_reqs.append(req)
+            cur_batchsize += req_size
 
 
         scheduler_outputs = SchedulerOutput(
-            scheduled_seq_groups=self.running,
-            prompt_run=False,
-            num_batched_tokens=num_batched_tokens,
-            blocks_to_swap_in=blocks_to_swap_in,
-            blocks_to_swap_out=blocks_to_swap_out,
-            blocks_to_copy=blocks_to_copy,
-            ignored_seq_groups=[],
+            scheduled_requests=collected_reqs,
+            prompt_run=True if target_status == RequestStatus.WAITING else False,
         )
         return scheduler_outputs
                 
             
-    def schedule(self) -> Tuple[List[SequenceGroupMetadata], SchedulerOutputs]:
-        """Schedule sequence groups.
-        
-        This call will change the status of seq_groups.
-
-        Returns:
-            Tuple[List[SequenceGroupMetadata], SchedulerOutputs]: Scheduled 
-                sequence groups' metadata and scheduler's output.
-            
-        """
+    def schedule(self) -> SchedulerOutput:
+        """Schedule requests for next iteration."""
         scheduler_outputs = self._schedule()
+
+        # More wrappers will be added here.
         
-        # Create input data structures.
-        seq_group_metadata_list: List[SequenceGroupMetadata] = []
-        for seq_group in scheduler_outputs.scheduled_seq_groups:
-            seq_data: Dict[int, SequenceData] = {}
-            physical_blocks_number: Dict[int, List[int]] = {}
-            
-            for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
-                seq_id = seq.seq_id
-                seq_data[seq_id] = seq.data
-                physical_blocks_number[seq_id] = self.block_manager.get_block_table(seq)
-            
-            seq_group_metadata = SequenceGroupMetadata(
-                request_id=seq_group.request_id,
-                is_prompt=scheduler_outputs.prompt_run,
-                seq_data=seq_data,
-                sampling_params=seq_group.sampling_params,
-                block_tables=physical_blocks_number,
-            )
-            seq_group_metadata_list.append(seq_group_metadata)
+        return scheduler_outputs
+    
+    
+    def update_reqs_status(self):
+        """Update requests after one iteration."""
+        # Move this req to next queue
+        # Update its status
+        pass
         
-        return seq_group_metadata_list, scheduler_outputs
+        
+    def _register_state_queue(self, name: str, priority: int) -> None:
+        queue = getattr(self, name, None)
+        if queue is None:
+            raise ValueError(f"Non-existent queue {name} cannot be registered.")
+        self.state_queue[name] = (queue, priority)
+
+    
+    def _get_queue_from_name(self, name: str) -> List[Request]:
+        if name not in self.state_queue.keys():
+            raise RuntimeError("Invalid queue name was requested.")
+        return self.state_queue[name][0]
+
+    
+    def _get_queue_from_status(self, status: RequestStatus) -> List[Request]:
+        if status == RequestStatus.WAITING:
+            return self.waiting
+        elif status == RequestStatus.PREPARE:
+            return self.prepare
+        elif status == RequestStatus.DENOISING:
+            return self.state_queue
+        elif status == RequestStatus.POSTPROCESSING:
+            return self.postprocess
+        elif status == RequestStatus.SWAPPED:
+            return self.swapped
         
 
  

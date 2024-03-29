@@ -5,12 +5,10 @@ from typing import Optional, List, Dict
 import torch
 import torch.distributed
 
-from sduss.config import ModelConfig, ParallelConfig, SchedulerConfig, CacheConfig
-from sduss.sequence import SequenceGroupMetadata, SamplerOutput
-from sduss.model_executor import get_model, set_random_seed
+from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig, CacheConfig
+from sduss.model_executor import get_pipeline, set_random_seed
 from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
 from sduss.worker.model_runner import ModelRunner
-from sduss.worker.cache_engine import CacheEngine
 
 class Worker:
     """A worker GPU class
@@ -22,7 +20,7 @@ class Worker:
     
     def __init__(
         self,
-        model_config: ModelConfig,
+        model_config: PipelineConfig,
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
         rank: Optional[int] = None,
@@ -44,18 +42,10 @@ class Worker:
         self.distributed_init_method = distributed_init_method
 
         self.model_runner = ModelRunner(model_config, parallel_config, scheduler_config)
-        # Uninitialized cache engine. Will be initialized by
-        # self.init_cache_engine().
-        self.cache_config = None
-        self.block_size = None
-        self.sliding_window = None
-        self.cache_engine = None
-        self.cache_events = None
-        self.gpu_cache = None
         
     
-    def init_model(self) -> None:
-        """Initialize model on designated device"""
+    def init_dis_env(self) -> None:
+        """Initialize model on designated device."""
         # torch.distributed.all_reduce does not free the input tensor until
         # the synchronization point. This causes the memory usage to grow
         # as the number of all_reduce calls increases. This env var disables
@@ -83,8 +73,10 @@ class Worker:
         
         set_random_seed(self.model_config.seed)
     
+
     def load_model(self):
         self.model_runner.load_model()
+
         
     @torch.inference_mode()
     def profile_num_available_blocks(
@@ -115,6 +107,7 @@ class Worker:
         torch.cuda.empty_cache()
         return num_gpu_blocks, num_cpu_blocks
 
+
     def init_cache_engine(self, cache_config: CacheConfig) -> None:
         self.cache_config = cache_config
         self.cache_engine = CacheEngine(self.cache_config, self.model_config,
@@ -123,6 +116,7 @@ class Worker:
         self.gpu_cache = self.cache_engine.gpu_cache
         self.model_runner.set_block_size(self.cache_engine.block_size)
 
+
     def warm_up_model(self) -> None:
         """Capture the model and set seeds"""
         if not self.model_config.enforce_eager:
@@ -130,6 +124,7 @@ class Worker:
         # Reset the seed to ensure that the random state is not affected by
         # the model initialization and profiling.
         set_random_seed(self.model_config.seed)
+
     
     @torch.inference_mode()
     def execute_model(

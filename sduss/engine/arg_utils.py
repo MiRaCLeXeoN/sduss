@@ -3,7 +3,7 @@ import argparse
 from dataclasses import dataclass, fields
 from typing import Optional, Tuple
 
-from sduss.config import ModelConfig, ParallelConfig, CacheConfig, SchedulerConfig
+from sduss.config import PipelineConfig, ParallelConfig, CacheConfig, SchedulerConfig
 @dataclass
 class EngineArgs:
     """Arguments for the base class Engine
@@ -136,8 +136,8 @@ class EngineArgs:
     
     def create_engine_configs(
         self,
-    ) -> Tuple[ModelConfig, ParallelConfig, SchedulerConfig]:
-        model_config = ModelConfig(self.model, 
+    ) -> Tuple[PipelineConfig, ParallelConfig, SchedulerConfig]:
+        model_config = PipelineConfig(self.model, 
                                    self.trust_remote_code,
                                    self.download_dir, self.load_format,
                                    self.dtype, self.seed, self.revision)

@@ -34,13 +34,34 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
     callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None
     callback_on_step_end_tensor_inputs: List[str] = ["latents"]
     # Params that can vary even when batched
-    prompt: str = None
-    negative_prompt: Optional[str] = None
-    num_imgs: int = 1
-    num_inference_steps: int = 50
-    timesteps: List[int] = None
-    latents: Optional[torch.FloatTensor] = None
+    # Defined in BaseSampling Params
 
+    
+    def __post_init__(self):
+        self.volatile_params = {
+            "height" : self.height,
+            "width" : self.width,
+            "guidance_scale" : self.guidance_scale,
+            "eta" : self.eta,
+            "generator" : self.generator,
+            "ip_adapter_image" : self.ip_adapter_image,
+            "ip_adapter_image_embeds" : self.ip_adapter_image_embeds,
+            "output_type" : self.output_type,
+            "return_dict" : self.return_dict,
+            "cross_attention_kwargs" : self.cross_attention_kwargs,
+            "guidance_rescale" : self.guidance_rescale,
+            "clip_skip" : self.clip_skip,
+            "callback_on_step_end" : self.callback_on_step_end,
+            "callback_on_step_end_tensor_inputs" : self.callback_on_step_end_tensor_inputs 
+        }
+
+
+    def is_compatible_with(self, sp: "StableDiffusionPipelineSamplingParams") -> bool:
+        for name in self.volatile_params.keys():
+            if self.volatile_params[name] != sp.volatile_params[name]:
+                return False
+        return True
+            
 
 @dataclass
 class StableDiffusionPipelinePrepareOutput:
