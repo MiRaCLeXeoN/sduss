@@ -9,7 +9,7 @@ from ..pipeline_utils import (BasePipelineStepInput, BasePipelinePostInput)
 
 from sduss.model_executor.utils import BaseOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
-from sduss.model_executor.image_processor import PipelineImageInput
+from sduss.model_executor.diffusers.image_processor import PipelineImageInput
 from sduss.logger import init_logger
 
 logger = init_logger(__name__)

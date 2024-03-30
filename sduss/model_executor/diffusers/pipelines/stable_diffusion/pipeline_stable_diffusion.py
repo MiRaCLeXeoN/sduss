@@ -11,7 +11,7 @@ from .pipeline_utils import (
     StableDiffusionPipelineOutput, StableDiffusionPipelineStepOutput,
     StableDiffusionPipelinePrepareOutput, StableDiffusionPipelineStepInput)
 
-from sduss.model_executor.image_processor import PipelineImageInput
+from sduss.model_executor.diffusers.image_processor import PipelineImageInput
 
 class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
     
