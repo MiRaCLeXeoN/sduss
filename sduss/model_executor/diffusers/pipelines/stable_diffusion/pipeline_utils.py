@@ -1,5 +1,5 @@
 from dataclasses import dataclass, fields
-from typing import Union, Optional, List, Dict, Callable, Any
+from typing import Union, Optional, List, Dict, Callable, Any, Type
 
 import PIL
 import numpy as np
@@ -19,8 +19,8 @@ logger = init_logger(__name__)
 class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
     """Sampling parameters for StableDiffusionPipeline."""
     # Params that must be the same if to be batched
-    height: Optional[int] = None
-    width: Optional[int] = None
+    height: Optional[int] = 512
+    width: Optional[int] = 512
     guidance_scale: float = 7.5
     eta: float = 0.0
     generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None
@@ -38,6 +38,8 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
 
     
     def __post_init__(self):
+        super().__post_init__()
+        # Parameters that must be the same if to be batched
         self.volatile_params = {
             "height" : self.height,
             "width" : self.width,
@@ -54,6 +56,14 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
             "callback_on_step_end" : self.callback_on_step_end,
             "callback_on_step_end_tensor_inputs" : self.callback_on_step_end_tensor_inputs 
         }
+        
+        self.utils_cls = {
+            "prepare_output" : StableDiffusionPipelinePrepareOutput,
+            "step_input" : StableDiffusionPipelineStepInput,
+            "step_output" : StableDiffusionPipelineStepOutput,
+            "post_input" : StableDiffusionPipelinePostInput,
+            "pipeline_output" : StableDiffusionPipelineOutput,
+        }
 
 
     def is_compatible_with(self, sp: "StableDiffusionPipelineSamplingParams") -> bool:
@@ -61,6 +71,7 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
             if self.volatile_params[name] != sp.volatile_params[name]:
                 return False
         return True
+    
             
 
 @dataclass
@@ -78,6 +89,10 @@ class StableDiffusionPipelinePrepareOutput:
     return_dict: bool
     callback_on_step_end: Optional[Callable[[int, int, Dict], None]]
     callback_on_step_end_tensor_inputs: List[str]
+    do_classifier_free_guidance: bool
+    guidance_rescale: float
+    guidance_scale: float
+    cross_attention_kwargs: Optional[Dict[str, Any]]
 
 @dataclass
 class StableDiffusionPipelineStepInput(BasePipelineStepInput):
@@ -106,7 +121,11 @@ class StableDiffusionPipelineStepInput(BasePipelineStepInput):
     extra_step_kwargs: Dict
     callback_on_step_end: Optional[Callable[[int, int, Dict], None]]
     callback_on_step_end_tensor_inputs: List[str]
-
+    do_classifier_free_guidance: bool
+    guidance_rescale: float
+    guidance_scale: float
+    cross_attention_kwargs: Optional[Dict[str, Any]]
+    
     def __post_init__(self):
         # Keep the original complete timesteps
         self._complete_timesteps = self.timesteps
@@ -122,7 +141,11 @@ class StableDiffusionPipelineStepInput(BasePipelineStepInput):
                    added_cond_kwargs=output.added_cond_kwargs,
                    extra_step_kwargs=output.extra_step_kwargs,
                    callback_on_step_end=output.callback_on_step_end,
-                   callback_on_step_end_tensor_inputs=output.callback_on_step_end_tensor_inputs)
+                   callback_on_step_end_tensor_inputs=output.callback_on_step_end_tensor_inputs,
+                   do_classifier_free_guidance=output.do_classifier_free_guidance,
+                   guidance_rescale=output.guidance_rescale,
+                   guidance_scale=output.guidance_scale,
+                   cross_attention_kwargs=output.cross_attention_kwargs)
         
     def update_args(
         self,

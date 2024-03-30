@@ -1,9 +1,8 @@
 """All configuration classes """
-from typing import Optional, Union
+from typing import Optional, Union, Dict
 
 from sduss.logger import init_logger
 from sduss.utils import get_cpu_memory
-from sduss.transformer_utils.config import get_config
 from sduss.utils import is_hip
 
 
@@ -19,59 +18,22 @@ class PipelineConfig:
         pipeline (str): Name or path of the huggingface pipeline to use.
         trust_remote_code (bool): Trust code from remote, e.g. from Huggingface, when
             downloading the model and tokenizer
-        download_dir (str): Path to download and load the weights, default to the default
-            cache directory of huggingface
-        load_format (str): The format of the model weights to load:
-            "auto" will try to load the weights in the safetensors format and
-                fall back to the pytorch bin format if safetensors format is
-                not available.
-            "pt" will load the weights in the pytorch bin format.
-            "safetensors" will load the weights in the safetensors format. More about
-                safetensors to be seen at https://github.com/huggingface/safetensors
-            "npcache" will load the weights in pytorch format and store
-                a numpy cache to speed up the loading.
-            "dummy" will initialize the weights with random values, which is
-                mainly for profiling.
-        dtype (str): data type for model weights and activations
         seed (int): _description_
-        revision (Optional[str], optional): The specific model version to use.
-            Defaults to None.
+        kwargs (Dict): kwargs for initializing moduels with `from_pretrained` method.
     """
     
     def __init__(
         self,
         pipeline: str,
         trust_remote_code: bool,
-        download_dir: str,
-        load_format: str,
-        dtype: str,
         seed: int,
-        revision: Optional[str] = None,
+        kwargs: Dict,
     ) -> None:
         self.pipeline = pipeline
         self.trust_remote_code = trust_remote_code
-        self.download_dir = download_dir
-        self.load_format = load_format
-        self.dtype = dtype
         self.seed = seed
-        self.revision = revision
+        self.kwargs = kwargs
         
-        self._verify_load_format()
-        
-    def _verify_load_format(self) -> None:
-        load_format = self.load_format.lower()
-        if load_format not in [
-                "auto", "pt", "safetensors", "npcache", "dummy"
-        ]:
-            raise ValueError(
-                f"Unknown load format: {self.load_format}. Must be one of "
-                "'auto', 'pt', 'safetensors', 'npcache', or 'dummy'.")
-        self.load_format = load_format
-        
-    def _load_format_is_dummy(self) -> bool:
-        return self.load_format == "dummy"
-    
-
 class ParallelConfig:
     def __init__(
         self,

@@ -65,6 +65,7 @@ class Request:
         self.sampling_params = sampling_params
 
         self.status = RequestStatus.WAITING
+        self.remain_steps = sampling_params.num_inference_steps
 
     def is_finished(self):
         return RequestStatus.is_finished(self.status)

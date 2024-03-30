@@ -5,10 +5,12 @@ from typing import Optional, List, Dict
 import torch
 import torch.distributed
 
-from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig, CacheConfig
+from .model_runner import ModelRunner
+from .wrappers import WorkerExecuteInput, WorkerOutput, WorkerRequest
+from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
+from sduss.scheduler import Request, RequestStatus
 from sduss.model_executor import get_pipeline, set_random_seed
 from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
-from sduss.worker.model_runner import ModelRunner
 
 class Worker:
     """A worker GPU class
@@ -20,7 +22,7 @@ class Worker:
     
     def __init__(
         self,
-        model_config: PipelineConfig,
+        pipeline_config: PipelineConfig,
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
         rank: Optional[int] = None,
@@ -35,13 +37,16 @@ class Worker:
             rank (Optional[int], optional): _description_. Defaults to None.
             distributed_init_method (Optional[str], optional): _description_. Defaults to None.
         """
-        self.model_config = model_config
+        self.pipeline_config = pipeline_config
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
         self.rank = rank
         self.distributed_init_method = distributed_init_method
 
-        self.model_runner = ModelRunner(model_config, parallel_config, scheduler_config)
+        # Updated and maintained by `execute_model` method
+        self.request_pool: Dict[int, WorkerRequest] = {} 
+
+        self.model_runner = ModelRunner(pipeline_config, parallel_config, scheduler_config)
         
     
     def init_dis_env(self) -> None:
@@ -66,16 +71,52 @@ class Worker:
         self.device = torch.device(f"cuda:{local_rank}")
         torch.cuda.set_device(self.device)
         
-        _check_if_gpu_supports_dtype(self.model_config.dtype)
-        
         _init_distributed_environment(self.parallel_config, self.rank, 
                                       self.distributed_init_method)
         
-        set_random_seed(self.model_config.seed)
+        set_random_seed(self.pipeline_config.seed)
     
 
     def load_model(self):
         self.model_runner.load_model()
+    
+    
+    def exec_prepare_stage(
+        self,
+        scheduler_reqs: List[Request],
+    ) -> None:
+        worker_reqs = []
+        for sche_req in scheduler_reqs:
+            wq = WorkerRequest(sche_req)
+            self.request_pool[sche_req.request_id] = wq 
+            worker_reqs.append(wq)
+        
+        self.model_runner.exec_prepare_stage(worker_reqs)
+        
+    
+    def exec_denoising_stage(
+        self,
+        req_ids: List[int],
+    ):
+        """Execute denoising stage.
+
+        Requests that finishes denoising stage don't need to be returned. Scheduelr
+        can track requests' status according to its data duplicates.
+
+        Args:
+            req_ids (List[int]): IDs of requests to execute one iteration.
+        """
+        worker_reqs = []
+        for req_id in req_ids:
+            wq = self.request_pool[req_id]
+            assert wq.step_input is not None
+            worker_reqs.append(wq)
+
+        # concat inputs
+        
+
+
+
 
         
     @torch.inference_mode()
@@ -97,7 +138,7 @@ class Worker:
         free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info()
         peak_memory = total_gpu_memory - free_gpu_memory
         cache_block_size = CacheEngine.get_cache_block_size(
-            block_size, self.model_config, self.parallel_config)
+            block_size, self.pipeline_config, self.parallel_config)
         num_gpu_blocks = int(
             (total_gpu_memory * gpu_memory_utilization - peak_memory) // cache_block_size)
         num_cpu_blocks = int(cpu_swap_space // cache_block_size)
@@ -108,31 +149,20 @@ class Worker:
         return num_gpu_blocks, num_cpu_blocks
 
 
-    def init_cache_engine(self, cache_config: CacheConfig) -> None:
-        self.cache_config = cache_config
-        self.cache_engine = CacheEngine(self.cache_config, self.model_config,
-                                        self.parallel_config)
-        self.cache_events = self.cache_engine.events
-        self.gpu_cache = self.cache_engine.gpu_cache
-        self.model_runner.set_block_size(self.cache_engine.block_size)
-
-
     def warm_up_model(self) -> None:
         """Capture the model and set seeds"""
-        if not self.model_config.enforce_eager:
+        if not self.pipeline_config.enforce_eager:
             self.model_runner.capture_model(self.gpu_cache)
         # Reset the seed to ensure that the random state is not affected by
         # the model initialization and profiling.
-        set_random_seed(self.model_config.seed)
+        set_random_seed(self.pipeline_config.seed)
 
     
     @torch.inference_mode()
     def execute_model(
         self,
-        seq_group_metadata_list: List[SequenceGroupMetadata],
-        blocks_to_swap_in: Dict[int, int],
-        blocks_to_swap_out: Dict[int, int],
-        blocks_to_copy: Dict[int, List[int]],
+
+        
     ) -> SamplerOutput:
         # Issue cache operation
         issued_cache_op = False
@@ -194,18 +224,3 @@ def _init_distributed_environment(
     torch.distributed.all_reduce(torch.zeros(1).cuda())
     initialize_model_parallel(parallel_config.tensor_parallel_size,
                               parallel_config.pipeline_parallel_size)
-        
-
-def _check_if_gpu_supports_dtype(torch_dtype: torch.dtype) -> None:
-    """Check if the GPU supports the dtype.
-    
-    Only `torch.bfloat16` is checked for GPUs with capability under 8.x.
-    """
-    if torch_dtype == torch.bfloat16:
-        compute_capability = torch.cuda.get_device_capability()
-        if compute_capability[0] < 8:
-            gpu_name = torch.cuda.get_device_name()
-            raise ValueError(
-                "Bfloat16 is only supported on GPUs with compute capability "
-                f"of at least 8.0. Your {gpu_name} GPU has compute capability "
-                f"{compute_capability[0]}.{compute_capability[1]}.")

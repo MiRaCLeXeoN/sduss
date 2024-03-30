@@ -8,6 +8,7 @@ from .wrappers import Request, RequestStatus, SchedulerOutput
 from sduss.config import SchedulerConfig
 from sduss.logger import init_logger
 from sduss.utils import Counter
+from sduss.worker import WorkerOutput
 
 logger = init_logger(__name__)
 
@@ -50,6 +51,7 @@ class Scheduler:
         # Priority here only reflects the order of process stage
         self.state_queue: Dict[str, StateQueue]= {}
         
+        # TODO(MX): Dict[id, req] might be better than list
         # Requests in the SWAPPED state.
         self.swapped: List[Request] = []
         self._register_state_queue("swapped", 0, RequestStatus.SWAPPED)
@@ -85,46 +87,18 @@ class Scheduler:
             for req in reversed(state_queue[0]):
                 if req.request_id in request_ids:
                     state_queue.remove(req)  # Untrack
-                    req.status = RequestStatus.FINISHED_ABORTED
                     request_ids.remove(req.request_id)
                     if not request_ids:  # early exit
                         return
 
-        
-    def free_finished_requests(self) -> None:
-        """Untrack all finished requests."""
-        self.running = [
-            req for req in self.running
-            if not req.is_finished()
-        ]
-
     
     def has_unfinished_requests(self) -> bool:
-        return self.waiting or self.running or self.swapped
+        return self.waiting or self.prepare or self.denoising or self.postprocess
 
 
     def get_num_unfinished_requests(self) -> int:
-        return len(self.waiting) + len(self.running) + len(self.swapped)
+        return len(self.waiting) + len(self.prepare) + len(self.denoising) + len(self.postprocess)
 
-    
-    def _decide_stage(self) -> RequestStatus:
-        target_queue = self.policy.decide_stage(self.state_queue)
-        if target_queue is None:
-            raise RuntimeError("No queue in scheduler has remaining requsts to process.")
-        return target_queue
-
-    
-    def _get_next_stage(self, target: List[Request]) -> Optional[List[Request]]:
-        # TODO(MX): Swapped stage may not be properly handled
-        if target is self.waiting:
-            return self.prepare
-        elif target is self.swapped or target is self.prepare:
-            return self.denoising
-        elif target is self.denoising:
-            return self.postprocess
-        elif target is self.postprocess:
-            return None
-        
     
     def _schedule(self) -> SchedulerOutput:
         """Schedules running and swapping operations.
@@ -141,22 +115,28 @@ class Scheduler:
         target_queue = self._get_queue_from_status(target_status)
         
         cur_batchsize = 0
-        collected_reqs = []
+        collected_reqs: List[Request] = []
         sorted_queue = self.policy.sort_by_priority(now, target_queue)
         for req in sorted_queue:
-            # TODO(MX): Currently we cannot handle any single request
-            # that contains num_imgs > self.max_batchsize.
+            # TODO(MX): Currently we cannot handle any single request that
+            # contains num_imgs > self.max_batchsize.
             req_size = req.sampling_params.num_imgs
             if req_size + cur_batchsize > self.max_batchsize:
                 break
-            
-            collected_reqs.append(req)
-            cur_batchsize += req_size
 
+            # TODO(MX): Prepare stage reqs don't need to be compatible, since they are executed separately.
+            if len(collected_reqs) > 0:
+                # Only add compatible targets
+                if collected_reqs[0].sampling_params.is_compatible_with(req.sampling_params):
+                    collected_reqs.append(req)
+                    cur_batchsize += req_size
+            else:
+                collected_reqs.append(req)
+                cur_batchsize += req_size
 
         scheduler_outputs = SchedulerOutput(
             scheduled_requests=collected_reqs,
-            prompt_run=True if target_status == RequestStatus.WAITING else False,
+            status=target_status,
         )
         return scheduler_outputs
                 
@@ -164,17 +144,56 @@ class Scheduler:
     def schedule(self) -> SchedulerOutput:
         """Schedule requests for next iteration."""
         scheduler_outputs = self._schedule()
-
         # More wrappers will be added here.
         
         return scheduler_outputs
     
     
-    def update_reqs_status(self):
+    def update_reqs_status(
+        self,
+        scheduler_outputs: SchedulerOutput,
+        request_ids: List[int],
+        output: WorkerOutput,
+    ):
         """Update requests after one iteration."""
         # Move this req to next queue
-        # Update its status
-        pass
+        sche_status = scheduler_outputs.status
+        sche_reqs = scheduler_outputs.scheduled_requests
+        next_status = self._get_next_status(sche_status)
+        if sche_status == RequestStatus.WAITING:
+            self._update_reqs_to_status_queue(prev_status=sche_status, status=next_status, reqs=sche_reqs)
+            return 
+        elif sche_status == RequestStatus.PREPARE:
+            # First iteration of denoising has done
+            self._update_reqs_to_status_queue(prev_status=sche_status, status=next_status, reqs=sche_reqs)
+            # Some reqs might only iterate once
+            denoising_complete_reqs = self._decrease_one_step(sche_reqs)
+            if len(denoising_complete_reqs) > 0:
+                self._update_reqs_to_status_queue(prev_status=next_status, 
+                                                  status=RequestStatus.POSTPROCESSING, 
+                                                  reqs=denoising_complete_reqs)
+            return 
+        elif sche_status == RequestStatus.DENOISING:
+            # More steps done
+            # may or may not move to post stage
+            denoising_complete_reqs = self._decrease_one_step(sche_reqs)
+            if len(denoising_complete_reqs) > 0:
+                self._update_reqs_to_status_queue(prev_status=next_status, 
+                                                  status=RequestStatus.POSTPROCESSING, 
+                                                  reqs=denoising_complete_reqs)
+            return 
+        elif sche_status == RequestStatus.POSTPROCESSING:
+            assert output is not None
+            # engine is responsible ofr prepare output, we don't need to do so here
+            # free finished requests automatically
+            self._free_finished_requests(sche_reqs)
+            
+        
+    def _free_finished_requests(self, reqs: List[Request]) -> None:
+        """Untrack all finished requests."""
+        for req in reqs:
+            assert req.status == RequestStatus.POSTPROCESSING
+            self.postprocess.remove(req)
         
         
     def _register_state_queue(self, name: str, priority: int) -> None:
@@ -202,5 +221,42 @@ class Scheduler:
         elif status == RequestStatus.SWAPPED:
             return self.swapped
         
+        
+    def _decide_stage(self) -> RequestStatus:
+        target_status = self.policy.decide_stage(self.state_queue)
+        if target_status is None:
+            raise RuntimeError("No queue in scheduler has remaining requsts to process.")
+        return target_status
 
+    
+    def _get_next_status(self, prev_status: RequestStatus) -> RequestStatus:
+        # TODO(MX): Swapped stage may not be properly handled
+        if prev_status == RequestStatus.WAITING:
+            return RequestStatus.PREPARE
+        elif prev_status == RequestStatus.PREPARE:
+            return RequestStatus.DENOISING
+        elif prev_status == RequestStatus.DENOISING:
+            return RequestStatus.POSTPROCESSING
+        elif prev_status == RequestStatus.POSTPROCESSING:
+            return RequestStatus.FINISHED_STOPPED
+        else:
+            raise ValueError(f"Not next status available for {prev_status}")
+    
+    
+    def _update_reqs_to_status_queue(self, prev_status: RequestStatus, status: RequestStatus, reqs: List[Request]):
+        prev_queue = self._get_queue_from_status(prev_status)
+        target_queue = self._get_queue_from_status(status)
+        for req in reqs:
+            prev_queue.remove(req)
+            req.status = status
+            target_queue.append(req)
  
+    def _decrease_one_step(self, reqs: List[Request]) -> List[Request]:
+        denoising_complete_reqs: List[Request] = []
+        for req in reqs:
+            # Prepare stage has been updated to denoising, it's safe to do so
+            assert req.status == RequestStatus.DENOISING
+            req.remain_steps -= 1
+            if req.remain_steps == 0:
+                denoising_complete_reqs.append(req)
+        return denoising_complete_reqs

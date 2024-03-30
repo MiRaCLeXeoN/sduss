@@ -238,7 +238,12 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
             generator=generator,
             return_dict=return_dict,
             callback_on_step_end=callback_on_step_end,
-            callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs)
+            callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
+            do_classifier_free_guidance=self.do_classifier_free_guidance,
+            guidance_rescale=self.guidance_rescale,
+            guidance_scale=self.guidance_scale,
+            cross_attention_kwargs=self.cross_attention_kwargs,
+        )
 
     
     def denoise_step(
@@ -250,8 +255,12 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
         prompt_embeds: torch.FloatTensor,
         added_cond_kwargs: Optional[Dict],
         extra_step_kwargs: Dict,
-        callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
-        callback_on_step_end_tensor_inputs: List[str] = ["latents"]
+        callback_on_step_end: Optional[Callable[[int, int, Dict], None]],
+        callback_on_step_end_tensor_inputs: List[str],
+        do_classifier_free_guidance: bool,
+        guidance_rescale: float,
+        guidance_scale: float,
+        cross_attention_kwargs: Optional[Dict[str, Any]],
     ) -> StableDiffusionPipelineStepOutput:
         # TODO(MX): Variables associated with `self` should be removed in the future
         # 7. Denoising loop
@@ -260,7 +269,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
                 continue
 
             # expand the latents if we are doing classifier free guidance
-            latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
+            latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
             # predict the noise residual
@@ -269,19 +278,19 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
                 t,
                 encoder_hidden_states=prompt_embeds,
                 timestep_cond=timestep_cond,
-                cross_attention_kwargs=self.cross_attention_kwargs,
+                cross_attention_kwargs=cross_attention_kwargs,
                 added_cond_kwargs=added_cond_kwargs,
                 return_dict=False,
             )[0]
 
             # perform guidance
-            if self.do_classifier_free_guidance:
+            if do_classifier_free_guidance:
                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
-            if self.do_classifier_free_guidance and self.guidance_rescale > 0.0:
+            if do_classifier_free_guidance and guidance_rescale > 0.0:
                 # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
-                noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=self.guidance_rescale)
+                noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
 
             # compute the previous noisy sample x_t -> x_t-1
             latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
@@ -325,6 +334,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
         image = self.image_processor.postprocess(image, output_type=output_type, do_denormalize=do_denormalize)
 
         # Offload all models
+        # TODO(MX): We do not need cpu offload function
         self.maybe_free_model_hooks()
 
         if not return_dict:
@@ -333,7 +343,6 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
         return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept)
 
         
-    @overload
     def check_inputs(
         self,
         prompt,

@@ -212,67 +212,62 @@ class Engine:
         # Add the request to the scheduler.
         self.scheduler.add_request(req)
     
-    def abort_request(self, request_id: Union[str, Iterable[str]]) -> None:
+    def abort_request(self, request_id: Union[int, Iterable[int]]) -> None:
         """Aborts a request(s) with the given ID.
 
         Args:
             request_id: The ID(s) of the request to abort.
         """
-        self.scheduler.abort_seq_group(request_id)
+        self.scheduler.abort_request(request_id)
 
     
-    def _schedule(self) -> SchedulerOutput:
-        """Scheduling for this round running.  """        
+    def _schedule(self) -> Tuple[SchedulerOutput, List[int]] :
+        """Scheduling for this round running."""        
         scheduler_outputs = self.scheduler.schedule()
-        return scheduler_outputs
+        # Extract request ids
+        req_ids = []
+        for req in scheduler_outputs.scheduled_requests:
+            req_ids.append(req.request_id)
+        
+        return scheduler_outputs, req_ids
 
     
     def step(self) -> List[RequestOutput]:
-        """Performs one denoising iteration and returns newly generated results.
-
-        This function performs one decoding iteration of the engine. It first
-        schedules the sequences to be executed in the next iteration and the
-        token blocks to be swapped in/out/copy. Then, it executes the model
-        and updates the scheduler with the model outputs. Finally, it decodes
-        the sequences and returns the newly generated results.
-        """
-        scheduler_output = self._schedule()
-        if scheduler_output.is_empty():
-            return ignored
+        """Performs one denoising iteration and returns newly generated results."""
+        scheduler_output, req_ids = self._schedule()
+        if scheduler_output.status == RequestStatus.WAITING:
+            # For prepare stage inference
+            self._run_workers("exec_prepare_stage", scheduler_output=scheduler_output)
+        elif (scheduler_output.status == RequestStatus.PREPARE or
+            scheduler_output.status == RequestStatus.DENOISING):
+            # For denoising stage inference
+            self._run_workers("exec_denoising_stage", req_ids=req_ids)
+        elif (scheduler_output.status == RequestStatus.POSTPROCESSING):
+            # For post stage inference
+            output: WorkerOutput = self._run_workers(
+                "execute_post_stage",
+                scheduler_output=scheduler_output,
+            )
         
-        output: WorkerOutput = self._run_workers(
-            "execute_model",
-            scheduler_output=scheduler_output,
-        )
-        
-        return self._process_model_outputs(output, scheduler_output)
+        return self._process_output(scheduler_output, req_ids, output)
 
     
-    def _process_model_outputs(
+    def _process_output(
         self,
-        output: WorkerOutput,
         scheduler_outputs: SchedulerOutput,
+        req_ids: List[int],
+        output: Optional[WorkerOutput],
     ) -> List[RequestOutput]:
-        """Process the model outputs from sampler and wrap them as
-        `RequestOutputs`.
-
-        Args:
-            output (SamplerOutput): Output from the sampler
-            scheduler_outputs (SchedulerOutputs): Output from the scheduler
-
-        Returns:
-            List[RequestOutput]: Request outputs
-            
-        Finished sequence groups are freed here.
-        """
+        """Update requests status and prepare return result if available."""
         
         # Update the scheduled sequence groups with the model outputs
-        scheduled_seq_groups = scheduler_outputs.scheduled_seq_groups
+        scheduled_reqs = scheduler_outputs.scheduled_requests
+        if scheduler_outputs.status == 
         for seq_group, outputs in zip(scheduled_seq_groups, output):
             self._process_sequence_group_outputs(seq_group, outputs)
             
         # Free the finished sequence groups
-        self.scheduler.free_finished_seq_groups()
+        self.scheduler.free_finished_requests()
         
         # Wraps sampler outputs as request_outputs
         request_outputs: List[RequestOutput] = []
@@ -349,11 +344,11 @@ class Engine:
 
     def get_num_unfinished_requests(self) -> int:
         """Gets the number of unfinished requests."""
-        return self.scheduler.get_num_unfinished_seq_groups()
+        return self.scheduler.get_num_unfinished_requests()
 
     def has_unfinished_requests(self) -> bool:
         """Returns True if there are unfinished requests."""
-        return self.scheduler.has_unfinished_seqs()
+        return self.scheduler.has_unfinished_requests()
     
     def _log_system_states(
         self,

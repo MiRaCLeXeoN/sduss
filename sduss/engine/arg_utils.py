@@ -4,31 +4,25 @@ from dataclasses import dataclass, fields
 from typing import Optional, Tuple
 
 from sduss.config import PipelineConfig, ParallelConfig, CacheConfig, SchedulerConfig
-@dataclass
 class EngineArgs:
     """Arguments for the base class Engine
     """
-    # Model configs
-    model: str
-    download_dir: Optional[str] = None
-    trust_remote_code: bool = False
-    revision: Optional[str] = None
-    load_format: str = 'auto'
-    dtype: str = 'auto'
-    seed: int = 0
-    # Distributed configs
-    worker_use_ray: bool = False
-    pipeline_parallel_size: int = 1
-    tensor_parallel_size: int = 1
-    max_parallel_loading_workers: Optional[int] = None
-    # Scheduler configs
-    max_batchsize: int = 32
-    # Engine configs
-    disable_log_status: bool = False
-    
-
-    def __post_init__(self):
-        pass
+    def __init__(self, model_name_or_pth: str, **kwargs) -> None:
+        # Model configs
+        self.model_name_or_pth = model_name_or_pth
+        self.trust_remote_code = kwargs.pop("trust_remote_code", False)
+        self.seed = kwargs.pop("seed", 0)
+        # Distributed configs
+        self.worker_use_ray = kwargs.pop("worker_use_ray", True)
+        self.pipeline_parallel_size = kwargs.pop("pipeline_parallel_size", 1)
+        self.tensor_parallel_size = kwargs.pop("tensor_parallel_size", 1)
+        self.max_parallel_loading_workers = kwargs.pop("max_parallel_loading_workers", None)
+        # Scheduler configs
+        self.max_batchsize = kwargs.pop("max_batchsize", 32)
+        # Engine configs
+        self.disable_log_status = kwargs.pop("disable_log_status", False)
+        # kwargs for `from_pretrained`
+        self.kwargs = kwargs
 
 
     @staticmethod
@@ -137,10 +131,9 @@ class EngineArgs:
     def create_engine_configs(
         self,
     ) -> Tuple[PipelineConfig, ParallelConfig, SchedulerConfig]:
-        model_config = PipelineConfig(self.model, 
+        model_config = PipelineConfig(self.model_name_or_pth, 
                                    self.trust_remote_code,
-                                   self.download_dir, self.load_format,
-                                   self.dtype, self.seed, self.revision)
+                                   self.seed, self.kwargs)
         parallel_config = ParallelConfig(self.pipeline_parallel_size,
                                          self.tensor_parallel_size,
                                          self.worker_use_ray,
@@ -149,13 +142,13 @@ class EngineArgs:
         return model_config, parallel_config, scheduler_config
 
 
-@dataclass
 class AsyncEngineArgs(EngineArgs):
-    """Arguments for asynchronous engine, inherited from EngineArgs
-    """
-    engine_use_ray: bool = False
-    disable_log_requests: bool = False
-    max_log_len: Optional[int] = None
+    """Arguments for asynchronous engine, inherited from EngineArgs """
+    def __init__(self, model_name_or_pth: str, **kwargs) -> None:
+        self.engine_use_ray = kwargs.pop("engine_use_ray", False)
+        self.disable_log_requests = kwargs.pop("disable_log_requests", False)
+        self.max_log_len = kwargs.pop("max_log_len", None)
+        super().__init__(model_name_or_pth, **kwargs)
     
     @staticmethod
     def add_args_to_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
