@@ -1,17 +1,14 @@
-import torch
-from diffusers import StableDiffusionPipeline, UNet2DConditionModel
-# from diffusers.pipelines.stable_diffusion.StableDiffusionPipelineOutput import StableDiffusionPipelineOutput
 import inspect
-from typing import Optional, List, Tuple, Union, Dict, Any
+from typing import Optional, List, Tuple, Union, Dict
 
-from diffusers.image_processor import PipelineImageInput
-# from .models.distri_sdxl_unet_pp import DistriSDXLUNetPP
-# from .models.distri_sdxl_unet_tp import DistriSDXLUNetTP
-# from .models.naive_patch_sdxl import NaivePatchSDXL
-# from .utils import DistriConfig, PatchParallelismCommManager
-from models.unet import PatchUNet
-from typing import Optional, List, Tuple, Union
-from models.resnet import SplitModule
+import torch
+
+from diffusers import StableDiffusionPipeline, UNet2DConditionModel
+
+from sduss.model_executor.diffusers import BasePipeline
+from sduss.model_executor.diffusers.image_processor import PipelineImageInput
+from sduss.model_executor.modules.unet import PatchUNet
+from sduss.model_executor.modules.resnet import SplitModule
 
 def retrieve_timesteps(
     scheduler,
@@ -49,36 +46,39 @@ def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
     return noise_cfg
 
 
-class ESyMReDSDPipeline:
+class ESyMReDStableDiffusionPipeline(BasePipeline):
     def __init__(self, pipeline: StableDiffusionPipeline):
         self.pipeline = pipeline
 
-    @staticmethod
-    def from_pretrained(**kwargs):
+    @classmethod
+    def instantiate_pipeline(cls, **kwargs):
+        sub_modules: Dict = kwargs.pop("sub_modules", {})
         pretrained_model_name_or_path = kwargs.pop(
-            "pretrained_model_name_or_path", "stabilityai/stable-diffusion-xl-base-1.0"
-        )
+            "pretrained_model_name_or_path", "runwayml/stable-diffusion-v1-5")
         torch_dtype = kwargs.pop("torch_dtype", torch.float16)
-        unet = UNet2DConditionModel.from_pretrained(
-            pretrained_model_name_or_path, torch_dtype=torch_dtype, subfolder="unet"
-        )
-        
+
+        unet = sub_modules.pop("unet", None)
+        if unet is None:
+            unet = UNet2DConditionModel.from_pretrained(
+                pretrained_model_name_or_path, torch_dtype=torch_dtype, subfolder="unet")
         unet = PatchUNet(unet)
-        # print(unet)
 
         pipeline = StableDiffusionPipeline.from_pretrained(
-            pretrained_model_name_or_path, torch_dtype=torch_dtype, unet=unet, **kwargs
-        )
-        return ESyMReDSDPipeline(pipeline)
+            pretrained_model_name_or_path, torch_dtype=torch_dtype, unet=unet, **sub_modules, **kwargs)
+
+        return cls(pipeline)
+
 
     def set_progress_bar_config(self, **kwargs):
         self.pipeline.set_progress_bar_config(**kwargs)
+
 
     def get_profile(self, profile_dir):
         for name, module in self.pipeline.unet.named_modules():
             for subname, submodule in module.named_children():
                 if isinstance(submodule, SplitModule):
                     submodule.get_profile(profile_dir)
+
 
     @torch.no_grad()
     def __call__(
@@ -120,7 +120,6 @@ class ESyMReDSDPipeline:
         self.pipeline._clip_skip = clip_skip
         self.pipeline._cross_attention_kwargs = cross_attention_kwargs
         self.pipeline._interrupt = False
-
 
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):

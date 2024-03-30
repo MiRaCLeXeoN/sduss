@@ -12,6 +12,7 @@ class EngineArgs:
         self.model_name_or_pth = model_name_or_pth
         self.trust_remote_code = kwargs.pop("trust_remote_code", False)
         self.seed = kwargs.pop("seed", 0)
+        self.use_esymred = kwargs.pop("use_esymred", False)
         # Distributed configs
         self.worker_use_ray = kwargs.pop("worker_use_ray", True)
         self.pipeline_parallel_size = kwargs.pop("pipeline_parallel_size", 1)
@@ -131,15 +132,17 @@ class EngineArgs:
     def create_engine_configs(
         self,
     ) -> Tuple[PipelineConfig, ParallelConfig, SchedulerConfig]:
-        model_config = PipelineConfig(self.model_name_or_pth, 
-                                   self.trust_remote_code,
-                                   self.seed, self.kwargs)
+        pipeline_config = PipelineConfig(self.model_name_or_pth, 
+                                      self.trust_remote_code,
+                                      self.seed, 
+                                      self.use_esymred,
+                                      self.kwargs)
         parallel_config = ParallelConfig(self.pipeline_parallel_size,
                                          self.tensor_parallel_size,
                                          self.worker_use_ray,
                                          self.max_parallel_loading_workers)
         scheduler_config = SchedulerConfig(self.max_batchsize)
-        return model_config, parallel_config, scheduler_config
+        return pipeline_config, parallel_config, scheduler_config
 
 
 class AsyncEngineArgs(EngineArgs):

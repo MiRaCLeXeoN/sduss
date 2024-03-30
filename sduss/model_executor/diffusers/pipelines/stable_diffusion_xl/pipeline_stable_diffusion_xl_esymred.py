@@ -5,6 +5,7 @@ from typing import Optional, List, Tuple, Union, Dict, Any, Callable
 from diffusers import StableDiffusionXLPipeline, UNet2DConditionModel
 from diffusers.utils import replace_example_docstring
 
+from sduss.model_executor.diffusers import BasePipeline
 from sduss.model_executor.modules.unet import PatchUNet
 from sduss.model_executor.modules.resnet import SplitModule
 from sduss.model_executor.diffusers.image_processor import PipelineImageInput
@@ -62,27 +63,25 @@ def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
 
 
 
-class ESyMReDSDXLPipeline:
+class ESyMReDStableDiffusionXLPipeline(BasePipeline):
     def __init__(self, pipeline: StableDiffusionXLPipeline):
         self.pipeline = pipeline
 
-    @staticmethod
-    def from_pretrained(**kwargs):
+    @classmethod
+    def instantiate_pipeline(cls, **kwargs):
         pretrained_model_name_or_path = kwargs.pop(
-            "pretrained_model_name_or_path", "stabilityai/stable-diffusion-xl-base-1.0"
-        )
+            "pretrained_model_name_or_path", "stabilityai/stable-diffusion-xl-base-1.0")
         torch_dtype = kwargs.pop("torch_dtype", torch.float16)
+
         unet = UNet2DConditionModel.from_pretrained(
-            pretrained_model_name_or_path, torch_dtype=torch_dtype, subfolder="unet"
-        )
-        
+            pretrained_model_name_or_path, torch_dtype=torch_dtype, subfolder="unet")
         unet = PatchUNet(unet)
-        # print(unet)
 
         pipeline = StableDiffusionXLPipeline.from_pretrained(
-            pretrained_model_name_or_path, torch_dtype=torch_dtype, unet=unet, **kwargs
-        )
-        return ESyMReDSDXLPipeline(pipeline)
+            pretrained_model_name_or_path, torch_dtype=torch_dtype, unet=unet, **kwargs)
+
+        return cls(pipeline)
+
     
     def get_profile(self, profile_dir):
         for name, module in self.pipeline.unet.named_modules():
@@ -90,8 +89,10 @@ class ESyMReDSDXLPipeline:
                 if isinstance(submodule, SplitModule):
                     submodule.get_profile(profile_dir)
 
+
     def set_progress_bar_config(self, **kwargs):
         self.pipeline.set_progress_bar_config(**kwargs)
+
 
     @torch.no_grad()
     # @replace_example_docstring(EXAMPLE_DOC_STRING)

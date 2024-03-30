@@ -1,1 +1,2 @@
 from .pipeline_stable_diffusion_xl import StableDiffusionXLPipeline
+from .pipeline_stable_diffusion_xl_esymred import ESyMReDStableDiffusionXLPipeline

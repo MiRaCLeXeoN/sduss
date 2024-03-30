@@ -1,2 +1,3 @@
 from .pipeline_stable_diffusion import StableDiffusionPipeline
+from .pipeline_stable_diffusion_esymred import ESyMReDStableDiffusionPipeline
 from .safety_checker import StableDiffusionSafetyChecker

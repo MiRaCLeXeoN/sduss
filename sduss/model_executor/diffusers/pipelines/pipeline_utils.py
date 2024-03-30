@@ -1,6 +1,12 @@
 from typing import Dict
 from dataclasses import fields
 
+class BasePipeline:
+    
+    @staticmethod
+    def instantiate_pipeline(**kwargs) -> "BasePipeline":
+        raise NotImplementedError
+
 class BasePipelineStepInput:
     
     def to_dict(self) -> Dict:
