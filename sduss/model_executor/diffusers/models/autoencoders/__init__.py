@@ -1,1 +1,1 @@
-from autoencoder_kl import AutoencoderKL
+from .autoencoder_kl import AutoencoderKL

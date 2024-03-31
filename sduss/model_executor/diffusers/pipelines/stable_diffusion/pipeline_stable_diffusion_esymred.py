@@ -1,12 +1,12 @@
 import inspect
-from typing import Optional, List, Tuple, Union, Dict
+from typing import Optional, List, Tuple, Union, Dict, Any
 
 import torch
 
 from diffusers import StableDiffusionPipeline, UNet2DConditionModel
 
-from sduss.model_executor.diffusers import BasePipeline
-from sduss.model_executor.diffusers.image_processor import PipelineImageInput
+from ..pipeline_utils import BasePipeline
+from ...image_processor import PipelineImageInput
 from sduss.model_executor.modules.unet import PatchUNet
 from sduss.model_executor.modules.resnet import SplitModule
 
@@ -148,6 +148,7 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
             clip_skip=self.pipeline.clip_skip,
         )
 
+        # ! Cat prompt
         base_offset = 0
         embeds = list()
         if self.pipeline.do_classifier_free_guidance:
@@ -212,6 +213,7 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
                     # patch_size=patch_size
                 )[0]
 
+                # ! Unet
                 for resolution, res_split_noise in noise_pred.items():
                     if self.pipeline.do_classifier_free_guidance:
                         noise_pred_uncond, noise_pred_text = res_split_noise.chunk(2)
@@ -229,7 +231,8 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
                     progress_bar.update()
             # make sure the VAE is in float32 mode, as it overflows in float16
             
-                            
+        
+        # ! vae     
         images = list()
         for resolution, res_split_latents in latents.items():
             image = self.pipeline.vae.decode(res_split_latents / self.pipeline.vae.config.scaling_factor, return_dict=False, generator=generator)[

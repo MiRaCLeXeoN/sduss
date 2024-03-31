@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List, Tuple, Union, Dict, Any
 
 import torch
 import torch.nn.functional as F
 from torch import nn
-from models.base_model import BaseModule
+
+from .base_module import BaseModule
+
 from diffusers.models.transformers.transformer_2d import Transformer2DModel, Transformer2DModelOutput
 from diffusers.models.attention import BasicTransformerBlock
-from typing import Optional, List, Tuple, Union, Dict, Any
 
 class PatchTransformer2DModel(BaseModule):
     def __init__(

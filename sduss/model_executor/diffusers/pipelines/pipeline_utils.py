@@ -3,8 +3,8 @@ from dataclasses import fields
 
 class BasePipeline:
     
-    @staticmethod
-    def instantiate_pipeline(**kwargs) -> "BasePipeline":
+    @classmethod
+    def instantiate_pipeline(cls, **kwargs) -> "BasePipeline":
         raise NotImplementedError
 
 class BasePipelineStepInput:

@@ -1,4 +1,6 @@
 # Target_name -> (folder, class_name)
+from .pipeline_utils import BasePipeline
+
 from .stable_diffusion import (
     StableDiffusionPipeline,
     StableDiffusionSafetyChecker,
@@ -10,7 +12,6 @@ from .stable_diffusion_xl import (
     ESyMReDStableDiffusionXLPipeline,
 )
 
-from .pipeline_utils import BasePipeline
 
 
 PipelneRegistry = {

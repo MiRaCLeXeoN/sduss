@@ -1,8 +1,11 @@
+import time
+
 import torch
+
 from torch import distributed as dist
 from torch import nn
-from models.base_model import BaseModule
-import time
+
+from .base_module import BaseModule
 
 class PatchGroupNorm(BaseModule):
     def __init__(self, module: nn.GroupNorm):

@@ -5,10 +5,10 @@ from typing import Optional, List, Tuple, Union, Dict, Any, Callable
 from diffusers import StableDiffusionXLPipeline, UNet2DConditionModel
 from diffusers.utils import replace_example_docstring
 
-from sduss.model_executor.diffusers import BasePipeline
+from ..pipeline_utils import BasePipeline
+from ...image_processor import PipelineImageInput
 from sduss.model_executor.modules.unet import PatchUNet
 from sduss.model_executor.modules.resnet import SplitModule
-from sduss.model_executor.diffusers.image_processor import PipelineImageInput
 
 EXAMPLE_DOC_STRING = """
     Examples:
@@ -69,16 +69,19 @@ class ESyMReDStableDiffusionXLPipeline(BasePipeline):
 
     @classmethod
     def instantiate_pipeline(cls, **kwargs):
+        sub_modules: Dict = kwargs.pop("sub_modules", {})
         pretrained_model_name_or_path = kwargs.pop(
             "pretrained_model_name_or_path", "stabilityai/stable-diffusion-xl-base-1.0")
         torch_dtype = kwargs.pop("torch_dtype", torch.float16)
 
-        unet = UNet2DConditionModel.from_pretrained(
-            pretrained_model_name_or_path, torch_dtype=torch_dtype, subfolder="unet")
+        unet = sub_modules.pop("unet", None)
+        if unet is None:
+            unet = UNet2DConditionModel.from_pretrained(
+                pretrained_model_name_or_path, torch_dtype=torch_dtype, subfolder="unet")
         unet = PatchUNet(unet)
 
         pipeline = StableDiffusionXLPipeline.from_pretrained(
-            pretrained_model_name_or_path, torch_dtype=torch_dtype, unet=unet, **kwargs)
+            pretrained_model_name_or_path, torch_dtype=torch_dtype, unet=unet, **sub_modules, **kwargs)
 
         return cls(pipeline)
 
@@ -139,18 +142,18 @@ class ESyMReDStableDiffusionXLPipeline(BasePipeline):
         callback = kwargs.pop("callback", None)
         callback_steps = kwargs.pop("callback_steps", None)
 
-        if callback is not None:
-            deprecate(
-                "callback",
-                "1.0.0",
-                "Passing `callback` as an input argument to `__call__` is deprecated, consider use `callback_on_step_end`",
-            )
-        if callback_steps is not None:
-            deprecate(
-                "callback_steps",
-                "1.0.0",
-                "Passing `callback_steps` as an input argument to `__call__` is deprecated, consider use `callback_on_step_end`",
-            )
+        # if callback is not None:
+        #     deprecate(
+        #         "callback",
+        #         "1.0.0",
+        #         "Passing `callback` as an input argument to `__call__` is deprecated, consider use `callback_on_step_end`",
+        #     )
+        # if callback_steps is not None:
+        #     deprecate(
+        #         "callback_steps",
+        #         "1.0.0",
+        #         "Passing `callback_steps` as an input argument to `__call__` is deprecated, consider use `callback_on_step_end`",
+        #     )
 
         # 0. Default height and width to unet
         height = height or self.pipeline.default_sample_size * self.pipeline.vae_scale_factor

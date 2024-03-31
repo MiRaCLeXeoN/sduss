@@ -27,6 +27,7 @@ class WorkerRequest:
         self.remain_steps = scheduler_req.remain_steps
 
         # Filled by inference procedure
+        self.scheduler_states = None
         self.prepare_output = None
         self.step_input = None
         self.post_intput = None
@@ -40,9 +41,6 @@ class WorkerRequest:
         
         # TODO(MX): Other tensors are not examined.
         
-        
-
-    
 
 class WorkerExecuteInput:
     pass

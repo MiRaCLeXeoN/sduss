@@ -45,8 +45,9 @@ def load_modules(pipeline_pth: str, json_dict: Dict[str, List], kwargs: Dict) ->
         if module_name == "stable_diffusion":
             module_name = "diffusers"
         class_name = l[1]
-        import_pth = pkg_name + "." + module_name + "." + class_name
-        cls = importlib.import_module(import_pth)
+        import_pth = pkg_name + "." + module_name
+        module = importlib.import_module(import_pth)
+        cls = getattr(module, class_name)
 
         ret[name] = cls.from_pretrained(pipeline_pth, subfolder=name, **kwargs)
     return ret
@@ -67,8 +68,9 @@ def get_pipeline(pipeline_config: PipelineConfig) -> Any:
             raise RuntimeError(f"The pipeline of designated model {pipeline_pth} is not supported "
                             f"yet. Currently, only the following pipelines can be properly launched:"
                             f"{pipeline_registry}")
-        import_path = ".model_executor.diffusers.pipelines." + path_tuple[0] + "." + path_tuple[1]
-        pipeline_cls = importlib.import_module(import_path, package=__name__.split(".")[0])
+        import_path = ".model_executor.diffusers.pipelines." + path_tuple[0]
+        module = importlib.import_module(import_path, package=__name__.split(".")[0])
+        pipeline_cls = getattr(module, path_tuple[1])
 
         sub_modules = load_modules(pipeline_pth, json_file, pipeline_config.kwargs)
 

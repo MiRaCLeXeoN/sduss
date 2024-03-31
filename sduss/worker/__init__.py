@@ -1,1 +1,1 @@
-from .wrappers import WorkerOutput
+from .wrappers import WorkerOutput, WorkerRequest
