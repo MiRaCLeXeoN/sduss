@@ -1,9 +1,12 @@
-from diffusers.models.unets.unet_2d_blocks import UNetMidBlock2DCrossAttn, CrossAttnDownBlock2D, DownBlock2D, CrossAttnUpBlock2D, UpBlock2D
-from diffusers.utils.torch_utils import apply_freeu
+from typing import Optional, List, Tuple, Union, Dict, Any
+
 import torch
 import torch.nn as nn
-from typing import Optional, List, Tuple, Union, Dict, Any
-from models.base_model import BaseModule
+
+from diffusers.models.unets.unet_2d_blocks import UNetMidBlock2DCrossAttn, CrossAttnDownBlock2D, DownBlock2D, CrossAttnUpBlock2D, UpBlock2D
+from diffusers.utils.torch_utils import apply_freeu
+
+from .base_module import BaseModule
 
 class PatchUNetMidBlock2DCrossAttn(BaseModule):
     def __init__(

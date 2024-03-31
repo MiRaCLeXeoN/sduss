@@ -1,4 +1,4 @@
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, field
 from typing import Union, Optional, List, Dict, Callable, Any, Type
 
 import PIL
@@ -32,13 +32,14 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
     guidance_rescale: float = 0.0
     clip_skip: Optional[int] = None
     callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None
-    callback_on_step_end_tensor_inputs: List[str] = ["latents"]
+    callback_on_step_end_tensor_inputs: List[str] = field(default_factory=list)
     # Params that can vary even when batched
     # Defined in BaseSampling Params
 
     
     def __post_init__(self):
         super().__post_init__()
+        self.callback_on_step_end_tensor_inputs.append("latents")
         # Parameters that must be the same if to be batched
         self.volatile_params = {
             "height" : self.height,

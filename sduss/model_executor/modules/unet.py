@@ -1,6 +1,8 @@
 import math
 import time
 
+from typing import Optional, Union
+
 import torch
 
 from torch import distributed as dist, nn
@@ -228,17 +230,17 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
     def forward(
         self,
         sample,
-        timestep: torch.Tensor | float | int,
+        timestep: Union[torch.Tensor,float,int],
         encoder_hidden_states: torch.Tensor,
-        class_labels: torch.Tensor | None = None,
-        timestep_cond: torch.Tensor | None = None,
-        attention_mask: torch.Tensor | None = None,
-        cross_attention_kwargs: dict | None = None,
-        added_cond_kwargs: dict | None = None,
-        down_block_additional_residuals: tuple | None = None,
-        mid_block_additional_residual: torch.Tensor | None = None,
-        down_intrablock_additional_residuals: tuple | None = None,
-        encoder_attention_mask: torch.Tensor | None = None,
+        class_labels: Optional[torch.Tensor] = None,
+        timestep_cond: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        cross_attention_kwargs: Optional[dict] = None,
+        added_cond_kwargs: Optional[dict] = None,
+        down_block_additional_residuals: Optional[tuple] = None,
+        mid_block_additional_residual: Optional[torch.Tensor] = None,
+        down_intrablock_additional_residuals: Optional[tuple] = None,
+        encoder_attention_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
         record: bool = False,
         patch_size: int = None,

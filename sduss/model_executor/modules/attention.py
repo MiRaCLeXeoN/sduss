@@ -1,6 +1,8 @@
 import math
 import time
 
+from typing import Optional
+
 import xformers
 import xformers.ops
 import torch
@@ -49,7 +51,7 @@ class PatchCrossAttention(PatchAttention):
     def forward(
         self,
         hidden_states: torch.FloatTensor,
-        encoder_hidden_states: torch.FloatTensor | None = None,
+        encoder_hidden_states: Optional[torch.FloatTensor] = None,
         scale: float = 1.0,
         *args,
         **kwargs,
@@ -97,7 +99,7 @@ class PatchSelfAttention(PatchAttention):
     def forward(
         self,
         hidden_states: torch.FloatTensor,
-        encoder_hidden_states: torch.FloatTensor | None = None,
+        encoder_hidden_states: Optional[torch.FloatTensor] = None,
         scale: float = 1.0,
         is_sliced: bool = False,
         image_offset: list = [],

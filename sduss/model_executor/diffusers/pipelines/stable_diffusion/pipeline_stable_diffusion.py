@@ -11,10 +11,16 @@ from .pipeline_utils import (
     StableDiffusionPipelineOutput, StableDiffusionPipelineStepOutput,
     StableDiffusionPipelinePrepareOutput, StableDiffusionPipelineStepInput)
 
-from sduss.model_executor.diffusers.image_processor import PipelineImageInput
+from ..pipeline_utils import BasePipeline
+from ...image_processor import PipelineImageInput
 
-class StableDiffusionPipeline(DiffusersStableDiffusionPipeline):
-    
+class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
+
+    @classmethod
+    def instantiate_pipeline(cls, **kwargs):
+        sub_modules: Dict = kwargs.pop("sub_modules", {})
+        return cls(**sub_modules)
+
     def prepare_inference(
         self,
         prompt: List[str] = None,

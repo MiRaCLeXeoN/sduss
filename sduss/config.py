@@ -27,13 +27,16 @@ class PipelineConfig:
         pipeline: str,
         trust_remote_code: bool,
         seed: int,
+        use_esymred: bool,
         kwargs: Dict,
     ) -> None:
         self.pipeline = pipeline
         self.trust_remote_code = trust_remote_code
         self.seed = seed
+        self.use_esymred = use_esymred
         self.kwargs = kwargs
         
+
 class ParallelConfig:
     def __init__(
         self,
