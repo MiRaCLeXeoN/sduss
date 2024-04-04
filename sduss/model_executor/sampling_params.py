@@ -14,9 +14,8 @@ class BaseSamplingParams():
     """Sampling parameters for text generation.  """
     prompt: str = None
     negative_prompt: Optional[str] = None
-    num_imgs: int = 1
+    resolution: int = 512
     num_inference_steps: int = 50
-    timesteps: List[int] = None
     latents: Optional[torch.FloatTensor] = None
 
     def __repr__(self) -> str:
