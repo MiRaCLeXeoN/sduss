@@ -6,11 +6,11 @@ import numpy as np
 from diffusers import EulerDiscreteScheduler as DiffusersEulerDiscreteScheduler
 from diffusers.utils.torch_utils import randn_tensor
 
-from .utils import BatchSupportScheduler
+from .utils import BatchSupportScheduler, BaseSchedulerStates
 from sduss.worker import WorkerRequest
 from sduss.scheduler import SUPPORT_RESOLUTION
 
-class EulerDiscreteSchedulerStates:
+class EulerDiscreteSchedulerStates(BaseSchedulerStates):
     """Scheduler states wrapper to store scheduler states of each request."""
     total_steps_dependent_attr_names = [
         "sigmas",

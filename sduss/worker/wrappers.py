@@ -7,6 +7,8 @@ import torch
 from sduss.scheduler import RequestStatus, Request
 from sduss.model_executor.sampling_params import BaseSamplingParams
 
+from sduss.model_executor.diffusers.schedulers import BaseSchedulerStates
+
 class InferenceStage(enum.Enum):
     PREPARE = enum.auto()
     DENOISING = enum.auto()
@@ -23,11 +25,11 @@ class WorkerRequest:
         # Status from new requests should be `waiting`
         self.status = scheduler_req.status
         assert self.status == RequestStatus.WAITING
-        self.sampling_params = scheduler_req.sampling_params
-        self.remain_steps = scheduler_req.remain_steps
+        self.sampling_params: BaseSamplingParams = scheduler_req.sampling_params
+        self.remain_steps: int = scheduler_req.remain_steps
 
         # Filled by inference procedure
-        self.scheduler_states = None
+        self.scheduler_states: BaseSchedulerStates = None
         self.prepare_output = None
         self.step_input = None
         self.post_intput = None

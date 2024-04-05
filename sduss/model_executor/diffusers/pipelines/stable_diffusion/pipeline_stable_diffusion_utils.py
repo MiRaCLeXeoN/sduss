@@ -16,84 +16,16 @@ logger = init_logger(__name__)
 
 
 @dataclass
-class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
-    """Sampling parameters for StableDiffusionPipeline."""
-    # Params that must be the same if to be batched
-    height: Optional[int] = 512
-    width: Optional[int] = 512
-    guidance_scale: float = 7.5
-    eta: float = 0.0
-    generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None
-    ip_adapter_image: Optional[PipelineImageInput] = None
-    ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = None
-    output_type: Optional[str] = "pil"
-    return_dict: bool = True
-    cross_attention_kwargs: Optional[Dict[str, Any]] = None
-    guidance_rescale: float = 0.0
-    clip_skip: Optional[int] = None
-    callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None
-    callback_on_step_end_tensor_inputs: List[str] = field(default_factory=list)
-    # Params that can vary even when batched
-    # Defined in BaseSampling Params
-
-    
-    def __post_init__(self):
-        super().__post_init__()
-        self.callback_on_step_end_tensor_inputs.append("latents")
-        # Parameters that must be the same if to be batched
-        self.volatile_params = {
-            "height" : self.height,
-            "width" : self.width,
-            "guidance_scale" : self.guidance_scale,
-            "eta" : self.eta,
-            "generator" : self.generator,
-            "ip_adapter_image" : self.ip_adapter_image,
-            "ip_adapter_image_embeds" : self.ip_adapter_image_embeds,
-            "output_type" : self.output_type,
-            "return_dict" : self.return_dict,
-            "cross_attention_kwargs" : self.cross_attention_kwargs,
-            "guidance_rescale" : self.guidance_rescale,
-            "clip_skip" : self.clip_skip,
-            "callback_on_step_end" : self.callback_on_step_end,
-            "callback_on_step_end_tensor_inputs" : self.callback_on_step_end_tensor_inputs 
-        }
-        
-        self.utils_cls = {
-            "prepare_output" : StableDiffusionPipelinePrepareOutput,
-            "step_input" : StableDiffusionPipelineStepInput,
-            "step_output" : StableDiffusionPipelineStepOutput,
-            "post_input" : StableDiffusionPipelinePostInput,
-            "pipeline_output" : StableDiffusionPipelineOutput,
-        }
-
-
-    def is_compatible_with(self, sp: "StableDiffusionPipelineSamplingParams") -> bool:
-        for name in self.volatile_params.keys():
-            if self.volatile_params[name] != sp.volatile_params[name]:
-                return False
-        return True
-    
-            
-
-@dataclass
 class StableDiffusionPipelinePrepareOutput:
-    timesteps: List[int]
+    """Params that are same as sampling_params will not be stored here."""
     timestep_cond: torch.Tensor
-    latents: torch.Tensor
-    prompt_embeds: torch.FloatTensor
+    # latents: torch.Tensor  # update to sampling_params
+    # prompt_embeds: torch.FloatTensor  # update to sampling_params
     added_cond_kwargs: Optional[Dict]
     extra_step_kwargs: Dict
     device: torch.device
-    # These are directly from `prepare_inference` args
-    output_type: Optional[str]
-    generator: Optional[Union[torch.Generator, List[torch.Generator]]]
-    return_dict: bool
-    callback_on_step_end: Optional[Callable[[int, int, Dict], None]]
-    callback_on_step_end_tensor_inputs: List[str]
     do_classifier_free_guidance: bool
-    guidance_rescale: float
-    guidance_scale: float
-    cross_attention_kwargs: Optional[Dict[str, Any]]
+
 
 @dataclass
 class StableDiffusionPipelineStepInput(BasePipelineStepInput):
@@ -209,3 +141,59 @@ class StableDiffusionPipelineOutput(BaseOutput):
 
     images: Union[List[PIL.Image.Image], np.ndarray]
     nsfw_content_detected: Optional[List[bool]]
+
+
+class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
+    """Sampling parameters for StableDiffusionPipeline."""
+    # Params that vary
+    # Defined in BaseSampling Params
+    volatile_params = {
+        "timesteps" : None,
+        "guidance_scale" : 7.5,
+        "eta" : 0.0,
+        "generator" : None,
+        "ip_adapter_image" : None,
+        "ip_adapter_image_embeds" : None,
+        "output_type" : "pil",
+        "return_dict" : True,
+        "cross_attention_kwargs" : None,
+        "guidance_rescale" : 0.0,
+        "clip_skip" : None,
+        "callback_on_step_end" : None,
+        "callback_on_step_end_tensor_inputs" : ["latents"]
+    }
+    
+    utils_cls = {
+        "prepare_output" : StableDiffusionPipelinePrepareOutput,
+        "step_input" : StableDiffusionPipelineStepInput,
+        "step_output" : StableDiffusionPipelineStepOutput,
+        "post_input" : StableDiffusionPipelinePostInput,
+        "pipeline_output" : StableDiffusionPipelineOutput,
+    }
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.height: Optional[int] = self.resolution
+        self.width: Optional[int] = self.resolution
+
+        self.timesteps: List[int] = kwargs.pop("timesteps", None)
+        self.guidance_scale: float = kwargs.pop("guidance_scale", 7.5)
+        self.eta: float = kwargs.pop("eta", 0.0)
+        self.generator: Optional[Union[torch.Generator, List[torch.Generator]]] = kwargs.pop("generator", None)
+        self.ip_adapter_image: Optional[PipelineImageInput] = kwargs.pop("ip_adapter_image", None)
+        self.ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = kwargs.pop("ip_adapter_image_embeds", None)
+        self.output_type: Optional[str] = kwargs.pop("output_type", "pil")
+        self.return_dict: bool = kwargs.pop("return_dict", True)
+        self.cross_attention_kwargs: Optional[Dict[str, Any]] = kwargs.pop("cross_attention_kwargs", None)
+        self.guidance_rescale: float = kwargs.pop("guidance_rescale", 0.0)
+        self.clip_skip: Optional[int] = kwargs.pop("clip_skip", None)
+        self.callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = kwargs.pop("callback_on_step_end", None)
+        self.callback_on_step_end_tensor_inputs: List[str] = kwargs.pop("callback_on_step_end_tensor_inputs", ["latents"])
+        self._check_volatile_params()
+
+    
+    def _check_volatile_params(self):
+        """Check volatile params to ensure they are the same as default."""
+        for param_name in self.volatile_params:
+            if getattr(self, param_name) != self.volatile_params[param_name]:
+                raise RuntimeError(f"Currently, we do not support customized {param_name} parameter.")

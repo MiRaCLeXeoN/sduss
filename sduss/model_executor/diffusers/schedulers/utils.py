@@ -1,3 +1,17 @@
+class BaseSchedulerStates:
+
+    def __init__(self) -> None:
+        self.timestep_idx = 0
+    
+
+    def update_states_one_step(self):
+        raise NotImplementedError
+    
+
+    def get_next_timestep(self):
+        raise NotImplementedError
+
+
 class BatchSupportScheduler:
 
     def batch_set_timesteps(self):

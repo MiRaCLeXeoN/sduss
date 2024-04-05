@@ -1,4 +1,3 @@
-
 from typing import overload, Union, Optional, List, Dict, Any, Callable
 
 import torch
@@ -7,12 +6,15 @@ from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import (
     StableDiffusionPipeline as DiffusersStableDiffusionPipeline,
     retrieve_timesteps, rescale_noise_cfg)
 
-from .pipeline_utils import (
+from .pipeline_stable_diffusion_utils import (
     StableDiffusionPipelineOutput, StableDiffusionPipelineStepOutput,
     StableDiffusionPipelinePrepareOutput, StableDiffusionPipelineStepInput)
 
 from ..pipeline_utils import BasePipeline
 from ...image_processor import PipelineImageInput
+
+from sduss.worker import WorkerRequest
+
 
 class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
 
@@ -20,21 +22,28 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
     def instantiate_pipeline(cls, **kwargs):
         sub_modules: Dict = kwargs.pop("sub_modules", {})
         return cls(**sub_modules)
+    
+    def prepare_input_dict(
+        self,
+        worker_reqs: List[Warning]
+    ) -> Dict:
+        pass
 
     def prepare_inference(
         self,
+        worker_reqs: List[WorkerRequest] = None,
         prompt: List[str] = None,
         negative_prompt: Optional[Union[str, List[str]]] = None,
+        num_inference_steps: int = None,
+        latents: Optional[torch.FloatTensor] = None,
+        prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
-        num_inference_steps: int = 50,
         timesteps: List[int] = None,
         guidance_scale: float = 7.5,
         eta: float = 0.0,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        latents: Optional[torch.FloatTensor] = None,
-        prompt_embeds: Optional[torch.FloatTensor] = None,
-        negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         ip_adapter_image: Optional[PipelineImageInput] = None,
         ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = None,
         output_type: Optional[str] = "pil",
@@ -129,6 +138,18 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
                 "not-safe-for-work" (nsfw) content.
         """
         # callback and callback_steps are removed
+
+        assert prompt is None and negative_prompt is None and num_inference_steps is None and latents is None, (
+            "These parameters must be passed via worker_reqs.")
+        assert worker_reqs is not None, "Worker requests must be passed!"
+        
+        # Extract params:
+        prompt: List = []
+        negative_prompt: List = []
+        for req in worker_reqs:
+            assert req.sampling_params.height
+            prompt.append(req.sampling_params.prompt)
+            negative_prompt.append(req.sampling_params.negative_prompt)
         
         # 0. Set height and width of Image
         height = height or self.unet.config.sample_size * self.vae_scale_factor
@@ -161,7 +182,6 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         else:
             batch_size = prompt_embeds.shape[0]
 
-        # TODO(MX): This may be useless in our context
         device = self._execution_device
 
         # 3. Encode input prompt
@@ -184,8 +204,9 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         # For classifier free guidance, we need to do two forward passes.
         # Here we concatenate the unconditional and text embeddings into a single batch
         # to avoid doing two forward passes
-        if self.do_classifier_free_guidance:
-            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
+        # ! We do concatenation before each Unet iteration
+        # if self.do_classifier_free_guidance:
+        #     prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
 
         if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
             image_embeds = self.prepare_ip_adapter_image_embeds(
@@ -197,20 +218,26 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             )
             
         # 4. Prepare timesteps
-        timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps)
+        # timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps)
+        self.scheduler.batch_set_timesteps(worker_reqs, device=device)
 
         # 5. Prepare latent variables
+        # Latents must be kept separate, since it will be stored independently
         num_channels_latents = self.unet.config.in_channels
-        latents = self.prepare_latents(
-            batch_size,
-            num_channels_latents,
-            height,
-            width,
-            prompt_embeds.dtype,
-            device,
-            generator,
-            latents,
-        )
+        latents: List = []
+        base_shape = (1, num_channels_latents, height // self.vae_scale_factor, width // self.vae_scale_factor)
+        for req in worker_reqs:
+            if req.sampling_params.latents is None:
+                latent = self.prepare_latents(
+                    batch_size=1,
+                    num_channels_latents=0,
+                    height=height,
+                    width=width,
+                    dtype=prompt_embeds.dtype,
+                    device=device)
+            else:
+                latent = req.sampling_params.latents.reshape(base_shape)
+            latents.append(latent)
         
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
@@ -223,6 +250,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         )
 
         # 6.2 Optionally get Guidance Scale Embedding
+        # This will not be reached
         timestep_cond = None
         if self.unet.config.time_cond_proj_dim is not None:
             guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(batch_size)
@@ -230,35 +258,28 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
             ).to(device=device, dtype=latents.dtype)
 
-        self._num_timesteps = len(timesteps)
-        
-        return StableDiffusionPipelinePrepareOutput(
-            timesteps=timesteps,
-            timestep_cond=timestep_cond,
-            latents=latents,
-            prompt_embeds=prompt_embeds,
-            added_cond_kwargs=added_cond_kwargs,
-            extra_step_kwargs=extra_step_kwargs,
-            device=device,
-            output_type=output_type,
-            generator=generator,
-            return_dict=return_dict,
-            callback_on_step_end=callback_on_step_end,
-            callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
-            do_classifier_free_guidance=self.do_classifier_free_guidance,
-            guidance_rescale=self.guidance_rescale,
-            guidance_scale=self.guidance_scale,
-            cross_attention_kwargs=self.cross_attention_kwargs,
-        )
+        # self._num_timesteps = len(timesteps)
 
-    
+        # Store prepare result to requests
+        for i, req in enumerate(worker_reqs):
+            # update necessary variables
+            req.sampling_params.latents = latents[i]
+            req.sampling_params.prompt_embeds = prompt_embeds[i]
+            req.sampling_params.negative_prompt_embeds = negative_prompt_embeds[i]
+            # Create prepare output
+            prepare_output = StableDiffusionPipelinePrepareOutput(
+                timestep_cond=timestep_cond,
+                added_cond_kwargs=added_cond_kwargs,
+                extra_step_kwargs=extra_step_kwargs,
+                device=device,
+                do_classifier_free_guidance=self.do_classifier_free_guidance,)
+            req.prepare_output = prepare_output
+
+
     def denoise_step(
         self,
-        timesteps: List[int],
-        timestep_idxs: List[int],
+        worker_reqs: List[WorkerRequest],
         timestep_cond: torch.Tensor,
-        latents: torch.Tensor,
-        prompt_embeds: torch.FloatTensor,
         added_cond_kwargs: Optional[Dict],
         extra_step_kwargs: Dict,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]],
@@ -268,48 +289,65 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         guidance_scale: float,
         cross_attention_kwargs: Optional[Dict[str, Any]],
     ) -> StableDiffusionPipelineStepOutput:
-        # TODO(MX): Variables associated with `self` should be removed in the future
-        # 7. Denoising loop
-        for i, t in map(timestep_idxs, timesteps):
-            if self.interrupt:
-                continue
+        # Prepare inputs
+        latents: List[torch.Tensor] = []
+        prompt_embeds: List[torch.Tensor] = []
+        negative_prompt_embeds: List[torch.Tensor] = []
+        timesteps: List[Union[float, int]] = [] 
+        for req in worker_reqs:
+            latents.append(req.sampling_params.latents)
+            prompt_embeds.append(req.sampling_params.prompt_embeds.unsqueeze())
+            negative_prompt_embeds.append(req.sampling_params.negative_prompt_embeds.unsqueeze())
+            timesteps.append(req.scheduler_states.get_next_timestep())
+            # TODO(MX): Check tensor shape here
+        
+        latents = torch.cat(latents, dim=0)
+        prompt_embeds = torch.cat(prompt_embeds, dim=0)
+        negative_prompt_embeds = torch.cat(negative_prompt_embeds, dim=0)
+        if do_classifier_free_guidance:
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+        t = torch.tensor(data=timesteps, dtype=worker_reqs[0].scheduler_states.timesteps.dtype)
 
-            # expand the latents if we are doing classifier free guidance
-            latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-            latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+        # expand the latents if we are doing classifier free guidance
+        latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+        latent_model_input = self.scheduler.batch_scale_model_input(latent_model_input, t)
 
-            # predict the noise residual
-            noise_pred = self.unet(
-                latent_model_input,
-                t,
-                encoder_hidden_states=prompt_embeds,
-                timestep_cond=timestep_cond,
-                cross_attention_kwargs=cross_attention_kwargs,
-                added_cond_kwargs=added_cond_kwargs,
-                return_dict=False,
-            )[0]
+        # predict the noise residual
+        noise_pred = self.unet(
+            latent_model_input,
+            t,
+            encoder_hidden_states=prompt_embeds,
+            timestep_cond=timestep_cond,
+            cross_attention_kwargs=cross_attention_kwargs,
+            added_cond_kwargs=added_cond_kwargs,
+            return_dict=False,
+        )[0]
 
-            # perform guidance
-            if do_classifier_free_guidance:
-                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+        # perform guidance
+        if do_classifier_free_guidance:
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
-            if do_classifier_free_guidance and guidance_rescale > 0.0:
-                # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
-                noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
+        if do_classifier_free_guidance and guidance_rescale > 0.0:
+            # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
+            noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
 
-            # compute the previous noisy sample x_t -> x_t-1
-            latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+        # compute the previous noisy sample x_t -> x_t-1
+        latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
 
-            if callback_on_step_end is not None:
-                callback_kwargs = {}
-                for k in callback_on_step_end_tensor_inputs:
-                    callback_kwargs[k] = locals()[k]
-                callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+        if callback_on_step_end is not None:
+            callback_kwargs = {}
+            for k in callback_on_step_end_tensor_inputs:
+                callback_kwargs[k] = locals()[k]
+            callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
 
-                latents = callback_outputs.pop("latents", latents)
-                prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
-                negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+            latents = callback_outputs.pop("latents", latents)
+            prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+            negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+        
+        # Update timesteps
+        for req in worker_reqs:
+            req.scheduler_states.update_states_one_step()
                 
         return StableDiffusionPipelineStepOutput(latents=latents, prompt_embeds=prompt_embeds)
 

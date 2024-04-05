@@ -9,35 +9,36 @@ from sduss.logger import init_logger
 
 logger = init_logger(__name__)
 
-@dataclass
 class BaseSamplingParams():
     """Sampling parameters for text generation.  """
-    prompt: str = None
-    negative_prompt: Optional[str] = None
-    resolution: int = 512
-    num_inference_steps: int = 50
-    latents: Optional[torch.FloatTensor] = None
+
+    def __init__(self, **kwargs) -> None:
+        """You should define volatile paramemters here."""
+
+        self.prompt: str = kwargs.pop("prompt", "")
+        self.negative_prompt: Optional[str] = kwargs.pop("negative_prompt", "")
+        self.resolution: int = kwargs.pop("resolution", 512)
+        self.num_inference_steps: int = kwargs.pop("num_inference_steps", 50)
+        self.latents: Optional[torch.FloatTensor] = kwargs.pop("latents", None)
+        self.prompt_embeds: Optional[torch.FloatTensor] = kwargs.pop("prompt_embeds", None)
+        self.negative_prompt_embeds: Optional[torch.FloatTensor] = kwargs.pop("negative_prompt_embeds", None)
+
+        # Check lantents' device
+        if self.latents is not None and self.latents.device != torch.device("cpu"):
+            logger.info(f"Forcing input lantents from {self.latents.device} to cpu to make sure "
+                        f"it can be properly passed to worker through Ray.")
+            self.latents.to("cpu")
+
 
     def __repr__(self) -> str:
         """Literal representation of samling parameters."""
-        pass
-
-
-    def __post_init__(self) -> None:
-        """You should define volatile paramemters here."""
-        # Check lantents' device
-        if self.latents is not None and self.latents.device != torch.device("cpu"):
-            logger.info(f"Forcing input lantents from {self.latents.device} to cpu for Ray compatibility.")
-            self.latents.to("cpu")
-        
-        # TODO(MX): These custom configs are not supported yet
-        assert self.timesteps is None, "We do not support custom timesteps at now."
+        raise NotImplementedError
 
 
     def clone(self) -> "BaseSamplingParams":
         return copy.deepcopy(self)
             
 
-    def is_compatible_with(self, sp: "BaseSamplingParams") -> bool:
-        """Whether two requests' sampling parameters are compatible."""
-        pass
+    def _check_volatile_params(self):
+        """Check volatile params to ensure they are the same as default."""
+        raise NotImplementedError("_check_volatile_params method must be overridden by derived classes.")

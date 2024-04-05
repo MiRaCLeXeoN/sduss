@@ -5,14 +5,15 @@ import torch
 
 from diffusers import PNDMScheduler as DiffusersPNDMScheduler
 
-from .utils import BatchSupportScheduler
+from .utils import BatchSupportScheduler, BaseSchedulerStates
 
 from sduss.worker import WorkerRequest
 
-class PNDMSchedulerStates:
+class PNDMSchedulerStates(BaseSchedulerStates):
     total_steps_dependent_attr_names = [
         "prk_timesteps",
         "num_inference_steps",
+        "timesteps",
     ]
     current_step_dependent_attr_names = [
         "counter",
@@ -24,11 +25,22 @@ class PNDMSchedulerStates:
     def __init__(self, **kwargs) -> None:
         self.prk_timesteps: np.ndarray = kwargs.pop("prk_timesteps")
         self.num_inference_steps: int = kwargs.pop("num_inference_steps")
+        self.timesteps: torch.FloatTensor = kwargs.pop("timesteps")
 
         self.counter: int = kwargs.pop("counter")
         self.cur_model_output: torch.FloatTensor = kwargs.pop("cur_model_output")
         self.ets: List[torch.FloatTensor] = kwargs.pop("ets")
         self.cur_sample: torch.FloatTensor = kwargs.pop("cur_sample")
+
+        # Common variables
+        super().__init__()
+    
+    def update_staets_one_step(self):
+        self.timestep_idx += 1
+        assert self.timestep_idx <= self.timesteps.shape[0]
+    
+    def get_next_timestep(self):
+        return self.timesteps[self.timestep_idx]
 
 
 class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
@@ -68,8 +80,6 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
                 attrs[name] = getattr(self, name)
             for req in collected_reqs:
                 req.scheduler_states = PNDMSchedulerStates(**attrs)
-
-        return None
 
 
     def batch_scale_model_input(
