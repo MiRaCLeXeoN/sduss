@@ -16,6 +16,14 @@ from sduss.worker import WorkerRequest
 logger = init_logger(__name__)
 
 
+class StableDiffusionPipelinePrepareInput:
+    @staticmethod
+    def prepare_prepare_input(
+        worker_reqs: List[WorkerRequest],
+    ) -> Dict:
+        pass
+        
+
 @dataclass
 class StableDiffusionPipelinePrepareOutput:
     """Params that are same as sampling_params will not be stored here."""
@@ -28,7 +36,6 @@ class StableDiffusionPipelinePrepareOutput:
     # prompt_embeds: torch.FloatTensor  # update to sampling_params
 
 
-@dataclass
 class StableDiffusionPipelineStepInput(BasePipelineStepInput):
     @staticmethod
     def prepare_step_input(
@@ -66,7 +73,6 @@ class StableDiffusionPipelineStepOutput:
     pass
 
 
-@dataclass
 class StableDiffusionPipelinePostInput(BasePipelinePostInput):
     @staticmethod
     def prepare_post_input(
@@ -122,6 +128,7 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
     }
     
     utils_cls = {
+        "prepare_input" : StableDiffusionPipelinePrepareInput,
         "prepare_output" : StableDiffusionPipelinePrepareOutput,
         "step_input" : StableDiffusionPipelineStepInput,
         "step_output" : StableDiffusionPipelineStepOutput,

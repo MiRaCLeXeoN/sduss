@@ -13,6 +13,7 @@ class EngineArgs:
         self.trust_remote_code = kwargs.pop("trust_remote_code", False)
         self.seed = kwargs.pop("seed", 0)
         self.use_esymred = kwargs.pop("use_esymred", False)
+        self.use_batch_split = kwargs.pop("use_batch_split", False)
         # Distributed configs
         self.worker_use_ray = kwargs.pop("worker_use_ray", True)
         self.pipeline_parallel_size = kwargs.pop("pipeline_parallel_size", 1)
@@ -20,6 +21,7 @@ class EngineArgs:
         self.max_parallel_loading_workers = kwargs.pop("max_parallel_loading_workers", None)
         # Scheduler configs
         self.max_batchsize = kwargs.pop("max_batchsize", 32)
+        self.use_mixed_precisoin = kwargs.pop("use_mixed_precision", False)
         # Engine configs
         self.disable_log_status = kwargs.pop("disable_log_status", False)
         # kwargs for `from_pretrained`
@@ -136,12 +138,14 @@ class EngineArgs:
                                       self.trust_remote_code,
                                       self.seed, 
                                       self.use_esymred,
+                                      self.use_batch_split,
                                       self.kwargs)
         parallel_config = ParallelConfig(self.pipeline_parallel_size,
                                          self.tensor_parallel_size,
                                          self.worker_use_ray,
                                          self.max_parallel_loading_workers)
-        scheduler_config = SchedulerConfig(self.max_batchsize)
+        scheduler_config = SchedulerConfig(self.max_batchsize,
+                                           self.use_mixed_precisoin)
         return pipeline_config, parallel_config, scheduler_config
 
 

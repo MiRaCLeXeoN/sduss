@@ -18,21 +18,18 @@ from sduss.worker import WorkerRequest
 
 
 class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
+    SUPPORT_MIXED_PRECISION = False
 
     @classmethod
     def instantiate_pipeline(cls, **kwargs):
         sub_modules: Dict = kwargs.pop("sub_modules", {})
         return cls(**sub_modules)
     
-    def prepare_input_dict(
-        self,
-        worker_reqs: List[Warning]
-    ) -> Dict:
-        pass
 
     @staticmethod
     def get_sampling_params_cls() -> Type[StableDiffusionPipelineSamplingParams]:
         return StableDiffusionPipelineSamplingParams
+
 
     def prepare_inference(
         self,

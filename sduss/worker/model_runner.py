@@ -1,5 +1,5 @@
 import time
-from typing import Any, Dict, List, Union, Tuple
+from typing import Any, Dict, List, Union, Tuple, Type
 
 import torch
 import numpy as np
@@ -12,6 +12,7 @@ from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
 from sduss.model_executor import get_pipeline
 from sduss.utils import in_wsl
 from sduss.logger import init_logger
+from sduss.model_executor.diffusers import BasePipeline
 
 logger = init_logger(__name__)
 
@@ -38,113 +39,63 @@ class ModelRunner:
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
 
-        self.pipeline = None  # Set in load_model
+        self.pipeline: BasePipeline = None  # Set in load_model
 
         self.graph_runners: Dict[int, CUDAGraphRunner] = {}
         self.graph_memory_pool = None  # Set during graph capture.
 
-        # When using CUDA graph, the input block tables must be padded to
-        # max_context_len_to_capture. However, creating the block table in
-        # Python can be expensive. To optimize this, we cache the block table
-        # in numpy and only copy the actual input content at every iteration.
-        # The shape of the cached block table will be
-        # (max batch size to capture, max context len to capture / block size).
-        self.graph_block_tables: np.ndarray = None  # Set after initial profiling.
-        # cache in_wsl result
-        self.in_wsl = in_wsl()
+        # Set after load_model
+        self.utils_cls: Dict[str, Type] = None
 
 
     def load_model(self) -> None:
-        self.pipeline = get_pipeline(self.pipeline_config)
-        self.pipeline.to("cuda")
+        self.pipeline: BasePipeline = get_pipeline(self.pipeline_config)
+        if self.scheduler_config.use_mixed_precision and not self.pipeline.SUPPORT_MIXED_PRECISION:
+            raise ValueError("This pipeline doesn't support mixed precision input!")
 
+        self.pipeline.to("cuda")
+        self.utils_cls = self.pipeline.get_sampling_params_cls().utils_cls
+        
 
     @torch.inference_mode()
     def exec_prepare_stage(
         self,
-        worker_reqs: List[WorkerRequest]
+        worker_reqs: List[WorkerRequest],
     ) -> None:
-        for wq in worker_reqs:
-            prepare_output = self.pipeline.prepare_inference(wq.sampling_params)
-            # Store prepare output
-            wq.prepare_output = prepare_output
-            # Produce step input for denoising
-            wq.step_input = wq.sampling_params.utils_cls["step_input"].from_prepare_output(prepare_output)
-    
-    @torch
-    
+        prepare_input_cls = self.utils_cls['prepare_input']
+        input_dict = prepare_input_cls.prepare_prepare_input(worker_reqs)
+        self.pipeline.prepare_inference(**input_dict)
         
+    
     @torch.inference_mode()
-    def execute_model(
+    def exec_denoising_stage(
         self,
-        seq_group_metadata_list: List[SequenceGroupMetadata],
-        kv_caches: List[Tuple[torch.Tensor, torch.Tensor]],
-    ) -> SamplerOutput:
-        # All sequences should be in either prompt or decode stage
-        is_prompt = seq_group_metadata_list[0].is_prompt
+        worker_reqs: List[WorkerRequest],
+    ) -> None:
+        step_input_cls = self.utils_cls['step_input']
+        input_dict = step_input_cls.prepare_step_input(worker_reqs)
+        self.pipeline.denoising_step(**input_dict)
+        # We don't need to find out finished ones, since scheduler can predict
+        # request's status accoding to its num_inference_steps
+    
+
+    @torch.inference_mode()
+    def exec_post_stage(
+        self,
+        worker_reqs: List[WorkerRequest],
+    ) -> None:
+        post_input_cls = self.utils_cls['post_input']
+        input_dict = post_input_cls.prepare_post_input(worker_reqs)
+        self.pipeline.post_inference(**input_dict)
+    
         
-        # Prepare input
-        if is_prompt:
-            inputs = self._prepare_prompt(seq_group_metadata_list)
-        else:
-            inputs = self._prepare_decode(seq_group_metadata_list)
-        input_tokens, input_positions, input_metadata = inputs 
-
-        # Execute model
-        if input_metadata.use_cuda_graph:
-            graph_batch_size = input_tokens.shape[0]
-            model_executable = self.graph_runners[graph_batch_size]
-        else:
-            model_executable = self.pipeline
-        hidden_states = model_executable(
-            input_ids=input_tokens,
-            positions=input_positions,
-            kv_caches=kv_caches,
-            input_metadata=input_metadata,
-        )
-
-        # Sample next token
-        sampling_metadata = self._prepare_sample(seq_group_metadata_list,
-                                                 input_metadata.prompt_lens)
-        output = self.pipeline.sample(
-            hidden_states=hidden_states,
-            sampling_metadata=sampling_metadata,
-        )
-        return output
-
-
     @torch.inference_mode()
     def profile_run(self) -> None:
-        # We need to enable top-k to reflect the accurate memeory usage
-        vocab_size = self.pipeline_config.get_vocab_size()
-        sampling_params = SamplingParams(top_p=0.99, top_k=vocab_size - 1)
-        max_num_batched_tokens = self.scheduler_config.max_num_batched_tokens
-        max_num_seqs = self.scheduler_config.max_num_seqs
-        
-        # Prepare input dummy sequences
-        seqs: List[SequenceGroupMetadata] = []
-        for group_id in range(max_num_seqs):
-            seq_len = (max_num_batched_tokens // max_num_seqs +
-                       (group_id < max_num_batched_tokens % max_num_seqs))
-            seq_data = SequenceData([0] * seq_len)
-            seq = SequenceGroupMetadata(
-                request_id=str(group_id),
-                is_prompt=True,
-                seq_data={group_id: seq_data},
-                sampling_params=sampling_params,
-                block_tables=None,
-            )
-            seqs.append(seq)
-            
-        # Run
-        num_layers = self.pipeline_config.get_num_layers(self.parallel_config)
-        kv_caches = [(None, None)] * num_layers
-        self.execute_model(seqs, kv_caches=kv_caches)
-        torch.cuda.synchronize()
+        pass
 
         
     @torch.inference_mode()
-    def capture_model(self, kv_caches: List[KVCache]) -> None:
+    def capture_model(self, kv_caches) -> None:
         """Capture the models using CUDAGraph with different batch sizes"""
         if self.pipeline_config.enforce_eager:
             raise RuntimeError("Trying to using cuda graph while "
@@ -166,14 +117,7 @@ class ModelRunner:
         # ? memory usage of CUDA graph.
         for batch_size in reversed(_BATCH_SIZES_TO_CAPTURE):
             # Create dummy input_metadata.
-            input_metadata = InputMetadata(
-                prompt_lens=[],
-                slot_mapping=slot_mapping[:batch_size],
-                max_context_len=self.max_context_len_to_capture,
-                context_lens=context_lens[:batch_size],
-                block_tables=block_tables[:batch_size],
-                use_cuda_graph=True,
-            )
+            input_metadata = None
 
             graph_runner = CUDAGraphRunner(self.pipeline)
             graph_runner.capture(
@@ -209,72 +153,13 @@ class CUDAGraphRunner:
         
     def capture(
         self,
-        input_ids: torch.Tensor,
-        positions: torch.Tensor,
-        kv_caches: List[KVCache],
-        input_metadata: InputMetadata,
-        memory_pool,
     ) -> None:
-        assert self.graph is None
-        # Run the model once without capturing the graph.
-        # This is to make sure that the captured graph does not include the
-        # kernel launches for initial benchmarking (e.g., Triton autotune).
-        self.model(
-            input_ids,
-            positions,
-            kv_caches,
-            input_metadata,
-        )
-        torch.cuda.synchronize()
-        
-        # Capture the graph
-        self.graph = torch.cuda.CUDAGraph()
-        # Pass the previous memory pool to share it among the graphs
-        with torch.cuda.graph(self.graph, pool=memory_pool):
-            hidden_states = self.model(
-                input_ids,
-                positions,
-                kv_caches,
-                input_metadata,
-            )
-        torch.cuda.synchronize()
-        
-        # Save the input and output buffers.
-        self.input_buffers = {
-            "input_ids": input_ids,
-            "positions": positions,
-            "kv_caches": kv_caches,
-            "slot_mapping": input_metadata.slot_mapping,
-            "context_lens": input_metadata.context_lens,
-            "block_tables": input_metadata.block_tables,
-        }
-        self.output_buffers = {"hidden_states": hidden_states}
+        pass
 
     def forward(
         self,
-        input_ids: torch.Tensor,
-        positions: torch.Tensor,
-        kv_caches: List[KVCache],
-        input_metadata: InputMetadata,
     ) -> torch.Tensor:
-        # KV caches are fixed tensors, so we don't need to copy them.
-        del kv_caches
-
-        # Fill the buffers with new data
-        self.input_buffers["input_ids"].copy_(input_ids, non_blocking=True)
-        self.input_buffers["positions"].copy_(positions, non_blocking=True)
-        self.input_buffers["slot_mapping"].copy_(input_metadata.slot_mapping,
-                                                 non_blocking=True)
-        self.input_buffers["context_lens"].copy_(input_metadata.context_lens,
-                                                 non_blocking=True)
-        self.input_buffers["block_tables"].copy_(input_metadata.block_tables,
-                                                 non_blocking=True)
-
-        # Run the graph.
-        self.graph.replay()
-
-        # Return the output tensor.
-        return self.output_buffers["hidden_states"]
+        pass
 
     def __call__(self, *args: Any, **kwds: Any) -> Any:
         return self.forward(*args, **kwds)

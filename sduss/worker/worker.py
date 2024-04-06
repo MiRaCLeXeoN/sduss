@@ -1,15 +1,15 @@
-
 import os
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
 
 import torch
 import torch.distributed
 
 from .model_runner import ModelRunner
-from .wrappers import WorkerExecuteInput, WorkerOutput, WorkerRequest
+from .wrappers import WorkerOutput, WorkerRequest
 from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
+
 from sduss.scheduler import Request, RequestStatus
-from sduss.model_executor import get_pipeline, set_random_seed
+from sduss.model_executor import set_random_seed
 from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
 
 class Worker:
@@ -42,6 +42,9 @@ class Worker:
         self.scheduler_config = scheduler_config
         self.rank = rank
         self.distributed_init_method = distributed_init_method
+
+        self.use_esymred = pipeline_config.use_esymred
+        self.use_mixed_precision = scheduler_config.use_mixed_precision
 
         # Updated and maintained by `execute_model` method
         self.request_pool: Dict[int, WorkerRequest] = {} 
@@ -80,17 +83,37 @@ class Worker:
     def load_model(self):
         self.model_runner.load_model()
     
+
+    def add_request(self, req_id: int, wq: WorkerRequest):
+        self.request_pool[req_id] = wq
+    
+    
+    def remove_requests(self, req_ids: Union[int, List[int]]):
+        if isinstance(req_ids, int):
+            req_ids = [req_ids]
+        for req_id in req_ids:
+            del self.request_pool[req_id]
+        
     
     def exec_prepare_stage(
         self,
         scheduler_reqs: List[Request],
     ) -> None:
+        """Execute prepare stage inference.
+        
+        At this stage, mixed precision doesn't matter at all.
+
+        Args:
+            scheduler_reqs (List[Request]): _description_
+        """
+        # 1. Create WorkerRequests to track reqs.
         worker_reqs = []
         for sche_req in scheduler_reqs:
             wq = WorkerRequest(sche_req)
-            self.request_pool[sche_req.request_id] = wq 
+            self.add_request(sche_req.request_id, wq)
             worker_reqs.append(wq)
         
+        # 2. Execute
         self.model_runner.exec_prepare_stage(worker_reqs)
         
     
@@ -106,18 +129,38 @@ class Worker:
         Args:
             req_ids (List[int]): IDs of requests to execute one iteration.
         """
+        # 1. Collect requests
         worker_reqs = []
         for req_id in req_ids:
             wq = self.request_pool[req_id]
-            assert wq.step_input is not None
             worker_reqs.append(wq)
 
-        # concat inputs
+        # 2. Execute
+        self.model_runner.exec_denoising_stage(worker_reqs)
 
+        # 3. Update reqs states
+        return
+    
+    
+    def exec_post_stage(
+        self,
+        req_ids: List[int],
+    ) -> WorkerOutput:
+        # 1. Collect requests
+        worker_reqs = []
+        for req_id in req_ids:
+            wq = self.request_pool[req_id]
+            worker_reqs.append(wq)
 
+        self.model_runner.exec_post_stage(worker_reqs)
 
+        # Create output
+        output = WorkerOutput(worker_reqs)
 
+        # Remove finished requests
+        self.remove_requests(req_ids)
 
+        return output
 
         
     @torch.inference_mode()
@@ -159,40 +202,6 @@ class Worker:
         set_random_seed(self.pipeline_config.seed)
 
     
-    @torch.inference_mode()
-    def execute_model(
-        self,
-
-        
-    ) -> SamplerOutput:
-        # Issue cache operation
-        issued_cache_op = False
-        if blocks_to_swap_in:
-            self.cache_engine.swap_in(blocks_to_swap_in)
-            issued_cache_op = True
-        if blocks_to_swap_out:
-            self.cache_engine.swap_out(blocks_to_swap_out)
-            issued_cache_op = True
-        if blocks_to_copy:
-            self.cache_engine.copy(blocks_to_copy)
-            issued_cache_op = True
-
-        cache_events = self.cache_events if issued_cache_op else None
-        
-        # Wait for cache operations to finish
-        if cache_events is not None:
-            for event in cache_events:
-                event.wait()
-        
-        # If no input, return immediately
-        if not seq_group_metadata_list:
-            return {}
-        
-        output = self.model_runner.execute_model(seq_group_metadata_list,
-                                                 self.gpu_cache)
-        return output
-        
-
 def _init_distributed_environment(
     parallel_config: ParallelConfig,
     rank: int,

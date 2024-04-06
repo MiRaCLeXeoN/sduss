@@ -1,6 +1,6 @@
 import enum
 
-from typing import List
+from typing import List, Dict
 
 import torch
 
@@ -8,6 +8,7 @@ from sduss.scheduler import RequestStatus, Request
 from sduss.model_executor.sampling_params import BaseSamplingParams
 
 from sduss.model_executor.diffusers.schedulers import BaseSchedulerStates
+from sduss.model_executor.utils import BaseOutput
 
 class InferenceStage(enum.Enum):
     PREPARE = enum.auto()
@@ -23,10 +24,10 @@ class WorkerRequest:
     ) -> None:
         self.request_id = scheduler_req.request_id
         # Status from new requests should be `waiting`
-        self.status = scheduler_req.status
-        assert self.status == RequestStatus.WAITING
+        # self.status = scheduler_req.status
+        # assert self.status == RequestStatus.WAITING
         self.sampling_params: BaseSamplingParams = scheduler_req.sampling_params
-        self.remain_steps: int = scheduler_req.remain_steps
+        # self.remain_steps: int = scheduler_req.remain_steps
 
         # Filled by inference procedure
         self.scheduler_states: BaseSchedulerStates = None
@@ -43,9 +44,13 @@ class WorkerRequest:
         # TODO(MX): Other tensors are not examined.
         
 
-class WorkerExecuteInput:
-    pass
-
 class WorkerOutput:
-    def __init__(self) -> None:
-        pass
+    def __init__(
+        self,
+        worker_reqs: List[WorkerRequest],
+    ) -> None:
+        reqs_dict: Dict[int, BaseOutput] = {}
+        for req in worker_reqs:
+            reqs_dict[req.request_id] = req.output
+        
+        self.reqs_dict = reqs_dict

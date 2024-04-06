@@ -28,13 +28,31 @@ class PipelineConfig:
         trust_remote_code: bool,
         seed: int,
         use_esymred: bool,
+        use_batch_split: bool,
         kwargs: Dict,
     ) -> None:
         self.pipeline = pipeline
         self.trust_remote_code = trust_remote_code
         self.seed = seed
         self.use_esymred = use_esymred
+        self.use_batch_split = use_batch_split
         self.kwargs = kwargs
+
+        self._verify_args()
+
+    
+    def _verify_args(self):
+        if self.use_batch_split and not self.use_esymred:
+            raise ValueError("Only esymred pipelines support batch split feature!")
+    
+    
+    def verify_with_scheduler_config(
+        self,
+        scheduler_config: "SchedulerConfig",
+    ):
+        if scheduler_config.use_mixed_precision != self.use_esymred:
+            raise ValueError("When using esymred pipelines, scheduler is forced to use mixed_precision.")
+        
         
 
 class ParallelConfig:
@@ -64,10 +82,12 @@ class ParallelConfig:
             self.worker_use_ray = True
         self._verify_args()
 
+
     def _verify_args(self) -> None:
         if self.pipeline_parallel_size > 1 or self.tensor_parallel_size > 1:
             raise NotImplementedError(
                 "Parallelism is not supported yet.")
+
 
 class SchedulerConfig:
     """Init method
@@ -83,10 +103,12 @@ class SchedulerConfig:
     """   
     def __init__(
         self, 
-        max_bathsize: int, 
+        max_bathsize: int,
+        use_mixed_precision: bool, 
     ) -> None:
 
         self.max_batchsize = max_bathsize
+        self.use_mixed_precision = use_mixed_precision
         
         self._verify_args()
         

@@ -41,7 +41,7 @@ class Engine:
     
     def __init__(
         self,
-        model_config: PipelineConfig,
+        pipeline_config: PipelineConfig,
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
         distributed_init_method: str,
@@ -63,10 +63,10 @@ class Engine:
         """
         logger.info(
             "Initializing an LLM engine with config: "
-            f"model={model_config.pipeline!r}, "
-            f"seed={model_config.seed})") 
+            f"model={pipeline_config.pipeline!r}, "
+            f"seed={pipeline_config.seed})") 
         
-        self.model_config = model_config
+        self.pipeline_config = pipeline_config
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
         self.log_states = log_states
@@ -100,9 +100,11 @@ class Engine:
                    placement_group,
                    log_states=not engine_args.disable_log_status)
         
+
     def _verify_args(self):
         """Verify args. Now only parallel config requires verification."""
-        logger.warn("_verify_args has nothing to do right now.")
+        self.pipeline_config.verify_with_scheduler_config(self.scheduler_config)
+
     
     def _init_workers(self, distributed_init_method: str):
         """Initialize workers without ray
@@ -122,7 +124,7 @@ class Engine:
         
         self.workers: List[Worker] = []
         worker = Worker(
-            self.model_config,
+            self.pipeline_config,
             self.parallel_config,
             self.scheduler_config,
             0,
@@ -162,11 +164,11 @@ class Engine:
                     placement_group=placement_group,
                     placement_group_capture_child_tasks=True),
                 **ray_remote_kwargs,
-            )(RayWorker).remote(self.model_config.trust_remote_code)
+            )(RayWorker).remote(self.pipeline_config.trust_remote_code)
             self.workers.append(worker)
             
         init_torch_dist_process_group(self.workers, backend="nccl")
-        model_config = copy.deepcopy(self.model_config)
+        model_config = copy.deepcopy(self.pipeline_config)
         parallel_config = copy.deepcopy(self.parallel_config)
         scheduler_config = copy.deepcopy(self.scheduler_config)
         
@@ -340,7 +342,7 @@ class Engine:
     
     def get_model_config(self) -> PipelineConfig:
         """Gets the model configuration."""
-        return self.model_config
+        return self.pipeline_config
 
     def get_num_unfinished_requests(self) -> int:
         """Gets the number of unfinished requests."""
