@@ -28,6 +28,10 @@ class BaseSamplingParams():
             logger.info(f"Forcing input lantents from {self.latents.device} to cpu to make sure "
                         f"it can be properly passed to worker through Ray.")
             self.latents.to("cpu")
+        
+        # Embeds must be None
+        assert self.prompt_embeds is None and self.negative_prompt_embeds is None, (
+            "Currently we don't support customized embeds.")
 
 
     def __repr__(self) -> str:

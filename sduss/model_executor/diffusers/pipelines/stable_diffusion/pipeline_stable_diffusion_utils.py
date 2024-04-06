@@ -21,7 +21,36 @@ class StableDiffusionPipelinePrepareInput:
     def prepare_prepare_input(
         worker_reqs: List[WorkerRequest],
     ) -> Dict:
-        pass
+        input_dict: Dict = {}
+        input_dict["worker_reqs"] = worker_reqs
+        # These variables must be none right now
+        input_dict["prompt"] = None
+        input_dict["negative_prompt"] = None
+        input_dict["num_inference_steps"] = None
+        input_dict["latents"] = None
+        input_dict["prompt_embeds"] = None
+        input_dict["negative_prompt_embeds"] = None
+
+        # Get a example sampling params
+        sp: "StableDiffusionPipelineSamplingParams" = worker_reqs[0].sampling_params
+        # These variables are all set as default, we can use them across all reqs.
+        input_dict["height"] = sp.height  
+        input_dict["width"] = sp.width  
+        input_dict["timesteps"] = sp.timesteps  
+        input_dict["guidance_scale"] = sp.guidance_scale  
+        input_dict["eta"] = sp.eta  
+        input_dict["generator"] = sp.generator  
+        input_dict["ip_adapter_image"] = sp.ip_adapter_image  
+        input_dict["ip_adapter_image_embeds"] = sp.ip_adapter_image_embeds  
+        input_dict["output_type"] = sp.output_type  
+        input_dict["return_dict"] = sp.return_dict  
+        input_dict["cross_attention_kwargs"] = sp.cross_attention_kwargs  
+        input_dict["guidance_rescale"] = sp.guidance_rescale  
+        input_dict["clip_skip"] = sp.clip_skip  
+        input_dict["callback_on_step_end"] = sp.callback_on_step_end  
+        input_dict["callback_on_step_end_tensor_inputs"] = sp.callback_on_step_end_tensor_inputs  
+    
+        return input_dict
         
 
 @dataclass
@@ -49,19 +78,25 @@ class StableDiffusionPipelineStepInput(BasePipelineStepInput):
         Returns:
             Dict: kwargs dict as input.
         """
-        return cls(timesteps=output.timesteps,
-                   timestep_idxs=list(range(len(output.timesteps))),
-                   timestep_cond=output.timestep_cond,
-                   latents=output.latents,
-                   prompt_embeds=output.prompt_embeds,
-                   added_cond_kwargs=output.added_cond_kwargs,
-                   extra_step_kwargs=output.extra_step_kwargs,
-                   callback_on_step_end=output.callback_on_step_end,
-                   callback_on_step_end_tensor_inputs=output.callback_on_step_end_tensor_inputs,
-                   do_classifier_free_guidance=output.do_classifier_free_guidance,
-                   guidance_rescale=output.guidance_rescale,
-                   guidance_scale=output.guidance_scale,
-                   cross_attention_kwargs=output.cross_attention_kwargs)
+        input_dict: Dict = {}
+        input_dict["worker_reqs"] = worker_reqs
+        
+        sp: "StableDiffusionPipelineSamplingParams" = worker_reqs[0].sampling_params
+        # params from sampling_params
+        input_dict["callback_on_step_end"] = sp.callback_on_step_end
+        input_dict["callback_on_step_end_tensor_inputs"] = sp.callback_on_step_end_tensor_inputs
+        input_dict["guidance_rescale"] = sp.guidance_scale
+        input_dict["guidance_scale"] = sp.guidance_rescale
+        input_dict["cross_attention_kwargs"] = sp.cross_attention_kwargs
+
+        po: "StableDiffusionPipelinePrepareOutput" = worker_reqs[0].prepare_output
+        # params from prepare_output
+        input_dict["timestep_cond"] = po.timestep_cond
+        input_dict["added_cond_kwargs"] = po.added_cond_kwargs
+        input_dict["extra_step_kwargs"] = po.extra_step_kwargs
+        input_dict["do_classifier_free_guidance"] = po.do_classifier_free_guidance
+    
+        return input_dict
         
 
 @dataclass
@@ -86,7 +121,18 @@ class StableDiffusionPipelinePostInput(BasePipelinePostInput):
         Returns:
             Dict: kwargs dict as input.
         """
-        pass
+        input_dict: Dict = {}
+        input_dict["worker_reqs"] = worker_reqs
+        # params from sampling params
+        sp: "StableDiffusionPipelineSamplingParams" = worker_reqs[0].sampling_params
+        input_dict["output_type"] = sp.output_type
+        input_dict["prompt_embeds_dtype"] = sp.prompt_embeds.dtype
+        input_dict["generator"] = sp.generator
+        # params from prepare output
+        po: "StableDiffusionPipelinePrepareOutput" = worker_reqs[0].prepare_output
+        input_dict["device"] = po.device
+
+        return input_dict
 
 
 @dataclass

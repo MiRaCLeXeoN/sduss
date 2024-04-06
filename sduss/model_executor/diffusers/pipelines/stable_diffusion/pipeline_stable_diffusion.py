@@ -367,7 +367,6 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         device: torch.device,
         prompt_embeds_dtype: torch.dtype,
         generator: torch.Generator,
-        return_dict: bool,
     ) -> StableDiffusionPipelineOutput:
         latents: List[torch.Tensor] = []
         for req in worker_reqs:
