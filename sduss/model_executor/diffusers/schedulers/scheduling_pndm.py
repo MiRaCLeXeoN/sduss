@@ -1,4 +1,4 @@
-from typing import List, Iterable
+from typing import List, Iterable, Optional, Union, Dict
 
 import numpy as np
 import torch
@@ -41,6 +41,9 @@ class PNDMSchedulerStates(BaseSchedulerStates):
     
     def get_next_timestep(self):
         return self.timesteps[self.timestep_idx]
+    
+    def get_step_idx(self):
+        return self.timestep_idx
 
 
 class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
@@ -49,7 +52,9 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         worker_reqs: List[WorkerRequest],
         device: torch.device,
     ) -> None:
-        """Set timesteps method with batch support
+        """Set timesteps method with batch support.
+        
+        set_timesteps don't need to take image size into consideration.
 
         Args:
             worker_reqs (List[WorkerRequest]): Requests to set timesteps
@@ -58,7 +63,8 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         worker_reqs = sorted(worker_reqs, key=lambda req: req.sampling_params.num_inference_steps, reverse=False)
         total_reqs_count = len(worker_reqs)
         
-        for i in range(len(worker_reqs)):
+        i = 0
+        while i < total_reqs_count:
             # 2. group reqs that have same inference steps, so that we can
             # copy data among them
             collected_reqs = [worker_reqs[i]]
@@ -84,18 +90,27 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
 
     def batch_scale_model_input(
         self,
-        worker_reqs: List[WorkerRequest],
+        latent_model_input: torch.Tensor,
+        timesteps: torch.Tensor,
     ):
-        """Nothing to do. PNDM doesn't need to scale model input."""
-        return 
+        """Batch support scale model input.
+
+        PNDM does nothing here. 
+
+        Args:
+            latent_model_input (torch.FloatTensor): Latent model input is a batched input.
+            timesteps (torch.FloatTensor): Timesteps should have the same batchsize.
+        """
+        return latent_model_input
     
     
     def batch_step(
         self,
         worker_reqs: List[WorkerRequest],
-        model_outputs: List[torch.FloatTensor],
-        timestep_list: List[int],
-    ):
+        model_outputs: torch.FloatTensor,
+        timestep_list: torch.Tensor,
+        return_dict: bool = False,
+    ) -> List[torch.FloatTensor]:
         """Batch-compatible step method.
 
         WorkerRequest's latent must be updated before this method call.
@@ -106,32 +121,57 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
             timestep_list (List[int]): _description_
 
         Returns:
-            _type_: _description_
+            torch.Tensor: concatenated results.
         """
         # 1. Split requests according to their counters. Decide which ones should go
         # prk and which ones go plms
         prk_reqs = []
         prk_model_outputs = []
         prk_timestep_list = []
+        prk_idx = []
         plms_reqs = []
         plms_model_outputs = []
         plms_timestep_list = []
+        plms_idx = []
         for i, req in enumerate(worker_reqs):
             if req.scheduler_states.counter < len(req.scheduler_states.prk_timesteps) and self.config.skip_prk_steps:
                 prk_reqs.append(req)
                 prk_model_outputs.append(model_outputs[i])
                 prk_timestep_list.append(timestep_list[i])
+                prk_idx.append(i)
             else:
                 plms_reqs.append(req)
                 plms_model_outputs.append(model_outputs[i])
                 plms_timestep_list.append(timestep_list[i])
+                plms_idx.append(i)
         
-        self.batch_step_prk(prk_reqs, prk_model_outputs, prk_timestep_list)
-        self.batch_step_plms(plms_reqs, plms_model_outputs, plms_timestep_list)
+        prk_ret = self.batch_step_prk(prk_reqs, prk_model_outputs, prk_timestep_list)
+        plms_ret = self.batch_step_plms(plms_reqs, plms_model_outputs, plms_timestep_list)
 
-        return super().batch_step()
-    
-    
+        # sort to original order
+        ret: List[torch.Tensor] = []
+        prki = 0
+        plmsi = 0
+        while prki < len(prk_idx) and plmsi < len(plms_idx):
+            if prk_idx[prki] < plms_idx[plmsi]:
+                # this req is from prk
+                ret.append(prk_ret[prki])
+                prki += 1
+            else:
+                ret.append(plms_idx[plms_idx])
+                plmsi += 1
+        while prki < len(prk_idx):
+            ret.append(prk_ret[prki])
+            prki += 1
+        while plmsi < len(plms_idx):
+            ret.append(plms_ret[plmsi])
+            plmsi += 1
+        
+        ret = [t.unsqueeze() for t in ret]
+        ret = torch.cat(ret, dim=0)
+        return ret
+
+   
     def batch_step_prk(
         self,
         worker_reqs: List[WorkerRequest],
@@ -154,7 +194,7 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
             sample = req.sampling_params.latents
 
             diff_to_prev = 0 if req.scheduler_states.counter % 2 else (
-                req.scheduler_states.config.num_train_timesteps // req.scheduler_states.num_inference_steps // 2)
+                self.config.num_train_timesteps // req.scheduler_states.num_inference_steps // 2)
             prev_timestep = timestep - diff_to_prev
             timestep = req.scheduler_states.prk_timesteps[req.scheduler_states.counter // 4 * 4]
 
@@ -176,7 +216,7 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
             prev_sample = self._get_prev_sample(cur_sample, timestep, prev_timestep, model_output)
             req.scheduler_states.counter += 1
             
-            ret.append((prev_sample, ))
+            ret.append(prev_sample)
         return ret
 
     
@@ -199,7 +239,7 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
                 req.scheduler_states.ets.append(model_output)
             else:
                 prev_timestep = timestep
-                timestep = timestep + req.scheduler_states.config.num_train_timesteps // req.scheduler_states.num_inference_steps
+                timestep = timestep + self.config.num_train_timesteps // req.scheduler_states.num_inference_steps
 
             if len(req.scheduler_states.ets) == 1 and req.scheduler_states.counter == 0:
                 model_output = model_output
@@ -218,7 +258,7 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
             prev_sample = self._get_prev_sample(sample, timestep, prev_timestep, model_output)
             req.scheduler_states.counter += 1
 
-            ret.append((prev_sample, ))
+            ret.append(prev_sample)
         
         return ret
 

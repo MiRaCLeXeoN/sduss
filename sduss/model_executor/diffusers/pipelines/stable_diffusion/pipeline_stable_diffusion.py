@@ -1,4 +1,4 @@
-from typing import overload, Union, Optional, List, Dict, Any, Callable
+from typing import overload, Union, Optional, List, Dict, Any, Callable, Type
 
 import torch
 
@@ -8,7 +8,8 @@ from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import (
 
 from .pipeline_stable_diffusion_utils import (
     StableDiffusionPipelineOutput, StableDiffusionPipelineStepOutput,
-    StableDiffusionPipelinePrepareOutput, StableDiffusionPipelineStepInput)
+    StableDiffusionPipelinePrepareOutput, StableDiffusionPipelineStepInput,
+    StableDiffusionPipelineSamplingParams)
 
 from ..pipeline_utils import BasePipeline
 from ...image_processor import PipelineImageInput
@@ -28,6 +29,10 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         worker_reqs: List[Warning]
     ) -> Dict:
         pass
+
+    @staticmethod
+    def get_sampling_params_cls() -> Type[StableDiffusionPipelineSamplingParams]:
+        return StableDiffusionPipelineSamplingParams
 
     def prepare_inference(
         self,
@@ -288,17 +293,19 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         guidance_rescale: float,
         guidance_scale: float,
         cross_attention_kwargs: Optional[Dict[str, Any]],
-    ) -> StableDiffusionPipelineStepOutput:
+    ) -> None:
         # Prepare inputs
         latents: List[torch.Tensor] = []
         prompt_embeds: List[torch.Tensor] = []
         negative_prompt_embeds: List[torch.Tensor] = []
         timesteps: List[Union[float, int]] = [] 
+        timestep_idxs: List[int] = []
         for req in worker_reqs:
             latents.append(req.sampling_params.latents)
             prompt_embeds.append(req.sampling_params.prompt_embeds.unsqueeze())
             negative_prompt_embeds.append(req.sampling_params.negative_prompt_embeds.unsqueeze())
             timesteps.append(req.scheduler_states.get_next_timestep())
+            timestep_idxs.append(req.scheduler_states.get_step_idx())
             # TODO(MX): Check tensor shape here
         
         latents = torch.cat(latents, dim=0)
@@ -306,6 +313,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         negative_prompt_embeds = torch.cat(negative_prompt_embeds, dim=0)
         if do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+            timesteps = timesteps * 2
         t = torch.tensor(data=timesteps, dtype=worker_reqs[0].scheduler_states.timesteps.dtype)
 
         # expand the latents if we are doing classifier free guidance
@@ -333,39 +341,47 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
 
         # compute the previous noisy sample x_t -> x_t-1
-        latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+        # * We don't need to split latents here, since it is not updated by the previous steps.
+        latents = self.scheduler.batch_step(worker_reqs, noise_pred, t, **extra_step_kwargs, return_dict=False)
 
+        # ! This will not be reached.
         if callback_on_step_end is not None:
             callback_kwargs = {}
             for k in callback_on_step_end_tensor_inputs:
                 callback_kwargs[k] = locals()[k]
-            callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+            # ! If we want this work, callback_on_step_end should be batch-compatible
+            callback_outputs = callback_on_step_end(self, timestep_idxs, t, callback_kwargs)
 
             latents = callback_outputs.pop("latents", latents)
             prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
             negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
         
-        # Update timesteps
-        for req in worker_reqs:
+        # Update parameters
+        for i, req in enumerate(worker_reqs):
             req.scheduler_states.update_states_one_step()
+            req.sampling_params.latents = latents[i]
+            # req.step_output = StableDiffusionPipelineStepOutput()  # Nothing to store
                 
-        return StableDiffusionPipelineStepOutput(latents=latents, prompt_embeds=prompt_embeds)
-
     
     def post_inference(
         self,
+        worker_reqs: List[WorkerRequest],
         output_type: str,
-        latents: torch.Tensor,
         device: torch.device,
-        prompt_embeds: torch.Tensor,
+        prompt_embeds_dtype: torch.dtype,
         generator: torch.Generator,
         return_dict: bool,
     ) -> StableDiffusionPipelineOutput:
+        latents: List[torch.Tensor] = []
+        for req in worker_reqs:
+            latents.append(req.sampling_params.latents.unsqueeze())
+        latents = torch.cat(latents, dim=0)
+
         if not output_type == "latent":
             image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False, generator=generator)[
                 0
             ]
-            image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds.dtype)
+            image, has_nsfw_concept = self.run_safety_checker(image, device, prompt_embeds_dtype)
         else:
             image = latents
             has_nsfw_concept = None
@@ -381,12 +397,14 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         # TODO(MX): We do not need cpu offload function
         self.maybe_free_model_hooks()
 
-        if not return_dict:
-            return (image, has_nsfw_concept)
+        for i, req in enumerate(worker_reqs):
+            # TODO(MX): nsfw_content_detected need to be processed for each request.
+            req.output = StableDiffusionPipelineOutput(
+                images=image[i],
+                nsfw_content_detected=None,
+            )
 
-        return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept)
 
-        
     def check_inputs(
         self,
         prompt,

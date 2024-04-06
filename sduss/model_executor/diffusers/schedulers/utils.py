@@ -10,6 +10,10 @@ class BaseSchedulerStates:
 
     def get_next_timestep(self):
         raise NotImplementedError
+    
+
+    def get_step_idx(self):
+        raise NotImplementedError
 
 
 class BatchSupportScheduler:

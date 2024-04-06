@@ -8,14 +8,9 @@ class BasePipeline:
         raise NotImplementedError
 
 class BasePipelineStepInput:
+    pass
     
-    def to_dict(self) -> Dict:
-        """Convert to a dict. Only dataclass fields will be added into returned dict."""
-        return {f.name:getattr(self, f.name) for f in fields(self)}
-
 
 class BasePipelinePostInput:
+    pass
     
-    def to_dict(self) -> Dict:
-        """Convert to a dict. Only dataclass fields will be added into returned dict."""
-        return {f.name:getattr(self, f.name) for f in fields(self)}

@@ -42,7 +42,8 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
         worker_reqs = sorted(worker_reqs, key=lambda req: req.sampling_params.num_inference_steps, reverse=False)
         total_reqs_count = len(worker_reqs)
         
-        for i in range(len(worker_reqs)):
+        i = 0
+        while i < total_reqs_count:
             # 2. group reqs that have same inference steps, so that we can
             # copy data among them
             collected_reqs = [worker_reqs[i]]

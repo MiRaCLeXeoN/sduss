@@ -31,8 +31,7 @@ class WorkerRequest:
         # Filled by inference procedure
         self.scheduler_states: BaseSchedulerStates = None
         self.prepare_output = None
-        self.step_input = None
-        self.post_intput = None
+        self.step_output = None
         self.output = None
 
         self._initialize_sampling_params()
