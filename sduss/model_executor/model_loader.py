@@ -14,6 +14,7 @@ from .diffusers.pipelines import PipelneRegistry, EsyMReDPipelineRegistry
 
 from sduss.config import PipelineConfig
 
+PIPELINE_CLS = None
 
 @contextlib.contextmanager
 def _set_default_torch_dtype(dtype: torch.dtype):
@@ -53,6 +54,13 @@ def load_modules(pipeline_pth: str, json_dict: Dict[str, List], kwargs: Dict) ->
     return ret
 
 
+def get_pipeline_cls():
+    global PIPELINE_CLS
+    assert PIPELINE_CLS is not None, ("No pipeline has been initialized. You cannot get pipeline class "
+                                      "before calling get_pipeline.")
+    return PIPELINE_CLS
+
+
 def get_pipeline(pipeline_config: PipelineConfig) -> Any:
     pipeline_pth = pipeline_config.pipeline
     if not os.path.isdir(pipeline_pth):
@@ -71,6 +79,9 @@ def get_pipeline(pipeline_config: PipelineConfig) -> Any:
         import_path = ".model_executor.diffusers.pipelines." + path_tuple[0]
         module = importlib.import_module(import_path, package=__name__.split(".")[0])
         pipeline_cls = getattr(module, path_tuple[1])
+
+        global PIPELINE_CLS
+        PIPELINE_CLS = pipeline_cls
 
         sub_modules = load_modules(pipeline_pth, json_file, pipeline_config.kwargs)
 

@@ -202,6 +202,13 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
         self.callback_on_step_end_tensor_inputs: List[str] = kwargs.pop("callback_on_step_end_tensor_inputs", ["latents"])
         self._check_volatile_params()
 
+
+    def is_compatible_with(self, sampling_params: "StableDiffusionPipelineSamplingParams") -> bool:
+        is_compatible = True
+        # Only volatile params are sure to influce the compatibility
+        # But since we've fixed them, params must be compatible
+        return is_compatible and super().is_compatible_with(sampling_params)
+
     
     def _check_volatile_params(self):
         """Check volatile params to ensure they are the same as default."""

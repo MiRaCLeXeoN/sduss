@@ -32,6 +32,25 @@ class BaseSamplingParams():
         # Embeds must be None
         assert self.prompt_embeds is None and self.negative_prompt_embeds is None, (
             "Currently we don't support customized embeds.")
+    
+    
+    def is_compatible_with(self, sampling_params: "BaseSamplingParams") -> bool:
+        """Whether this sampling params is compatible with another.
+
+        Compatible means these two sampling params can be batched.
+
+        We cannot determine whether these params influence the compatibility of two sampling
+        params here, since different pipelines and scheduler will have different standard of
+        compatibility.
+        So we make a check as loose as possible.
+
+        Args:
+            sampling_params (BaseSamplingParams): Another sampling params.
+
+        Returns:
+            bool: Whether they are compatible.
+        """
+        return True
 
 
     def __repr__(self) -> str:

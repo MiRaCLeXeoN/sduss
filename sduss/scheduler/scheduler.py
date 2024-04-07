@@ -26,6 +26,8 @@ class PreemptionMode(enum.Enum):
     RECOMPUTE  = enum.auto()
 
 
+# req_id -> req
+RequestQueue = Dict[int, Request]
 StateQueue = Tuple[List[Request], int, RequestStatus]
         
 class Scheduler:
@@ -47,29 +49,42 @@ class Scheduler:
         # Scheduler policy
         self.policy = PolicyFactory.get_policy(policy_name="fcfs")
 
-        # name -> (list, priority, RequestStatus)
-        # Priority here only reflects the order of process stage
-        self.state_queue: Dict[str, StateQueue]= {}
+        # resolution -> queues
+        # queue name -> RequestQueue
+        self.request_pool: Dict[int, Dict[str, RequestQueue]] = {}
+        # resolution -> number of unfinished reqs
+        self.num_unfinished_reqs: Dict[int, int] = {}
         
-        # TODO(MX): Dict[id, req] might be better than list
-        # Requests in the SWAPPED state.
-        self.swapped: List[Request] = []
-        self._register_state_queue("swapped", 0, RequestStatus.SWAPPED)
-        # Requests in the WAITING state. Haven't started to run.
-        self.waiting: List[Request] = []
-        self._register_state_queue("waiting", 10, RequestStatus.WAITING)
-        # Requests in the RUNNING state.
-        self.prepare: List[Request] = []
-        self._register_state_queue("prepare", 20, RequestStatus.PREPARE)
-        self.denoising: List[Request] = []
-        self._register_state_queue("denoising", 30, RequestStatus.DENOISING)
-        self.postprocess: List[Request] = []
-        self._register_state_queue("postprocessing", 40, RequestStatus.POSTPROCESSING)
+        # Lazy import to avoid circular import
+        from sduss.scheduler import SUPPORT_RESOLUTION
+        for res in SUPPORT_RESOLUTION:
+            self._initialize_resolution_queues(res)
+        
+        # Set status mapping: name -> (priority, status)
+        # Priority here only reflects the order of process stage
+        self.status_mapping = {
+            "waiting": (10, RequestStatus.WAITING),
+            "prepare": (20, RequestStatus.PREPARE),
+            "denoising": (30, RequestStatus.DENOISING),
+            "postprocessing": (40, RequestStatus.POSTPROCESSING),
+        }
+
+
+    def _initialize_resolution_queues(self, res: int) -> None:
+        res_queues: Dict[str, RequestQueue] = {}
+        res_queues["waiting"] = {}
+        res_queues["prepare"] = {}
+        res_queues["denoising"] = {}
+        res_queues["postprocessing"] = {}
+        self.request_pool[res] = res_queues
+        self.num_unfinished_reqs[res] = 0
 
         
     def add_request(self, req: Request) -> None:
         """Add a new request to waiting queue."""
-        self.waiting.append(req)
+        res = req.sampling_params.resolution
+        self.request_pool[res]["waiting"][req.request_id] = req
+        self.num_unfinished_reqs[res] += 1
 
         
     def abort_request(self, request_ids: Union[int, Iterable[int]]) -> None:
@@ -78,26 +93,22 @@ class Scheduler:
         Args:
             request_ids (Union[str, Iterable[str]]): Requests to be aborted.
         """        
-        if isinstance(request_ids, int):
-            request_ids = (request_ids, )  # transform into an iterable
-        request_ids = set(request_ids)
-        
-        for state_queue in self.state_queue.values():
-            # To perform removal correctly, we have to iterate reversely.
-            for req in reversed(state_queue[0]):
-                if req.request_id in request_ids:
-                    state_queue.remove(req)  # Untrack
-                    request_ids.remove(req.request_id)
-                    if not request_ids:  # early exit
-                        return
+        # TODO
+        pass
 
     
     def has_unfinished_requests(self) -> bool:
-        return self.waiting or self.prepare or self.denoising or self.postprocess
+        for num in self.num_unfinished_reqs.values():
+            if num > 0:
+                return True
+        return False 
 
 
     def get_num_unfinished_requests(self) -> int:
-        return len(self.waiting) + len(self.prepare) + len(self.denoising) + len(self.postprocess)
+        total = 0
+        for num in self.num_unfinished_reqs.values():
+            total += num
+        return total
 
     
     def _schedule(self) -> SchedulerOutput:
@@ -143,10 +154,10 @@ class Scheduler:
             
     def schedule(self) -> SchedulerOutput:
         """Schedule requests for next iteration."""
-        scheduler_outputs = self._schedule()
+        scheduler_output = self._schedule()
         # More wrappers will be added here.
         
-        return scheduler_outputs
+        return scheduler_output
     
     
     def update_reqs_status(
@@ -195,14 +206,10 @@ class Scheduler:
             assert req.status == RequestStatus.POSTPROCESSING
             self.postprocess.remove(req)
         
+        for req in reqs:
+            
         
-    def _register_state_queue(self, name: str, priority: int) -> None:
-        queue = getattr(self, name, None)
-        if queue is None:
-            raise ValueError(f"Non-existent queue {name} cannot be registered.")
-        self.state_queue[name] = (queue, priority)
-
-    
+        
     def _get_queue_from_name(self, name: str) -> List[Request]:
         if name not in self.state_queue.keys():
             raise RuntimeError("Invalid queue name was requested.")
@@ -218,8 +225,6 @@ class Scheduler:
             return self.state_queue
         elif status == RequestStatus.POSTPROCESSING:
             return self.postprocess
-        elif status == RequestStatus.SWAPPED:
-            return self.swapped
         
         
     def _decide_stage(self) -> RequestStatus:
@@ -230,7 +235,6 @@ class Scheduler:
 
     
     def _get_next_status(self, prev_status: RequestStatus) -> RequestStatus:
-        # TODO(MX): Swapped stage may not be properly handled
         if prev_status == RequestStatus.WAITING:
             return RequestStatus.PREPARE
         elif prev_status == RequestStatus.PREPARE:
@@ -251,6 +255,7 @@ class Scheduler:
             req.status = status
             target_queue.append(req)
  
+
     def _decrease_one_step(self, reqs: List[Request]) -> List[Request]:
         denoising_complete_reqs: List[Request] = []
         for req in reqs:
