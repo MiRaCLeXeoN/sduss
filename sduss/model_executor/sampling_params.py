@@ -42,7 +42,7 @@ class BaseSamplingParams():
         We cannot determine whether these params influence the compatibility of two sampling
         params here, since different pipelines and scheduler will have different standard of
         compatibility.
-        So we make a check as loose as possible.
+        So we make a check as loose as possible here, leaving derived classes to determine.
 
         Args:
             sampling_params (BaseSamplingParams): Another sampling params.

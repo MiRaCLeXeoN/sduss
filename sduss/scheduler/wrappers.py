@@ -1,8 +1,9 @@
 import enum
 
-from typing import Union, Optional, List
+from typing import Union, Optional, List, TYPE_CHECKING, Dict
 
-from sduss.model_executor.sampling_params import BaseSamplingParams
+if TYPE_CHECKING:
+    from sduss.model_executor.sampling_params import BaseSamplingParams
 
 class RequestStatus(enum.Enum):
     """Status of a sequence."""
@@ -79,7 +80,7 @@ class SchedulerOutput:
     """Wrapper of scheduler output.
     
     Args:
-        scheduled_requests: List[Request]
+        scheduled_requests: Dict[int, Dict[int, Request]]
             Requests to run in next iteration.
         stage: RequestStatus
             The inference stage at which the selected requests are. All the
@@ -88,7 +89,7 @@ class SchedulerOutput:
     
     def __init__(
         self,
-        scheduled_requests: List[Request],
+        scheduled_requests: Dict[int, Dict[int, Request]],
         status: RequestStatus
     ) -> None:
         self.scheduled_requests = scheduled_requests  
@@ -97,3 +98,70 @@ class SchedulerOutput:
     
     def is_empty(self) -> bool:
         return len(self.scheduled_requests) == 0
+
+
+ResolutionQueueType = Dict[int, Request]
+
+class ResolutionRequestQueue:
+    
+    def __init__(self, resolution: int) -> None:
+        
+        self.resolution = resolution
+        
+        # queues map: req_id -> req
+        self.waiting = {}
+        self.prepare = {}
+        self.denoising = {}
+        self.postprocessing = {}
+
+        self.queues = {
+            "waiting" : self.waiting,
+            "prepare" : self.prepare,
+            "denoising" : self.denoising,
+            "postprocessing" : self.postprocessing,
+        }
+        
+        self._num_unfinished_reqs = 0
+
+    
+    def add_request(self, req: Request):
+        self.waiting[req.request_id] = req
+        self._num_unfinished_reqs += 1
+
+    
+    def abort_requests(self, req_ids: Union[int, List[int]]):
+        if isinstance(req_ids, int):
+            req_ids = [req_ids]
+        
+        for req_id in req_ids:
+            for queue in self.queues.values():
+                if queue.pop(req_id, None) is not None:
+                    self._num_unfinished_reqs -= 1
+                    break
+
+    
+    def get_num_unfinished_reqs(self) -> int:
+        return self._num_unfinished_reqs
+    
+    
+    def get_queue_by_name(self, name: str):
+        return self.queues[name]
+    
+    
+    def get_queue_by_status(self, status: RequestStatus) -> Dict[int, Request]:
+        if status == RequestStatus.WAITING:
+            return self.waiting
+        elif status == RequestStatus.PREPARE:
+            return self.prepare
+        elif status == RequestStatus.DENOISING:
+            return self.denoising
+        elif status == RequestStatus.POSTPROCESSING:
+            return self.postprocessing
+    
+    
+    def get_all_reqs(self) -> List[Request]:
+        ret = []
+        for q in self.queues.values():
+            ret.extend(q)
+        return ret
+            

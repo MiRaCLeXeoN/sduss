@@ -1,8 +1,9 @@
 import time
 
-from typing import List, Tuple
+from typing import List, Tuple, TYPE_CHECKING
 
-from sduss.scheduler import Request, RequestStatus
+if TYPE_CHECKING:
+    from sduss.scheduler import Request, RequestStatus, SchedulerOutput
 
 from .policy import Policy
 
@@ -14,54 +15,57 @@ class FCFS(Policy):
     that can be batched with it (A giant request will be split as many single
     requests at the entrypoint. They can be processed together).
     """
-    def get_priority(self, now: float, req: Request) -> float:
-        """Returns a float as a comparison metric for sorted.
-
-        Args:
-            now (float): Time at now.
-            req (Request): Requst.
-
-        Returns:
-            float: Comparison result.
-        """        
-        return now - req.arrival_time
-
-
-    def decide_stage(self) -> RequestStatus:
-        for 
-        
-        
-        queue_list = list(state_queues.values())
-        # Sort with descending order
-        queue_list = sorted(queue_list, key=lambda x: x[1], reverse=True)
-        for i in range(len(queue_list)):
-            if len(queue_list[i][0]) > 0:
-                return queue_list[i][2]
-        return None
-    
-    
     def _flatten_all_reqs(self) -> List[Request]:
         reqs = []
-        for status_queues in self.request_pool.values():
-            for request_queue in status_queues.values():
-                for req in request_queue.values():
-                    reqs.append(req)
-        return req
+        for resolution_queue in self.request_pool.values():
+            reqs.extend(resolution_queue.get_all_reqs())
+        return reqs
     
     
-    def schedule_requests(self) -> Tuple[RequestStatus, List[Request]]:
+    def schedule_requests(self, max_num: int) -> SchedulerOutput:
+        """Schedule requests for next iteration.
+
+        FCFS features
+            Supports:
+                1. batch reqs of different timesteps
+            Don't supports:
+                2. mixed-precision shceduling
+
+        Args:
+            max_num (int): _description_
+
+        Returns:
+            List[Request]: _description_
+        """
         flattened_reqs = self._flatten_all_reqs()
 
         # Find the oldest request
         now = time.monotonic()
         flattened_reqs.sort(key = lambda req: now - req.arrival_time, reverse=True)
         target_req = flattened_reqs[0]
+        target_status = target_req.status
+        target_res = target_req.sampling_params.resolution
 
+        resolution_req_dict = {}
+        
         # Find compatible requests
-        # 1. has the same stage
-        # 2. has the same remain steps
-        # 3. sampling params is compatible
+        # 1. has the same status
+        res_queue = self.request_pool[target_res]
+        queue = res_queue.get_queue_by_status(target_status)
+        # 2. sampling params is compatible
+        num_to_collect = max_num
+        for req in queue.values():
+            if num_to_collect <= 0:
+                break
+            if req.sampling_params.is_compatible_with(target_req.sampling_params): 
+                resolution_req_dict[req.request_id] = req
+                num_to_collect -= 1
+        
+        # wrapper
+        ret = {}
+        ret[target_res] = resolution_req_dict
 
-        
-        
-        pass
+        return SchedulerOutput(
+            scheduled_requests=ret,
+            status=target_status,
+        )

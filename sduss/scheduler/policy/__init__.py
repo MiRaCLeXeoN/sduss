@@ -1,4 +1,4 @@
-
+from .FCFS import FCFS
 
 class PolicyFactory:
     
@@ -7,5 +7,5 @@ class PolicyFactory:
     }
     
     @classmethod
-    def get_policy(cls, policy_name: str, **kwargs) -> Policy:
+    def get_policy(cls, policy_name: str, **kwargs):
         return cls._POLICY_REGISTRY[policy_name](**kwargs)

@@ -93,22 +93,18 @@ class SchedulerConfig:
     """Init method
 
     Args:
-        max_num_batched_tokens (int): Maximum number of tokens to be processed in
-            a single iteration.
-        max_num_seqs (int): Maximum number of sequences to be processed in a 
-            single iteration.
-        max_model_len (int): Maximum length of a sequence (including prompt
-            and generated text).
-        max_paddings (int): Maximum number of paddings to be added to a batch.
+
     """   
     def __init__(
         self, 
         max_bathsize: int,
         use_mixed_precision: bool, 
+        policy: str,
     ) -> None:
 
         self.max_batchsize = max_bathsize
         self.use_mixed_precision = use_mixed_precision
+        self.policy = policy
         
         self._verify_args()
         
