@@ -8,11 +8,11 @@ if TYPE_CHECKING:
 class RequestStatus(enum.Enum):
     """Status of a sequence."""
     # Waiting
-    WAITING = enum.auto()
+    WAITING = enum.auto()  # newly arrived reqs
     # Running
-    PREPARE = enum.auto()
-    DENOISING = enum.auto()
-    POSTPROCESSING = enum.auto()
+    PREPARE = enum.auto()           # ready for prepare stage
+    DENOISING = enum.auto()         # ready for denoising stage
+    POSTPROCESSING = enum.auto()    # ready for postprocessing stage
     # Swapped
     SWAPPED = enum.auto()
     # Finished
@@ -113,12 +113,14 @@ class ResolutionRequestQueue:
         self.prepare = {}
         self.denoising = {}
         self.postprocessing = {}
+        self.finished = {}
 
         self.queues = {
             "waiting" : self.waiting,
             "prepare" : self.prepare,
             "denoising" : self.denoising,
             "postprocessing" : self.postprocessing,
+            "finished" : self.finished
         }
         
         self._num_unfinished_reqs = 0
@@ -157,11 +159,30 @@ class ResolutionRequestQueue:
             return self.denoising
         elif status == RequestStatus.POSTPROCESSING:
             return self.postprocessing
+        elif status == RequestStatus.FINISHED_STOPPED:
+            return self.finished
     
     
-    def get_all_reqs(self) -> List[Request]:
+    def get_all_unfinished_reqs(self) -> List[Request]:
+        """Get all unfinifhsed reqs.
+
+        Returns:
+            List[Request]: All unfinished reqs.
+        """
         ret = []
-        for q in self.queues.values():
-            ret.extend(q)
+        for name, q in self.queues.items():
+            if name == "finished":
+                continue
+            ret.extend(q.values())
         return ret
+    
+    
+    def get_fnished_req_ids(self) -> List[int]:
+        return list(self.finished.keys())
+    
+    
+    def free_all_finished_reqs(self) -> None:
+        self.finished.clear()
+
+    
             

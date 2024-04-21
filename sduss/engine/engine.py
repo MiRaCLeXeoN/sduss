@@ -134,6 +134,7 @@ class Engine:
         # initialize model on all workers
         self._run_workers("init_dis_env", get_all_outputs=True)
         self._run_workers("load_model", get_all_outputs=True)
+
         
     def _init_workers_ray(
         self,
@@ -214,13 +215,13 @@ class Engine:
         # Add the request to the scheduler.
         self.scheduler.add_request(req)
     
-    def abort_request(self, request_id: Union[int, Iterable[int]]) -> None:
+    def abort_request(self, request_ids: Union[int, Iterable[int]]) -> None:
         """Aborts a request(s) with the given ID.
 
         Args:
             request_id: The ID(s) of the request to abort.
         """
-        self.scheduler.abort_request(request_id)
+        self.scheduler.abort_request(request_ids)
 
     
     def _schedule(self) -> Tuple[SchedulerOutput, List[int]] :
@@ -281,6 +282,7 @@ class Engine:
             self._log_system_states(scheduler_outputs.prompt_run,
                                     scheduler_outputs.num_batched_tokens)
         return request_outputs
+
     
     def _run_workers_in_batch(
         self,
@@ -339,18 +341,22 @@ class Engine:
             for other_output in all_outputs[1:]:
                 assert output == other_output, "Trying to ignore other valid outputs."
             return output
+
     
-    def get_model_config(self) -> PipelineConfig:
+    def get_pipeline_config(self) -> PipelineConfig:
         """Gets the model configuration."""
         return self.pipeline_config
+
 
     def get_num_unfinished_requests(self) -> int:
         """Gets the number of unfinished requests."""
         return self.scheduler.get_num_unfinished_requests()
 
+
     def has_unfinished_requests(self) -> bool:
         """Returns True if there are unfinished requests."""
         return self.scheduler.has_unfinished_requests()
+
     
     def _log_system_states(
         self,
@@ -359,50 +365,6 @@ class Engine:
     ) -> None:
         now = time.monotonic()
         
-        if prompt_run:
-            self.num_prompt_tokens.append((now, num_batched_tokens))
-        else:
-            self.num_generation_tokens.append((now, num_batched_tokens))
-            
-        should_log = now - self.last_logging_time >= _LOGGING_INTERVAL_SEC
-        if not should_log:
-            return
-        
-        # Discard the old states
-        self.num_prompt_tokens = [(t, n) for t, n in self.num_prompt_tokens
-                                  if now - t < _LOGGING_INTERVAL_SEC]
-        self.num_generation_tokens = [(t, n) for t, n in self.num_generation_tokens
-                                      if now - t < _LOGGING_INTERVAL_SEC]
-        
-        if len(self.num_prompt_tokens) > 1:
-            total_num_tokens = sum(n for _, n in self.num_prompt_tokens[:-1])
-            window = now - self.num_prompt_tokens[0][0]
-            avg_prompt_throughput = total_num_tokens / window
-        else:
-            avg_prompt_throughput = 0.0
-        if len(self.num_generation_tokens) > 1:
-            total_num_tokens = sum(n
-                                   for _, n in self.num_generation_tokens[:-1])
-            window = now - self.num_generation_tokens[0][0]
-            avg_generation_throughput = total_num_tokens / window
-        else:
-            avg_generation_throughput = 0.0
-
-        total_num_gpu_blocks = self.cache_config.num_gpu_blocks
-        num_free_gpu_blocks = (
-            self.scheduler.block_manager.get_num_free_gpu_blocks())
-        num_used_gpu_blocks = total_num_gpu_blocks - num_free_gpu_blocks
-        gpu_cache_usage = num_used_gpu_blocks / total_num_gpu_blocks
-
-        total_num_cpu_blocks = self.cache_config.num_cpu_blocks
-        if total_num_cpu_blocks > 0:
-            num_free_cpu_blocks = (
-                self.scheduler.block_manager.get_num_free_cpu_blocks())
-            num_used_cpu_blocks = total_num_cpu_blocks - num_free_cpu_blocks
-            cpu_cache_usage = num_used_cpu_blocks / total_num_cpu_blocks
-        else:
-            cpu_cache_usage = 0.0
-
         record_metrics(
             avg_prompt_throughput=avg_prompt_throughput,
             avg_generation_throughput=avg_generation_throughput,

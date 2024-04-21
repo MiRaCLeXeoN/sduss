@@ -12,23 +12,6 @@ from sduss.worker import WorkerOutput
 
 logger = init_logger(__name__)
 
-class PreemptionMode(enum.Enum):
-    """Preemption Modes
-
-    Attributes:
-        SWAP: Swap out the blocks of the preempted sequences to CPU memory
-            and swap the back in when the sequences are resumed.
-        RECOMPUTE: Discard the blocks of the preempted sequences and recompute
-            them when the sequences are resumed, treating the sequences as
-            new prompts.
-    """
-    SWAP = enum.auto()
-    RECOMPUTE  = enum.auto()
-
-
-# req_id -> req
-StateQueue = Tuple[List[Request], int, RequestStatus]
-        
 class Scheduler:
     """Main scheduler which arranges tasks.
     
@@ -58,19 +41,10 @@ class Scheduler:
         self.policy = PolicyFactory.get_policy(policy_name=self.scheduler_config.policy,
                                                request_pool=self.request_pool)
         
-        # Set status mapping: name -> (priority, status)
-        # Priority here only reflects the order of process stage
-        self.status_mapping = {
-            "waiting": (10, RequestStatus.WAITING),
-            "prepare": (20, RequestStatus.PREPARE),
-            "denoising": (30, RequestStatus.DENOISING),
-            "postprocessing": (40, RequestStatus.POSTPROCESSING),
-        }
-
 
     def schedule(self) -> SchedulerOutput:
         """Schedule requests for next iteration."""
-        scheduler_output = self.policy.schedule_requests(self.max_batchsize)
+        scheduler_output = self.policy.schedule_requests(max_num=self.max_batchsize)
         # More wrappers will be added here.
         
         return scheduler_output
@@ -80,6 +54,7 @@ class Scheduler:
         """Add a new request to waiting queue."""
         resolution = req.sampling_params.resolution
         self.request_pool[resolution].add_request(req)
+        assert req.request_id not in self.req_mapping
         self.req_mapping[req.request_id] = req
         
 
@@ -95,7 +70,7 @@ class Scheduler:
         for req_id in request_ids:
             req = self.req_mapping.pop(req_id)  # pop out mapping
             resolution = req.sampling_params.resolution
-            if not resolution in res_reqid_dict:
+            if resolution not in res_reqid_dict:
                 res_reqid_dict[resolution] = [req_id]
             else:
                 res_reqid_dict[resolution].append(req_id)
@@ -124,13 +99,12 @@ class Scheduler:
     def update_reqs_status(
         self,
         scheduler_outputs: SchedulerOutput,
-        request_ids: List[int],
-        output: WorkerOutput,
     ):
         """Update requests after one iteration."""
-        # Move this req to next queue
+        # Move reqs to next status
         sche_status = scheduler_outputs.status
         sche_reqs = scheduler_outputs.scheduled_requests
+
         next_status = self._get_next_status(sche_status)
         if sche_status == RequestStatus.WAITING:
             self._update_reqs_to_status_queue(prev_status=sche_status, status=next_status, reqs=sche_reqs)
@@ -155,45 +129,32 @@ class Scheduler:
                                                   reqs=denoising_complete_reqs)
             return 
         elif sche_status == RequestStatus.POSTPROCESSING:
-            assert output is not None
-            # engine is responsible ofr prepare output, we don't need to do so here
-            # free finished requests automatically
-            self._free_finished_requests(sche_reqs)
+            # engine is responsible for prepare output, we don't need to do so here
+            # finished reqs should be freed by calls to `free_finished_reqs`
+            self._update_reqs_to_status_queue(prev_status=sche_status, status=next_status, reqs=sche_reqs)
+        else:
+            raise RuntimeError(f"Unexpected status {sche_status} to update.")
             
         
-    def _free_finished_requests(self, reqs: List[Request]) -> None:
+    def free_all_finished_requests(self) -> None:
         """Untrack all finished requests."""
-        for req in reqs:
-            assert req.status == RequestStatus.POSTPROCESSING
-            self.postprocess.remove(req)
+        # 1. collect req_ids and free reqs
+        req_ids = []
+        for res_queue in self.request_pool.values():
+            req_ids.extend(res_queue.get_fnished_req_ids())
+            res_queue.free_all_finished_reqs()
+        # 2. clear mapping reference
+        for req_id in req_ids:
+            self.req_mapping.pop(req_id)
         
-        for req in reqs:
-            return 
-            
         
-    def _decide_stage(self) -> RequestStatus:
-        target_status = self.policy.decide_stage(self.state_queue)
-        if target_status is None:
-            raise RuntimeError("No queue in scheduler has remaining requsts to process.")
-        return target_status
-
-
     def _initialize_resolution_queues(self, res: int) -> None:
         self.request_pool[res] = ResolutionRequestQueue(res)
 
     
     def _get_next_status(self, prev_status: RequestStatus) -> RequestStatus:
-        if prev_status == RequestStatus.WAITING:
-            return RequestStatus.PREPARE
-        elif prev_status == RequestStatus.PREPARE:
-            return RequestStatus.DENOISING
-        elif prev_status == RequestStatus.DENOISING:
-            return RequestStatus.POSTPROCESSING
-        elif prev_status == RequestStatus.POSTPROCESSING:
-            return RequestStatus.FINISHED_STOPPED
-        else:
-            raise ValueError(f"Not next status available for {prev_status}")
-    
+        return RequestStatus.get_next_status(prev_status)
+        
     
     def _update_reqs_to_status_queue(self, prev_status: RequestStatus, status: RequestStatus, reqs: List[Request]):
         prev_queue = self._get_queue_from_status(prev_status)
@@ -205,6 +166,14 @@ class Scheduler:
  
 
     def _decrease_one_step(self, reqs: List[Request]) -> List[Request]:
+        """Decrease one remain step for requests.
+
+        Args:
+            reqs (List[Request]): Target reqs.
+
+        Returns:
+            List[Request]: Requests whose remain steps are decresed to 0.
+        """
         denoising_complete_reqs: List[Request] = []
         for req in reqs:
             # Prepare stage has been updated to denoising, it's safe to do so
