@@ -56,7 +56,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         **kwargs
-    ) -> StableDiffusionPipelinePrepareOutput:
+    ) -> None:
         r"""
         Prepare denoising. Arguments will be stored inside the object. And all necessary steps before
         UNet iteration will be performed here.
@@ -367,7 +367,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         device: torch.device,
         prompt_embeds_dtype: torch.dtype,
         generator: torch.Generator,
-    ) -> StableDiffusionPipelineOutput:
+    ) -> None:
         latents: List[torch.Tensor] = []
         for req in worker_reqs:
             latents.append(req.sampling_params.latents.unsqueeze())
@@ -391,7 +391,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
 
         # Offload all models
         # TODO(MX): We do not need cpu offload function
-        self.maybe_free_model_hooks()
+        # self.maybe_free_model_hooks()
 
         for i, req in enumerate(worker_reqs):
             # TODO(MX): nsfw_content_detected need to be processed for each request.

@@ -53,4 +53,6 @@ class WorkerOutput:
         for req in worker_reqs:
             reqs_dict[req.request_id] = req.output
         
-        self.reqs_dict = reqs_dict
+        # req_id -> pipeline output cls
+        # pipeline output cls is assured to exist in CPU memory instead of on device
+        self.req_output_dict = reqs_dict

@@ -6,6 +6,7 @@ Here defines the main base Engine class
 import copy
 import os
 import time
+import datetime
 
 from typing import Optional, Union, List, Any, Tuple, Dict, TYPE_CHECKING, Iterable
 from functools import partial
@@ -19,7 +20,7 @@ from sduss.scheduler import Scheduler, SchedulerOutput, Request, RequestStatus
 from sduss.worker import WorkerOutput
 
 from sduss.logger import init_logger
-from sduss.outputs import RequestOutput
+from sduss.entrypoints.outputs import RequestOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.utils import Counter
 from sduss.config import (PipelineConfig, ParallelConfig, SchedulerConfig)
@@ -48,21 +49,8 @@ class Engine:
         placement_group: Optional["PlacementGroup"],
         log_states: bool,
     ) -> None:
-        """_summary_
-
-        Args:
-            model_config (ModelConfig): As name indicates
-            cache_config (CacheConfig): As name indicates
-            parallel_config (ParallelConfig): As name indicates
-            scheduler_config (SchedulerConfig): As name indicates
-            distributed_init_method (str): The initialization method for distributed
-                execution. See `torch.distributed.init_process_group` for details.
-            placement_group (Optional[PlacementGroup]): Ray placement group
-                for distributed execution.
-            log_status (bool): Whether to log statistics.
-        """
         logger.info(
-            "Initializing an LLM engine with config: "
+            "Initializing an engine with config: "
             f"model={pipeline_config.pipeline!r}, "
             f"seed={pipeline_config.seed})") 
         
@@ -85,6 +73,7 @@ class Engine:
         self.last_logging_time = 0.0
         # List of (timestamp, num_tokens)
         self.num_generated_images: List[Tuple[float, int]] = []
+
     
     @classmethod
     def from_engine_args(cls, engine_args: EngineArgs) -> "Engine":
@@ -199,14 +188,9 @@ class Engine:
 
         Args:
             request_id (int): _description_
-            prompt (Optional[str]): _description_
             samping_params (SamplingParams): _description_
-            prompt_token_ids (Optional[List[int]], optional): _description_. Defaults to None.
             arrival_time (Optional[float], optional): _description_. Defaults to None.
         """
-        if arrival_time is None:
-            arrival_time = time.monotonic()
-
         # Create a new Request
         req = Request(request_id=request_id, 
                       arrival_time=arrival_time, 
@@ -214,8 +198,9 @@ class Engine:
 
         # Add the request to the scheduler.
         self.scheduler.add_request(req)
+
     
-    def abort_request(self, request_ids: Union[int, Iterable[int]]) -> None:
+    def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> None:
         """Aborts a request(s) with the given ID.
 
         Args:
@@ -225,12 +210,10 @@ class Engine:
 
     
     def _schedule(self) -> Tuple[SchedulerOutput, List[int]] :
-        """Scheduling for this round running."""        
+        """Scheduling for current round."""        
         scheduler_outputs = self.scheduler.schedule()
         # Extract request ids
-        req_ids = []
-        for req in scheduler_outputs.scheduled_requests:
-            req_ids.append(req.request_id)
+        req_ids = scheduler_outputs.get_req_ids()
         
         return scheduler_outputs, req_ids
 
@@ -238,11 +221,14 @@ class Engine:
     def step(self) -> List[RequestOutput]:
         """Performs one denoising iteration and returns newly generated results."""
         scheduler_output, req_ids = self._schedule()
+
         if scheduler_output.status == RequestStatus.WAITING:
+            # Currently, we don't do anything in waiting stage
+            pass
+        elif scheduler_output.status == RequestStatus.PREPARE:
             # For prepare stage inference
             self._run_workers("exec_prepare_stage", scheduler_output=scheduler_output)
-        elif (scheduler_output.status == RequestStatus.PREPARE or
-            scheduler_output.status == RequestStatus.DENOISING):
+        elif scheduler_output.status == RequestStatus.DENOISING:
             # For denoising stage inference
             self._run_workers("exec_denoising_stage", req_ids=req_ids)
         elif (scheduler_output.status == RequestStatus.POSTPROCESSING):
@@ -251,8 +237,17 @@ class Engine:
                 "execute_post_stage",
                 scheduler_output=scheduler_output,
             )
+        else:
+            raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
         
-        return self._process_output(scheduler_output, req_ids, output)
+        output =  self._process_output(scheduler_outputs=scheduler_output,
+                                    req_ids=req_ids,
+                                    output=output,)
+
+        if self.log_states:
+            self._log_system_states(scheduler_output)
+        
+        return output
 
     
     def _process_output(
@@ -264,24 +259,21 @@ class Engine:
         """Update requests status and prepare return result if available."""
         
         # Update the scheduled sequence groups with the model outputs
-        scheduled_reqs = scheduler_outputs.scheduled_requests
-        if scheduler_outputs.status == 
-        for seq_group, outputs in zip(scheduled_seq_groups, output):
-            self._process_sequence_group_outputs(seq_group, outputs)
-            
-        # Free the finished sequence groups
-        self.scheduler.free_finished_requests()
+        self.scheduler.update_reqs_status(scheduler_outputs=scheduler_outputs,
+                                          output=output,
+                                          req_ids=req_ids)
+        # collect finished reqs
+        finished_reqs = self.scheduler.get_finished_requests()
+
+        # Create output wrappers
+        ret = []
+        for req in finished_reqs:
+            ret.append(RequestOutput(req))
         
-        # Wraps sampler outputs as request_outputs
-        request_outputs: List[RequestOutput] = []
-        for seq_group in (scheduled_seq_groups + scheduler_outputs.ignored_seq_groups):
-            request_output = RequestOutput.from_seq_group(seq_group)
-            request_outputs.append(request_output)
+        # free finished reqs
+        self.scheduler.free_all_finished_requests()
         
-        if self.log_states:
-            self._log_system_states(scheduler_outputs.prompt_run,
-                                    scheduler_outputs.num_batched_tokens)
-        return request_outputs
+        return ret
 
     
     def _run_workers_in_batch(
@@ -304,6 +296,7 @@ class Engine:
         if self.parallel_config.worker_use_ray:
             all_outputs = ray.get(all_outputs)
         return all_outputs
+
     
     def _run_workers(
         self,
@@ -360,29 +353,17 @@ class Engine:
     
     def _log_system_states(
         self,
-        prompt_run: bool,
-        num_batched_tokens: int,
+        scheduler_output: SchedulerOutput,
     ) -> None:
-        now = time.monotonic()
+        # record_metrics(
+        #     avg_prompt_throughput=avg_prompt_throughput,
+        #     avg_generation_throughput=avg_generation_throughput,
+        #     scheduler_running=len(self.scheduler.running),
+        #     scheduler_swapped=len(self.scheduler.swapped),
+        #     scheduler_waiting=len(self.scheduler.waiting),
+        #     gpu_cache_usage=gpu_cache_usage,
+        #     cpu_cache_usage=cpu_cache_usage,
+        # ) 
         
-        record_metrics(
-            avg_prompt_throughput=avg_prompt_throughput,
-            avg_generation_throughput=avg_generation_throughput,
-            scheduler_running=len(self.scheduler.running),
-            scheduler_swapped=len(self.scheduler.swapped),
-            scheduler_waiting=len(self.scheduler.waiting),
-            gpu_cache_usage=gpu_cache_usage,
-            cpu_cache_usage=cpu_cache_usage,
-        ) 
-        
-        logger.info("Avg prompt throughput: "
-                    f"{avg_prompt_throughput:.1f} tokens/s, "
-                    "Avg generation throughput: "
-                    f"{avg_generation_throughput:.1f} tokens/s, "
-                    f"Running: {len(self.scheduler.running)} reqs, "
-                    f"Swapped: {len(self.scheduler.swapped)} reqs, "
-                    f"Pending: {len(self.scheduler.waiting)} reqs, "
-                    f"GPU KV cache usage: {gpu_cache_usage * 100:.1f}%, "
-                    f"CPU KV cache usage: {cpu_cache_usage * 100:.1f}%")
-        self.last_logging_time = now
+        logger.info(f"Running: {self.scheduler.get_num_unfinished_requests()} reqs ")
         

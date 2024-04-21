@@ -5,7 +5,7 @@ import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from sduss.utils import Counter
-from sduss.outputs import RequestOutput
+from sduss.entrypoints.outputs import RequestOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.model_executor.diffusers import BasePipeline
 from sduss.engine.arg_utils import EngineArgs
@@ -26,8 +26,8 @@ class DiffusionPipeline:
     
     def get_sampling_params_cls(self):
         from sduss.model_executor.model_loader import get_pipeline_cls
-        pipeline_cls: BasePipeline = get_pipeline_cls()
-        return pipeline_cls.get_sampling_params_cls()
+        self.pipeline_cls: BasePipeline = get_pipeline_cls()
+        return self.pipeline_cls.get_sampling_params_cls()
         
     def generate(
         self,

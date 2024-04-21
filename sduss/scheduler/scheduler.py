@@ -2,6 +2,7 @@ import enum
 import time
 
 from typing import List, Optional, Tuple, Dict, Union, Iterable
+from typing import TYPE_CHECKING
 
 from .policy import PolicyFactory
 from .wrappers import Request, RequestStatus, SchedulerOutput, ResolutionRequestQueue
@@ -9,6 +10,9 @@ from sduss.config import SchedulerConfig
 from sduss.logger import init_logger
 from sduss.utils import Counter
 from sduss.worker import WorkerOutput
+
+if TYPE_CHECKING:
+    from .wrappers import RequestDictType, SchedulerOutputReqsType
 
 logger = init_logger(__name__)
 
@@ -96,27 +100,43 @@ class Scheduler:
         return total
     
     
+    def has_finished_requests(self) -> bool:
+        for res_queue in self.request_pool.values():
+            if res_queue.get_num_finished_reqs > 0:
+                return True
+        return False
+    
+    
+    def get_finished_requests(self) -> List[Request]:
+        ret = []
+        for res in self.request_pool:
+            ret.extend(self.request_pool[res].get_finished_reqs())
+        return ret
+    
+    
     def update_reqs_status(
         self,
         scheduler_outputs: SchedulerOutput,
+        output: WorkerOutput,
+        req_ids: List[int],
     ):
         """Update requests after one iteration."""
         # Move reqs to next status
         sche_status = scheduler_outputs.status
-        sche_reqs = scheduler_outputs.scheduled_requests
+        sche_reqs: SchedulerOutputReqsType = scheduler_outputs.scheduled_requests
 
         next_status = self._get_next_status(sche_status)
         if sche_status == RequestStatus.WAITING:
-            self._update_reqs_to_status_queue(prev_status=sche_status, status=next_status, reqs=sche_reqs)
+            self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
             return 
         elif sche_status == RequestStatus.PREPARE:
             # First iteration of denoising has done
-            self._update_reqs_to_status_queue(prev_status=sche_status, status=next_status, reqs=sche_reqs)
+            self._update_reqs_to_next_status(prev_status=sche_status, status=next_status, reqs=sche_reqs)
             # Some reqs might only iterate once
             denoising_complete_reqs = self._decrease_one_step(sche_reqs)
             if len(denoising_complete_reqs) > 0:
-                self._update_reqs_to_status_queue(prev_status=next_status, 
-                                                  status=RequestStatus.POSTPROCESSING, 
+                self._update_reqs_to_next_status(prev_status=next_status, 
+                                                  next_status=RequestStatus.POSTPROCESSING, 
                                                   reqs=denoising_complete_reqs)
             return 
         elif sche_status == RequestStatus.DENOISING:
@@ -124,14 +144,20 @@ class Scheduler:
             # may or may not move to post stage
             denoising_complete_reqs = self._decrease_one_step(sche_reqs)
             if len(denoising_complete_reqs) > 0:
-                self._update_reqs_to_status_queue(prev_status=next_status, 
-                                                  status=RequestStatus.POSTPROCESSING, 
+                self._update_reqs_to_next_status(prev_status=next_status, 
+                                                  next_status=RequestStatus.POSTPROCESSING, 
                                                   reqs=denoising_complete_reqs)
             return 
         elif sche_status == RequestStatus.POSTPROCESSING:
-            # engine is responsible for prepare output, we don't need to do so here
             # finished reqs should be freed by calls to `free_finished_reqs`
-            self._update_reqs_to_status_queue(prev_status=sche_status, status=next_status, reqs=sche_reqs)
+            self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
+            # create finish timestamp
+            current_timestamp = time.time()
+            # store output
+            for req_id in req_ids:
+                self.req_mapping[req_id].output = output.req_output_dict[req_id]
+                self.req_mapping[req_id].finish_time = current_timestamp
+            return 
         else:
             raise RuntimeError(f"Unexpected status {sche_status} to update.")
             
@@ -141,7 +167,7 @@ class Scheduler:
         # 1. collect req_ids and free reqs
         req_ids = []
         for res_queue in self.request_pool.values():
-            req_ids.extend(res_queue.get_fnished_req_ids())
+            req_ids.extend(res_queue.get_finished_req_ids())
             res_queue.free_all_finished_reqs()
         # 2. clear mapping reference
         for req_id in req_ids:
@@ -156,29 +182,34 @@ class Scheduler:
         return RequestStatus.get_next_status(prev_status)
         
     
-    def _update_reqs_to_status_queue(self, prev_status: RequestStatus, status: RequestStatus, reqs: List[Request]):
-        prev_queue = self._get_queue_from_status(prev_status)
-        target_queue = self._get_queue_from_status(status)
-        for req in reqs:
-            prev_queue.remove(req)
-            req.status = status
-            target_queue.append(req)
- 
+    def _update_reqs_to_next_status(
+        self, 
+        prev_status: RequestStatus, 
+        next_status: RequestStatus, 
+        reqs: SchedulerOutputReqsType,
+    ):
+        # Update resolution by resolution
+        for res, reqs_dict in reqs.items():
+            self.request_pool[res].update_reqs_status(reqs_dict=reqs_dict, 
+                                                      prev_status=prev_status, 
+                                                      next_status=next_status)
 
-    def _decrease_one_step(self, reqs: List[Request]) -> List[Request]:
-        """Decrease one remain step for requests.
+    
 
-        Args:
-            reqs (List[Request]): Target reqs.
-
-        Returns:
-            List[Request]: Requests whose remain steps are decresed to 0.
-        """
-        denoising_complete_reqs: List[Request] = []
-        for req in reqs:
-            # Prepare stage has been updated to denoising, it's safe to do so
-            assert req.status == RequestStatus.DENOISING
-            req.remain_steps -= 1
-            if req.remain_steps == 0:
-                denoising_complete_reqs.append(req)
+    def _decrease_one_step(self, reqs: SchedulerOutputReqsType
+    ) -> Optional[SchedulerOutputReqsType]:
+        """Decrease one remain step for requests."""
+        # We should not alter the original one
+        denoising_complete_reqs: SchedulerOutputReqsType = {}
+        for res, reqs_dict in reqs.items():
+            for req_id, req in reqs_dict.items():
+                # Prepare stage has been updated to denoising, it's safe to do so
+                assert req.status == RequestStatus.DENOISING
+                req.remain_steps -= 1
+                if req.remain_steps == 0:
+                    # add to complete reqs dict
+                    if res not in denoising_complete_reqs:
+                        denoising_complete_reqs[res] = {req_id : req}
+                    else:
+                        denoising_complete_reqs[res][req_id] = req
         return denoising_complete_reqs

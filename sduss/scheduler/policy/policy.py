@@ -21,6 +21,6 @@ class Policy(ABC):
             max_num (int): Number of requests to be scheduled at maximum.
 
         Returns:
-            List[Request]: Scheduled requests.
+            SchedulerOutput: output
         """
         raise NotImplementedError("You must implemente this method in the derived class.")

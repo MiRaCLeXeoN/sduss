@@ -12,6 +12,7 @@ class BasePipeline:
     def get_sampling_params_cls():
         pass
 
+
 class BasePipelineStepInput:
     pass
     
