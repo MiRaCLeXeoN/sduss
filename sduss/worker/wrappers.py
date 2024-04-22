@@ -43,6 +43,9 @@ class WorkerRequest:
         
         # TODO(MX): Other tensors are not examined.
         
+# resolution -> List[request]
+WorkerRequestDictType = Dict[int, List[WorkerRequest]]
+
 
 class WorkerOutput:
     def __init__(

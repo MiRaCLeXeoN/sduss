@@ -119,44 +119,39 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
     def batch_scale_model_input(
         self,
         worker_reqs: List[WorkerRequest],
-        timestep_list: List[Union[float, torch.FloatTensor]],
-    ):
+        samples: torch.Tensor,
+        timestep_list: torch.Tensor,
+    ) -> torch.Tensor:
         # Since step_index is initialized in set_timestep, we don't need
         # to do it again here, just check it
                 
-        # 2. Scale group by group
-        worker_reqs = sorted(worker_reqs, key=lambda req: req.sampling_params.num_inference_steps, reverse=False)
-        total_reqs_count = len(worker_reqs)
-        
-        for i in range(len(worker_reqs)):
-            # group reqs that have same inference steps, so that we can copy data among them
-            collected_reqs = [worker_reqs[i]]
-            i += 1
-            target_num_inference_steps = collected_reqs[0].sampling_params.num_inference_steps
-            while i < total_reqs_count and worker_reqs[i].sampling_params.num_inference_steps == target_num_inference_steps:
-                collected_reqs.append(worker_reqs[i])
-                i += 1
-            
-            sigmas = collected_reqs[0].scheduler_states.sigmas
-            for req in collected_reqs:
-                step_index = req.scheduler_states._step_index
-                sigma = sigmas[step_index]
-                req.sampling_params.latents = req.sampling_params.latents / ((sigma**2 + 1) ** 0.5)
-        
-        return None
+        # Collect sigmas
+        collected_sigmas = []
+        for req in worker_reqs:
+            req_sigma = req.scheduler_states.sigmas[req.scheduler_states._step_index]
+            collected_sigmas.append(req_sigma)
+        sigmas_torch = torch.tensor(data=collected_sigmas, dtype=torch.float32).to(torch.cuda.current_device())
+        shape = [len(collected_sigmas)] + [1] *(samples.ndim - 1)
+        sigmas_torch = sigmas_torch.reshape(shape=shape)
+
+        samples = samples / ((sigmas_torch ** 2 + 1) ** 0.5)
+
+        return samples
+    
     
     def batch_step(
         self,
         worker_reqs: List[WorkerRequest],
-        model_outputs: List[torch.FloatTensor],
-        timestep_list: List[Union[float, torch.FloatTensor]],
+        model_outputs: torch.Tensor,
+        timestep_list: torch.Tensor,
+        samples: torch.Tensor,
         s_churn: float = 0.0,
         s_tmin: float = 0.0,
         s_tmax: float = float("inf"),
         s_noise: float = 1.0,
         generator: Optional[torch.Generator] = None,
         return_dict: bool = True,
-    ) -> List[Tuple]:
+    ) -> torch.Tensor:
 
         # These parameters are fixed, so that we can simplify the procedure
         if (s_churn != 0.0 or 
@@ -166,106 +161,69 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
             generator is not None):
             raise NotImplementedError("We do not support custom parameters at this time.")
 
-        # 1. Group reqs by resolution
-        worker_reqs_dict: Dict[int, List[WorkerRequest]] = {res:[] for res in SUPPORT_RESOLUTION}
-        for req in worker_reqs:
-            req_resolution = req.sampling_params.height
-            worker_reqs_dict[req_resolution].append(req)
-        
+        # 1. Upcast to avoid precision issues
+        samples = samples.to(torch.float32)
+
         # 2. collect sigma and calculate as a batch
         collected_sigmas = []
-        req_list_start_idx = []
-        i = 0
-        for req_list in worker_reqs_dict.values():
-            req_list_start_idx.append(i)
-            for req in req_list:
-                req_sigma = req.scheduler_states.sigmas[req.scheduler_states._step_index]
-                collected_sigmas.append(req_sigma)
-                i += 1
-        
-        sigmas_np = np.array(collected_sigmas, dtype=np.float32)
-        sigmas_torch = torch.from_numpy(sigmas_np).to(torch.cuda.current_device())
-        # split sigmas to each resolution
-        sigma_dict: Dict[int, torch.Tensor] = {}
-        for resolution, chunk in map(worker_reqs_dict.keys(), 
-                                     sigmas_torch.tensor_split(req_list_start_idx[1:])):
-            sigma_dict[resolution] = chunk
+        for req in worker_reqs:
+            req_sigma = req.scheduler_states.sigmas[req.scheduler_states._step_index]
+            collected_sigmas.append(req_sigma)
+        sigmas_torch = torch.tensor(data=collected_sigmas, dtype=torch.float32).to(torch.cuda.current_device())
+        shape = [len(collected_sigmas)] + [1] *(model_outputs.ndim - 1)
+        sigmas_torch = sigmas_torch.reshape(shape=shape)
         
         # 3. Calculate Gamma
         # Since we've set the defualt parameters, gammas must be 0
-        # gamma = torch.zeros_like(sigmas_torch)
+        gamma = torch.zeros_like(sigmas_torch)
         
-        # 4. Process each resolution
-        for res, reqs in worker_reqs_dict.items():
-            samples = [req.sampling_params.latents.unsqueeze() for req in reqs]
-            cat_samples = torch.cat(samples, dim=0)
-
-            # 3. create noise
-            example_latent = reqs[0].sampling_params.latents
-            shape = [len(reqs), *example_latent.shape]
-
-            noise = randn_tensor(shape, dtype=example_latent.dtype, device=example_latent.device)
-            
-            # s_noise = 1
-            esp = noise
-            sigma_hat = sigma_dict[res]
-            
-            if self.config.prediction_type == "epsilon":
-                pred_original_sample = 
-                
-            
-            
-                
-
-            
-    
-        # Upcast to avoid precision issues when computing prev_sample
-        sample = sample.to(torch.float32)
-
-        # sigma = self.sigmas[self.step_index]
-
-        # gamma = min(s_churn / (len(self.sigmas) - 1), 2**0.5 - 1) if s_tmin <= sigma <= s_tmax else 0.0
-
-        # noise = randn_tensor(
-        #     model_output.shape, dtype=model_output.dtype, device=model_output.device, generator=generator
-        # )
-
-        # eps = noise * s_noise
-        # sigma_hat = sigma * (gamma + 1)
-
+        # 4. create noise
+        noise = randn_tensor(model_outputs.shape, dtype=model_outputs.dtype, device=model_outputs.device, generator=None)
+        
+        # We have s_noise = 1
+        esp = noise
+        sigma_hat_torch = sigmas_torch
+        
+        # Gamma must be 0
         # if gamma > 0:
         #     sample = sample + eps * (sigma_hat**2 - sigma**2) ** 0.5
 
-        # 1. compute predicted original sample (x_0) from sigma-scaled predicted noise
+        # 5. compute predicted original sample (x_0) from sigma-scaled predicted noise
         # NOTE: "original_sample" should not be an expected prediction_type but is left in for
         # backwards compatibility
         if self.config.prediction_type == "original_sample" or self.config.prediction_type == "sample":
-            pred_original_sample = model_output
+            pred_original_sample = model_outputs
         elif self.config.prediction_type == "epsilon":
-            pred_original_sample = sample - sigma_hat * model_output
+            pred_original_sample = samples - sigma_hat_torch * model_outputs
         elif self.config.prediction_type == "v_prediction":
             # denoised = model_output * c_out + input * c_skip
-            pred_original_sample = model_output * (-sigma / (sigma**2 + 1) ** 0.5) + (sample / (sigma**2 + 1))
+            pred_original_sample = model_outputs * (-sigmas_torch / (sigmas_torch**2 + 1) ** 0.5) + (samples / (sigmas_torch**2 + 1))
         else:
             raise ValueError(
                 f"prediction_type given as {self.config.prediction_type} must be one of `epsilon`, or `v_prediction`"
             )
 
-        # 2. Convert to an ODE derivative
-        derivative = (sample - pred_original_sample) / sigma_hat
+        # 6. Convert to an ODE derivative
+        derivative = (samples - pred_original_sample) / sigma_hat_torch
 
-        dt = self.sigmas[self.step_index + 1] - sigma_hat
+        # Colelct next sigmas
+        collected_next_sigmas = []
+        for req in worker_reqs:
+            req_sigma = req.scheduler_states.sigmas[req.scheduler_states._step_index + 1]
+            collected_next_sigmas.append(req_sigma)
+        next_sigmas_torch = torch.tensor(data=collected_next_sigmas, dtype=sigmas_torch.dtype).to(
+                            sigmas_torch.device).reshape(sigmas_torch.shape)
+        dt = next_sigmas_torch - sigma_hat_torch
+        # dt = self.sigmas[self.step_index + 1] - sigma_hat_torch
 
-        prev_sample = sample + derivative * dt
+        prev_sample = samples + derivative * dt
 
         # Cast sample back to model compatible dtype
-        prev_sample = prev_sample.to(model_output.dtype)
+        prev_sample = prev_sample.to(model_outputs.dtype)
 
         # upon completion increase step index by one
-        self._step_index += 1
+        # self._step_index += 1
+        for req in worker_reqs:
+            req.scheduler_states._step_index += 1
 
-        if not return_dict:
-            return (prev_sample,)
-        
-        
-        return None
+        return prev_sample

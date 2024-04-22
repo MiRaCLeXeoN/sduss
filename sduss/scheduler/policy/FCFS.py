@@ -1,12 +1,12 @@
 import time
 
-from typing import List, Tuple, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from sduss.scheduler import Request, RequestStatus, SchedulerOutput
+from typing import List, TYPE_CHECKING
 
 from .policy import Policy
+from ..wrappers import SchedulerOutput
 
+if TYPE_CHECKING:
+    from sduss.scheduler import Request
 
 class FCFS(Policy):
     """First Come First Serve.
@@ -15,7 +15,7 @@ class FCFS(Policy):
     that can be batched with it (A giant request will be split as many single
     requests at the entrypoint. They can be processed together).
     """
-    def _flatten_all_reqs(self) -> List[Request]:
+    def _flatten_all_reqs(self) -> List['Request']:
         reqs = []
         for resolution_queue in self.request_pool.values():
             reqs.extend(resolution_queue.get_all_unfinished_reqs())

@@ -4,15 +4,15 @@ import time
 from typing import List, Optional, Tuple, Dict, Union, Iterable
 from typing import TYPE_CHECKING
 
-from .policy import PolicyFactory
-from .wrappers import Request, RequestStatus, SchedulerOutput, ResolutionRequestQueue
 from sduss.config import SchedulerConfig
 from sduss.logger import init_logger
-from sduss.utils import Counter
-from sduss.worker import WorkerOutput
+
+from .policy import PolicyFactory
+from .wrappers import Request, RequestStatus, SchedulerOutput, ResolutionRequestQueue
 
 if TYPE_CHECKING:
-    from .wrappers import RequestDictType, SchedulerOutputReqsType
+    from .wrappers import SchedulerOutputReqsType
+    from sduss.worker import WorkerOutput
 
 logger = init_logger(__name__)
 
@@ -117,13 +117,13 @@ class Scheduler:
     def update_reqs_status(
         self,
         scheduler_outputs: SchedulerOutput,
-        output: WorkerOutput,
+        output: "WorkerOutput",
         req_ids: List[int],
     ):
         """Update requests after one iteration."""
         # Move reqs to next status
         sche_status = scheduler_outputs.status
-        sche_reqs: SchedulerOutputReqsType = scheduler_outputs.scheduled_requests
+        sche_reqs: "SchedulerOutputReqsType" = scheduler_outputs.scheduled_requests
 
         next_status = self._get_next_status(sche_status)
         if sche_status == RequestStatus.WAITING:
@@ -186,7 +186,7 @@ class Scheduler:
         self, 
         prev_status: RequestStatus, 
         next_status: RequestStatus, 
-        reqs: SchedulerOutputReqsType,
+        reqs: "SchedulerOutputReqsType",
     ):
         # Update resolution by resolution
         for res, reqs_dict in reqs.items():
@@ -196,11 +196,11 @@ class Scheduler:
 
     
 
-    def _decrease_one_step(self, reqs: SchedulerOutputReqsType
-    ) -> Optional[SchedulerOutputReqsType]:
+    def _decrease_one_step(self, reqs: "SchedulerOutputReqsType"
+    ) -> Optional["SchedulerOutputReqsType"]:
         """Decrease one remain step for requests."""
         # We should not alter the original one
-        denoising_complete_reqs: SchedulerOutputReqsType = {}
+        denoising_complete_reqs: "SchedulerOutputReqsType" = {}
         for res, reqs_dict in reqs.items():
             for req_id, req in reqs_dict.items():
                 # Prepare stage has been updated to denoising, it's safe to do so

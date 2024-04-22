@@ -233,8 +233,8 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
                 latent = self.prepare_latents(
                     batch_size=1,
                     num_channels_latents=0,
-                    height=height,
-                    width=width,
+                    height=req.sampling_params.height,
+                    width=req.sampling_params.width,
                     dtype=prompt_embeds.dtype,
                     device=device)
             else:

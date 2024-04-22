@@ -1,6 +1,5 @@
 import enum
 import time
-import datetime
 
 from typing import Union, Optional, List, TYPE_CHECKING, Dict
 
@@ -61,7 +60,7 @@ class Request:
     def __init__(
         self,
         request_id: int,
-        sampling_params: BaseSamplingParams,
+        sampling_params: "BaseSamplingParams",
         arrival_time: Optional[float] = None,
     ):
         self.request_id = request_id

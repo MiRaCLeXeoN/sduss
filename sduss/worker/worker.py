@@ -1,5 +1,5 @@
 import os
-from typing import Optional, List, Dict, Union
+from typing import Optional, List, Dict, Union, TYPE_CHECKING
 
 import torch
 import torch.distributed
@@ -11,6 +11,9 @@ from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
 from sduss.scheduler import Request, RequestStatus
 from sduss.model_executor import set_random_seed
 from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
+
+if TYPE_CHECKING:
+    from .wrappers import WorkerRequestDictType
 
 class Worker:
     """A worker GPU class
@@ -107,11 +110,15 @@ class Worker:
             scheduler_reqs (List[Request]): _description_
         """
         # 1. Create WorkerRequests to track reqs.
-        worker_reqs = []
+        worker_reqs: "WorkerRequestDictType" = {}
         for sche_req in scheduler_reqs:
             wq = WorkerRequest(sche_req)
             self.add_request(sche_req.request_id, wq)
-            worker_reqs.append(wq)
+            res = wq.sampling_params.resolution
+            if res not in worker_reqs:
+                worker_reqs[res] = [wq]
+            else:
+                worker_reqs[res].append(wq)
         
         # 2. Execute
         self.model_runner.exec_prepare_stage(worker_reqs)
@@ -129,11 +136,15 @@ class Worker:
         Args:
             req_ids (List[int]): IDs of requests to execute one iteration.
         """
-        # 1. Collect requests
-        worker_reqs = []
+        # 1. Collect requests and wrap as dict
+        worker_reqs: "WorkerRequestDictType" = {}
         for req_id in req_ids:
             wq = self.request_pool[req_id]
-            worker_reqs.append(wq)
+            res = wq.sampling_params.resolution
+            if res not in worker_reqs:
+                worker_reqs[res] = [wq]
+            else:
+                worker_reqs[res].append(wq)
 
         # 2. Execute
         self.model_runner.exec_denoising_stage(worker_reqs)
@@ -147,11 +158,15 @@ class Worker:
         self,
         req_ids: List[int],
     ) -> WorkerOutput:
-        # 1. Collect requests
-        worker_reqs = []
+        # 1. Collect requests and wrap as dict
+        worker_reqs: "WorkerRequestDictType" = {}
         for req_id in req_ids:
             wq = self.request_pool[req_id]
-            worker_reqs.append(wq)
+            res = wq.sampling_params.resolution
+            if res not in worker_reqs:
+                worker_reqs[res] = [wq]
+            else:
+                worker_reqs[res].append(wq)
 
         self.model_runner.exec_post_stage(worker_reqs)
 

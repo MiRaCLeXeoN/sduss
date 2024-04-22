@@ -90,8 +90,9 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
 
     def batch_scale_model_input(
         self,
-        latent_model_input: torch.Tensor,
-        timesteps: torch.Tensor,
+        worker_reqs: List[WorkerRequest],
+        samples: torch.Tensor,
+        timestep_list: torch.Tensor,
     ):
         """Batch support scale model input.
 
@@ -101,7 +102,7 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
             latent_model_input (torch.FloatTensor): Latent model input is a batched input.
             timesteps (torch.FloatTensor): Timesteps should have the same batchsize.
         """
-        return latent_model_input
+        return samples
     
     
     def batch_step(
@@ -109,6 +110,7 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         worker_reqs: List[WorkerRequest],
         model_outputs: torch.FloatTensor,
         timestep_list: torch.Tensor,
+        samples: torch.Tensor,
         return_dict: bool = False,
     ) -> List[torch.FloatTensor]:
         """Batch-compatible step method.
@@ -180,7 +182,8 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
     ):
         """Batch-compatible step prk method.
         
-        This method functions sequentially in nature.
+        This method functions sequentially in nature, since requests
+        are likely to diverge and it's hard to batch.
 
         Args:
             worker_reqs (List[WorkerRequest]): _description_
@@ -226,6 +229,16 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         model_outputs: List[torch.FloatTensor],
         timestep_list: List[int],
     ):
+        """Batch support version.
+
+        This method functions sequentially in nature, since requests
+        are likely to diverge and it's hard to batch.
+
+        Args:
+            worker_reqs (List[WorkerRequest]): _description_
+            model_outputs (List[torch.FloatTensor]): _description_
+            timestep_list (List[int]): _description_
+        """
         ret = []
         for i, req in enumerate(worker_reqs):
             model_output = model_outputs[i]

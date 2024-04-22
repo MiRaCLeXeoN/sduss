@@ -1,18 +1,21 @@
 import time
-from typing import Any, Dict, List, Union, Tuple, Type
+from typing import Any, Dict, List, Union, Tuple, Type, TYPE_CHECKING
 
 import torch
 import numpy as np
 
 from torch import nn
 
-from .wrappers import WorkerRequest
-
 from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
 from sduss.model_executor import get_pipeline
 from sduss.utils import in_wsl
 from sduss.logger import init_logger
 from sduss.model_executor.diffusers import BasePipeline
+
+from .wrappers import WorkerRequest
+
+if TYPE_CHECKING:
+    from .wrappers import WorkerRequestDictType
 
 logger = init_logger(__name__)
 
@@ -60,7 +63,7 @@ class ModelRunner:
     @torch.inference_mode()
     def exec_prepare_stage(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: WorkerRequestDictType,
     ) -> None:
         prepare_input_cls = self.utils_cls['prepare_input']
         input_dict = prepare_input_cls.prepare_prepare_input(worker_reqs)
@@ -70,7 +73,7 @@ class ModelRunner:
     @torch.inference_mode()
     def exec_denoising_stage(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: WorkerRequestDictType,
     ) -> None:
         step_input_cls = self.utils_cls['step_input']
         input_dict = step_input_cls.prepare_step_input(worker_reqs)
@@ -82,7 +85,7 @@ class ModelRunner:
     @torch.inference_mode()
     def exec_post_stage(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: WorkerRequestDictType,
     ) -> None:
         post_input_cls = self.utils_cls['post_input']
         input_dict = post_input_cls.prepare_post_input(worker_reqs)
