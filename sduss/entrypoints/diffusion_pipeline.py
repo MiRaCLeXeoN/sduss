@@ -18,20 +18,28 @@ class DiffusionPipeline:
         model_name_or_pth: str,
         **kwargs,
     ) -> None:
-        if "disable_log_stats" not in kwargs:
-            kwargs["disable_log_stats"] = True
+        if "disable_log_status" not in kwargs:
+            kwargs["disable_log_status"] = True
         engine_args = EngineArgs(model_name_or_pth, **kwargs)
         self.engine = Engine.from_engine_args(engine_args)
         self.request_counter = Counter()
+
+        # Set afterwards
+        self.pipeline_cls = None
+        self.sampling_param_cls = None
     
     def get_sampling_params_cls(self):
+        if self.sampling_param_cls is not None:
+            return self.sampling_param_cls
+
         from sduss.model_executor.model_loader import get_pipeline_cls
-        self.pipeline_cls: BasePipeline = get_pipeline_cls()
-        return self.pipeline_cls.get_sampling_params_cls()
+        self.pipeline_cls: BasePipeline = get_pipeline_cls(self.engine.pipeline_config)
+        self.sampling_param_cls = self.pipeline_cls.get_sampling_params_cls()
+        return self.sampling_param_cls
         
     def generate(
         self,
-        sampling_params: Optional[Union[BaseSamplingParams, List[BaseSamplingParams]]] = None,
+        sampling_params: Union[BaseSamplingParams, List[BaseSamplingParams]] = None,
         use_tqdm: bool = True,
     ) -> List[RequestOutput]:
         """Generates images according to prompts.
@@ -56,6 +64,7 @@ class DiffusionPipeline:
         # Add requests to the engine
         num_requests = len(sampling_params)
         for i in range(num_requests):
+            assert isinstance(sampling_params[i], self.sampling_param_cls)
             self._add_request_to_engine(sampling_params[i])
         
         return self._run_engine(use_tqdm)  
@@ -93,4 +102,3 @@ class DiffusionPipeline:
         # Sort the requests by request ID
         outputs = sorted(outputs, key=lambda x: int(x.request_id))
         return outputs
-        

@@ -1,4 +1,4 @@
-from typing import List, Tuple, Dict, Union, Optional
+from typing import List, Tuple, Dict, Union, Optional, TYPE_CHECKING
 
 import torch
 import numpy as np
@@ -7,8 +7,9 @@ from diffusers import EulerDiscreteScheduler as DiffusersEulerDiscreteScheduler
 from diffusers.utils.torch_utils import randn_tensor
 
 from .utils import BatchSupportScheduler, BaseSchedulerStates
-from sduss.worker import WorkerRequest
-from sduss.scheduler import SUPPORT_RESOLUTION
+
+if TYPE_CHECKING:
+    from sduss.worker import WorkerRequest
 
 class EulerDiscreteSchedulerStates(BaseSchedulerStates):
     """Scheduler states wrapper to store scheduler states of each request."""
@@ -30,7 +31,7 @@ class EulerDiscreteSchedulerStates(BaseSchedulerStates):
 class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportScheduler):
     def batch_set_timesteps(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: List["WorkerRequest"],
         device: torch.device,
     ):
         """Set timesteps method with batch support
@@ -73,7 +74,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
 
     def _batch_index_for_timestep(
         self, 
-        req: WorkerRequest,
+        req: "WorkerRequest",
     ):
         """Batch compatible version method.
         
@@ -97,7 +98,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
 
     def _batch_init_step_index(
         self, 
-        worker_reqs_with_same_total_steps: List[WorkerRequest],
+        worker_reqs_with_same_total_steps: List["WorkerRequest"],
     ):
         """Batch compatible version method.
 
@@ -118,7 +119,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
     
     def batch_scale_model_input(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: List["WorkerRequest"],
         samples: torch.Tensor,
         timestep_list: torch.Tensor,
     ) -> torch.Tensor:
@@ -141,7 +142,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
     
     def batch_step(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: List["WorkerRequest"],
         model_outputs: torch.Tensor,
         timestep_list: torch.Tensor,
         samples: torch.Tensor,

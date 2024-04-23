@@ -88,7 +88,7 @@ class Scheduler:
     
     def has_unfinished_requests(self) -> bool:
         for res_queue in self.request_pool.values():
-            if res_queue.get_num_unfinished_reqs > 0:
+            if res_queue.get_num_unfinished_reqs() > 0:
                 return True
         return False
         
@@ -96,13 +96,13 @@ class Scheduler:
     def get_num_unfinished_requests(self) -> int:
         total = 0
         for res_queue in self.request_pool.values():
-            total += res_queue.get_num_unfinished_reqs
+            total += res_queue.get_num_unfinished_reqs()
         return total
     
     
     def has_finished_requests(self) -> bool:
         for res_queue in self.request_pool.values():
-            if res_queue.get_num_finished_reqs > 0:
+            if res_queue.get_num_finished_reqs() > 0:
                 return True
         return False
     

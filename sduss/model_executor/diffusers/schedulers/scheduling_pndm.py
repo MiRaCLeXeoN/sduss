@@ -1,4 +1,4 @@
-from typing import List, Iterable, Optional, Union, Dict
+from typing import List, Iterable, Optional, Union, Dict, TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -7,7 +7,8 @@ from diffusers import PNDMScheduler as DiffusersPNDMScheduler
 
 from .utils import BatchSupportScheduler, BaseSchedulerStates
 
-from sduss.worker import WorkerRequest
+if TYPE_CHECKING:
+    from sduss.worker import WorkerRequest
 
 class PNDMSchedulerStates(BaseSchedulerStates):
     total_steps_dependent_attr_names = [
@@ -46,10 +47,10 @@ class PNDMSchedulerStates(BaseSchedulerStates):
         return self.timestep_idx
 
 
-class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
+class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
     def batch_set_timesteps(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: List["WorkerRequest"],
         device: torch.device,
     ) -> None:
         """Set timesteps method with batch support.
@@ -90,7 +91,7 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
 
     def batch_scale_model_input(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: List["WorkerRequest"],
         samples: torch.Tensor,
         timestep_list: torch.Tensor,
     ):
@@ -107,7 +108,7 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
     
     def batch_step(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: List["WorkerRequest"],
         model_outputs: torch.FloatTensor,
         timestep_list: torch.Tensor,
         samples: torch.Tensor,
@@ -176,7 +177,7 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
    
     def batch_step_prk(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: List["WorkerRequest"],
         model_outputs: List[torch.FloatTensor],
         timestep_list: List[int],
     ):
@@ -225,7 +226,7 @@ class PNDMSCheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
     
     def batch_step_plms(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: List["WorkerRequest"],
         model_outputs: List[torch.FloatTensor],
         timestep_list: List[int],
     ):

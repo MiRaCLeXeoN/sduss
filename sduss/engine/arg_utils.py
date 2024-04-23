@@ -3,7 +3,7 @@ import argparse
 from dataclasses import dataclass, fields
 from typing import Optional, Tuple
 
-from sduss.config import PipelineConfig, ParallelConfig, CacheConfig, SchedulerConfig
+from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
 class EngineArgs:
     """Arguments for the base class Engine
     """
@@ -53,23 +53,23 @@ class EngineArgs:
         self,
     ) -> Tuple[PipelineConfig, ParallelConfig, SchedulerConfig]:
         pipeline_config = PipelineConfig(
-            self.model_name_or_pth, 
-            self.trust_remote_code,
-            self.seed, 
-            self.use_esymred,
-            self.use_batch_split,
-            self.kwargs
+            pipeline=self.model_name_or_pth, 
+            trust_remote_code=self.trust_remote_code,
+            seed=self.seed, 
+            use_esymred=self.use_esymred,
+            use_batch_split=self.use_batch_split,
+            kwargs=self.kwargs
         )
         parallel_config = ParallelConfig(
-            self.pipeline_parallel_size,
-            self.tensor_parallel_size,
-            self.worker_use_ray,
-            self.max_parallel_loading_workers
+            pipeline_parallel_size=self.pipeline_parallel_size,
+            tensor_parallel_size=self.tensor_parallel_size,
+            worker_use_ray=self.worker_use_ray,
+            max_parallel_loading_workers=self.max_parallel_loading_workers
         )
         scheduler_config = SchedulerConfig(
-            self.max_batchsize,
-            self.use_mixed_precisoin,
-            self.policy,
+            max_bathsize=self.max_batchsize,
+            use_mixed_precision=self.use_mixed_precisoin,
+            policy=self.policy,
         )
         return pipeline_config, parallel_config, scheduler_config
 

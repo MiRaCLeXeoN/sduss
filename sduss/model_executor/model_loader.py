@@ -54,11 +54,29 @@ def load_modules(pipeline_pth: str, json_dict: Dict[str, List], kwargs: Dict) ->
     return ret
 
 
-def get_pipeline_cls():
+def get_pipeline_cls(pipeline_config: PipelineConfig):
     global PIPELINE_CLS
-    assert PIPELINE_CLS is not None, ("No pipeline has been initialized. You cannot get pipeline class "
-                                      "before calling get_pipeline.")
-    return PIPELINE_CLS
+    if PIPELINE_CLS is not None:
+        return PIPELINE_CLS
+
+    pipeline_pth = pipeline_config.pipeline
+    if not os.path.isdir(pipeline_pth):
+        raise RuntimeError("Currently we only support local pipelines (you should "
+                           f"download your model to local first).")
+    pipeline_registry = EsyMReDPipelineRegistry if pipeline_config.use_esymred else PipelneRegistry
+    with open(pipeline_pth + "/model_index.json") as f:
+        json_file = json.load(f)
+        class_name = json_file["_class_name"]
+        path_tuple : Tuple[str, str] = pipeline_registry.get(class_name, None)
+        if path_tuple is None:
+            raise RuntimeError(f"The pipeline of designated model {pipeline_pth} is not supported "
+                            f"yet. Currently, only the following pipelines can be properly launched:"
+                            f"{pipeline_registry}")
+        import_path = ".model_executor.diffusers.pipelines." + path_tuple[0]
+        module = importlib.import_module(import_path, package=__name__.split(".")[0])
+        pipeline_cls = getattr(module, path_tuple[1])
+        PIPELINE_CLS = pipeline_cls
+    return pipeline_cls
 
 
 def get_pipeline(pipeline_config: PipelineConfig) -> Any:
@@ -70,7 +88,7 @@ def get_pipeline(pipeline_config: PipelineConfig) -> Any:
     pipeline_registry = EsyMReDPipelineRegistry if pipeline_config.use_esymred else PipelneRegistry
     with open(pipeline_pth + "/model_index.json") as f:
         json_file = json.load(f)
-        class_name = json_file._class_name
+        class_name = json_file["_class_name"]
         path_tuple : Tuple[str, str] = pipeline_registry.get(class_name, None)
         if path_tuple is None:
             raise RuntimeError(f"The pipeline of designated model {pipeline_pth} is not supported "

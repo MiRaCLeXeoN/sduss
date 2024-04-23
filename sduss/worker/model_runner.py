@@ -63,7 +63,7 @@ class ModelRunner:
     @torch.inference_mode()
     def exec_prepare_stage(
         self,
-        worker_reqs: WorkerRequestDictType,
+        worker_reqs: "WorkerRequestDictType",
     ) -> None:
         prepare_input_cls = self.utils_cls['prepare_input']
         input_dict = prepare_input_cls.prepare_prepare_input(worker_reqs)
@@ -73,7 +73,7 @@ class ModelRunner:
     @torch.inference_mode()
     def exec_denoising_stage(
         self,
-        worker_reqs: WorkerRequestDictType,
+        worker_reqs: "WorkerRequestDictType",
     ) -> None:
         step_input_cls = self.utils_cls['step_input']
         input_dict = step_input_cls.prepare_step_input(worker_reqs)
@@ -85,7 +85,7 @@ class ModelRunner:
     @torch.inference_mode()
     def exec_post_stage(
         self,
-        worker_reqs: WorkerRequestDictType,
+        worker_reqs: "WorkerRequestDictType",
     ) -> None:
         post_input_cls = self.utils_cls['post_input']
         input_dict = post_input_cls.prepare_post_input(worker_reqs)

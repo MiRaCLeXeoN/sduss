@@ -222,6 +222,7 @@ class Engine:
         """Performs one denoising iteration and returns newly generated results."""
         scheduler_output, req_ids = self._schedule()
 
+        output = None
         if scheduler_output.status == RequestStatus.WAITING:
             # Currently, we don't do anything in waiting stage
             pass
