@@ -1,4 +1,6 @@
+import PIL.Image
 import torch
+import PIL
 
 from sduss import DiffusionPipeline
 
@@ -12,7 +14,17 @@ print(sampling_params_cls)
 
 sampling_params = []
 
-sampling_params.append(sampling_params_cls(prompt="astrount riding a horse on the moon."))
-sampling_params.append(sampling_params_cls(prompt="a flowring sitting on the crest."))
+sampling_params.append(sampling_params_cls(prompt="a gigantic flower", num_inference_steps=50))
+# sampling_params.append(sampling_params_cls(prompt="a flowring sitting on the crest."))
 
 outputs = pipe.generate(sampling_params)
+
+for i, output in enumerate(outputs):
+    save_pth = f"./outputs/{i}.png"
+    print(f"saving image from request {output.request_id} to {save_pth}\n")
+    print(f"time consumption={output.time_consumption}")
+    if isinstance(output.output.images, PIL.Image.Image):
+        output.output.images.save(save_pth)
+    else:
+        print("Saving failed.")
+

@@ -41,7 +41,13 @@ def _setup_logger():
     
 
 def init_logger(name: str):
-    return logging.getLogger(name)
+    global _default_handler
+    if _default_handler is None:
+        _setup_logger()
+    logger = logging.getLogger(name)
+    logger.addHandler(_default_handler)
+    logger.propagate = False
+    return logger
 
 # setup the logger when the module is imported
 _setup_logger()

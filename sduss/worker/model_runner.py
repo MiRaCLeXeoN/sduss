@@ -50,6 +50,9 @@ class ModelRunner:
         # Set after load_model
         self.utils_cls: Dict[str, Type] = None
 
+        # Log
+        self.cycle_counter = 0
+
 
     def load_model(self) -> None:
         self.pipeline: BasePipeline = get_pipeline(self.pipeline_config)

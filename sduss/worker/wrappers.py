@@ -50,12 +50,24 @@ WorkerRequestDictType = Dict[int, List[WorkerRequest]]
 class WorkerOutput:
     def __init__(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: WorkerRequestDictType = None,
+        status: RequestStatus = None,
     ) -> None:
-        reqs_dict: Dict[int, BaseOutput] = {}
-        for req in worker_reqs:
-            reqs_dict[req.request_id] = req.output
-        
-        # req_id -> pipeline output cls
-        # pipeline output cls is assured to exist in CPU memory instead of on device
-        self.req_output_dict = reqs_dict
+        if status == RequestStatus.POSTPROCESSING:
+            reqs_dict: Dict[int, BaseOutput] = {}
+            for res in worker_reqs:
+                for wr in worker_reqs[res]:
+                    reqs_dict[wr.request_id] = wr.output
+            
+            # req_id -> pipeline output cls
+            # pipeline output cls is assured to exist in CPU memory instead of on device
+            self.req_output_dict = reqs_dict
+        elif status == RequestStatus.PREPARE:
+            # map: req_id -> inference steps
+            reqs_dict: Dict[int, int] = {}
+            for res in worker_reqs:
+                for wr in worker_reqs[res]:
+                    reqs_dict[wr.request_id] = len(wr.scheduler_states.timesteps)
+            self.reqs_steps_dict = reqs_dict
+        else:
+            raise RuntimeError

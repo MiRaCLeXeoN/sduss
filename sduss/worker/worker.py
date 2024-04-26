@@ -122,6 +122,9 @@ class Worker:
         
         # 2. Execute
         self.model_runner.exec_prepare_stage(worker_reqs)
+
+        # 3. Create return wrapper
+        return WorkerOutput(worker_reqs=worker_reqs, status=RequestStatus.PREPARE)
         
     
     def exec_denoising_stage(
@@ -146,6 +149,7 @@ class Worker:
             else:
                 worker_reqs[res].append(wq)
 
+
         # 2. Execute
         self.model_runner.exec_denoising_stage(worker_reqs)
 
@@ -159,19 +163,19 @@ class Worker:
         req_ids: List[int],
     ) -> WorkerOutput:
         # 1. Collect requests and wrap as dict
-        worker_reqs: "WorkerRequestDictType" = {}
+        worker_reqs_dict: "WorkerRequestDictType" = {}
         for req_id in req_ids:
             wq = self.request_pool[req_id]
             res = wq.sampling_params.resolution
-            if res not in worker_reqs:
-                worker_reqs[res] = [wq]
+            if res not in worker_reqs_dict:
+                worker_reqs_dict[res] = [wq]
             else:
-                worker_reqs[res].append(wq)
+                worker_reqs_dict[res].append(wq)
 
-        self.model_runner.exec_post_stage(worker_reqs)
+        self.model_runner.exec_post_stage(worker_reqs_dict)
 
         # Create output
-        output = WorkerOutput(worker_reqs)
+        output = WorkerOutput(worker_reqs=worker_reqs_dict, status=RequestStatus.POSTPROCESSING)
 
         # Remove finished requests
         self.remove_requests(req_ids)

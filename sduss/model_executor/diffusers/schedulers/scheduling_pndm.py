@@ -5,12 +5,17 @@ import torch
 
 from diffusers import PNDMScheduler as DiffusersPNDMScheduler
 
+from sduss.logger import init_logger
+
 from .utils import BatchSupportScheduler, BaseSchedulerStates
 
 if TYPE_CHECKING:
     from sduss.worker import WorkerRequest
 
+logger = init_logger(__name__)
+
 class PNDMSchedulerStates(BaseSchedulerStates):
+    """Scheduler states wrapper to store scheduler states of each request."""
     total_steps_dependent_attr_names = [
         "prk_timesteps",
         "num_inference_steps",
@@ -22,7 +27,6 @@ class PNDMSchedulerStates(BaseSchedulerStates):
         "ets",
         "cur_sample",
     ]
-    """Scheduler states wrapper to store scheduler states of each request."""
     def __init__(self, **kwargs) -> None:
         self.prk_timesteps: np.ndarray = kwargs.pop("prk_timesteps")
         self.num_inference_steps: int = kwargs.pop("num_inference_steps")
@@ -36,7 +40,7 @@ class PNDMSchedulerStates(BaseSchedulerStates):
         # Common variables
         super().__init__()
     
-    def update_staets_one_step(self):
+    def update_states_one_step(self):
         self.timestep_idx += 1
         assert self.timestep_idx <= self.timesteps.shape[0]
     
@@ -45,6 +49,10 @@ class PNDMSchedulerStates(BaseSchedulerStates):
     
     def get_step_idx(self):
         return self.timestep_idx
+    
+    def log_status(self):
+        logger.debug(f"{self.num_inference_steps=}, {self.counter=}, {len(self.ets)=}, {self.timestep_idx=}")
+        logger.debug(f"{self.prk_timesteps.shape=}, current_time_step={self.timesteps[self.timestep_idx]}")
 
 
 class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
@@ -87,7 +95,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
                 attrs[name] = getattr(self, name)
             for req in collected_reqs:
                 req.scheduler_states = PNDMSchedulerStates(**attrs)
-
+            
 
     def batch_scale_model_input(
         self,
@@ -113,7 +121,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         timestep_list: torch.Tensor,
         samples: torch.Tensor,
         return_dict: bool = False,
-    ) -> List[torch.FloatTensor]:
+    ) -> torch.FloatTensor:
         """Batch-compatible step method.
 
         WorkerRequest's latent must be updated before this method call.
@@ -131,25 +139,29 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         prk_reqs = []
         prk_model_outputs = []
         prk_timestep_list = []
+        prk_sample_list = []
         prk_idx = []
         plms_reqs = []
         plms_model_outputs = []
         plms_timestep_list = []
+        plms_sample_list = []
         plms_idx = []
         for i, req in enumerate(worker_reqs):
             if req.scheduler_states.counter < len(req.scheduler_states.prk_timesteps) and self.config.skip_prk_steps:
                 prk_reqs.append(req)
                 prk_model_outputs.append(model_outputs[i])
                 prk_timestep_list.append(timestep_list[i])
+                prk_sample_list.append(samples[i])
                 prk_idx.append(i)
             else:
                 plms_reqs.append(req)
                 plms_model_outputs.append(model_outputs[i])
                 plms_timestep_list.append(timestep_list[i])
+                plms_sample_list.append(samples[i])
                 plms_idx.append(i)
         
-        prk_ret = self.batch_step_prk(prk_reqs, prk_model_outputs, prk_timestep_list)
-        plms_ret = self.batch_step_plms(plms_reqs, plms_model_outputs, plms_timestep_list)
+        prk_ret = self.batch_step_prk(prk_reqs, prk_model_outputs, prk_timestep_list, prk_timestep_list)
+        plms_ret = self.batch_step_plms(plms_reqs, plms_model_outputs, plms_sample_list, plms_timestep_list)
 
         # sort to original order
         ret: List[torch.Tensor] = []
@@ -170,7 +182,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
             ret.append(plms_ret[plmsi])
             plmsi += 1
         
-        ret = [t.unsqueeze() for t in ret]
+        ret = [t.unsqueeze(dim=0) for t in ret]
         ret = torch.cat(ret, dim=0)
         return ret
 
@@ -179,6 +191,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         self,
         worker_reqs: List["WorkerRequest"],
         model_outputs: List[torch.FloatTensor],
+        samples: List[torch.FloatTensor],
         timestep_list: List[int],
     ):
         """Batch-compatible step prk method.
@@ -195,7 +208,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         for i, req in enumerate(worker_reqs):
             model_output = model_outputs[i]
             timestep = timestep_list[i]
-            sample = req.sampling_params.latents
+            sample = samples[i]
 
             diff_to_prev = 0 if req.scheduler_states.counter % 2 else (
                 self.config.num_train_timesteps // req.scheduler_states.num_inference_steps // 2)
@@ -228,6 +241,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         self,
         worker_reqs: List["WorkerRequest"],
         model_outputs: List[torch.FloatTensor],
+        samples: List[torch.FloatTensor],
         timestep_list: List[int],
     ):
         """Batch support version.
@@ -244,7 +258,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         for i, req in enumerate(worker_reqs):
             model_output = model_outputs[i]
             timestep = timestep_list[i]
-            sample = req.sampling_params.latents
+            sample = samples[i]
 
             prev_timestep = timestep - self.config.num_train_timesteps // req.scheduler_states.num_inference_steps
 
@@ -256,6 +270,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
                 timestep = timestep + self.config.num_train_timesteps // req.scheduler_states.num_inference_steps
 
             if len(req.scheduler_states.ets) == 1 and req.scheduler_states.counter == 0:
+                print("case 1")
                 model_output = model_output
                 req.scheduler_states.cur_sample = sample
             elif len(req.scheduler_states.ets) == 1 and req.scheduler_states.counter == 1:

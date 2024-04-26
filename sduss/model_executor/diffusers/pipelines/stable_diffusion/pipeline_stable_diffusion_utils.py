@@ -97,8 +97,8 @@ class StableDiffusionPipelineStepInput(BasePipelineStepInput):
         # params from sampling_params
         input_dict["callback_on_step_end"] = sp.callback_on_step_end
         input_dict["callback_on_step_end_tensor_inputs"] = sp.callback_on_step_end_tensor_inputs
-        input_dict["guidance_rescale"] = sp.guidance_scale
-        input_dict["guidance_scale"] = sp.guidance_rescale
+        input_dict["guidance_rescale"] = sp.guidance_rescale
+        input_dict["guidance_scale"] = sp.guidance_scale
         input_dict["cross_attention_kwargs"] = sp.cross_attention_kwargs
 
         po: "StableDiffusionPipelinePrepareOutput" = worker_reqs[res][0].prepare_output

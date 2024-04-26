@@ -28,6 +28,22 @@ class EulerDiscreteSchedulerStates(BaseSchedulerStates):
 
         self._step_index = kwargs.pop("_step_index")
 
+    
+    def update_states_one_step(self):
+        self.timestep_idx += 1
+        self._step_index += 1
+        assert self.timestep_idx <= self.timesteps.shape[0]
+
+    
+    def get_next_timestep(self):
+        return self.timesteps[self.timestep_idx]
+
+    
+    def get_step_idx(self):
+        assert self.timestep_idx == self._step_index
+        return self.timestep_idx
+
+
 class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportScheduler):
     def batch_set_timesteps(
         self,

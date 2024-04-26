@@ -11,7 +11,7 @@ class EngineArgs:
         # Model configs
         self.model_name_or_pth = model_name_or_pth
         self.trust_remote_code = kwargs.pop("trust_remote_code", False)
-        self.seed = kwargs.pop("seed", 0)
+        self.seed = kwargs.pop("seed", 10086)
         self.use_esymred = kwargs.pop("use_esymred", False)
         self.use_batch_split = kwargs.pop("use_batch_split", False)
         # Distributed configs

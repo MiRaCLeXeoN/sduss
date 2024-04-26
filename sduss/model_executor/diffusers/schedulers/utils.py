@@ -14,6 +14,10 @@ class BaseSchedulerStates:
 
     def get_step_idx(self):
         raise NotImplementedError
+    
+
+    def log_status(self):
+        raise NotImplementedError
 
 
 class BatchSupportScheduler:

@@ -45,11 +45,18 @@ class Scheduler:
         self.policy = PolicyFactory.get_policy(policy_name=self.scheduler_config.policy,
                                                request_pool=self.request_pool)
         
+        # Logs
+        self.cycle_counter = 0
+        
 
     def schedule(self) -> SchedulerOutput:
         """Schedule requests for next iteration."""
         scheduler_output = self.policy.schedule_requests(max_num=self.max_batchsize)
         # More wrappers will be added here.
+
+        # FIXME: DEBUG
+        self.cycle_counter += 1
+        # self.log_status()
         
         return scheduler_output
 
@@ -131,20 +138,16 @@ class Scheduler:
             return 
         elif sche_status == RequestStatus.PREPARE:
             # First iteration of denoising has done
-            self._update_reqs_to_next_status(prev_status=sche_status, status=next_status, reqs=sche_reqs)
-            # Some reqs might only iterate once
-            denoising_complete_reqs = self._decrease_one_step(sche_reqs)
-            if len(denoising_complete_reqs) > 0:
-                self._update_reqs_to_next_status(prev_status=next_status, 
-                                                  next_status=RequestStatus.POSTPROCESSING, 
-                                                  reqs=denoising_complete_reqs)
+            self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
+            # The real remaining step may not be initial parameter
+            self._update_remain_steps(reqs=sche_reqs, reqs_steps_dict=output.reqs_steps_dict)
             return 
         elif sche_status == RequestStatus.DENOISING:
             # More steps done
             # may or may not move to post stage
             denoising_complete_reqs = self._decrease_one_step(sche_reqs)
             if len(denoising_complete_reqs) > 0:
-                self._update_reqs_to_next_status(prev_status=next_status, 
+                self._update_reqs_to_next_status(prev_status=sche_status, 
                                                   next_status=RequestStatus.POSTPROCESSING, 
                                                   reqs=denoising_complete_reqs)
             return 
@@ -194,7 +197,6 @@ class Scheduler:
                                                       prev_status=prev_status, 
                                                       next_status=next_status)
 
-    
 
     def _decrease_one_step(self, reqs: "SchedulerOutputReqsType"
     ) -> Optional["SchedulerOutputReqsType"]:
@@ -213,3 +215,16 @@ class Scheduler:
                     else:
                         denoising_complete_reqs[res][req_id] = req
         return denoising_complete_reqs
+    
+    
+    def _update_remain_steps(self, reqs: "SchedulerOutputReqsType", reqs_steps_dict: Dict[int, int]):
+        for req_id, remain_steps in reqs_steps_dict.items():
+            req = self.req_mapping[req_id]
+            req.remain_steps = remain_steps
+    
+    
+    def log_status(self):
+        logger.debug(f"Scheduler cycle {self.cycle_counter}")
+        for res in self.request_pool:
+            resolution_queue = self.request_pool[res]
+            logger.debug(resolution_queue.log_status(return_str=True))

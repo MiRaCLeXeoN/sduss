@@ -149,7 +149,6 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         prompt: List = []
         negative_prompt: List = []
         for req in worker_reqs:
-            assert req.sampling_params.height
             prompt.append(req.sampling_params.prompt)
             negative_prompt.append(req.sampling_params.negative_prompt)
         
@@ -165,8 +164,6 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             negative_prompt,
             prompt_embeds,
             negative_prompt_embeds,
-            ip_adapter_image,
-            ip_adapter_image_embeds,
             callback_on_step_end_tensor_inputs,
         )
 
@@ -200,7 +197,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             lora_scale=lora_scale,
-            clip_skip=self.clip_skip,
+            clip_skip=clip_skip,
         )
         
         # For classifier free guidance, we need to do two forward passes.
@@ -232,13 +229,14 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             if req.sampling_params.latents is None:
                 latent = self.prepare_latents(
                     batch_size=1,
-                    num_channels_latents=0,
+                    num_channels_latents=num_channels_latents,
                     height=req.sampling_params.height,
                     width=req.sampling_params.width,
                     dtype=prompt_embeds.dtype,
-                    device=device)
+                    device=device,
+                    generator=generator)
             else:
-                latent = req.sampling_params.latents.reshape(base_shape)
+                latent = req.sampling_params.latents.reshape(base_shape).to(device)
             latents.append(latent)
         
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
@@ -278,7 +276,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             req.prepare_output = prepare_output
 
 
-    def denoise_step(
+    def denoising_step(
         self,
         worker_reqs: List[WorkerRequest],
         timestep_cond: torch.Tensor,
@@ -299,23 +297,25 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         timestep_idxs: List[int] = []
         for req in worker_reqs:
             latents.append(req.sampling_params.latents)
-            prompt_embeds.append(req.sampling_params.prompt_embeds.unsqueeze())
-            negative_prompt_embeds.append(req.sampling_params.negative_prompt_embeds.unsqueeze())
+            prompt_embeds.append(req.sampling_params.prompt_embeds.unsqueeze(dim=0))
+            negative_prompt_embeds.append(req.sampling_params.negative_prompt_embeds.unsqueeze(dim=0))
             timesteps.append(req.scheduler_states.get_next_timestep())
             timestep_idxs.append(req.scheduler_states.get_step_idx())
             # TODO(MX): Check tensor shape here
         
-        latents = torch.cat(latents, dim=0)
+        latents: torch.Tensor = torch.cat(latents, dim=0)
         prompt_embeds = torch.cat(prompt_embeds, dim=0)
         negative_prompt_embeds = torch.cat(negative_prompt_embeds, dim=0)
         if do_classifier_free_guidance:
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
             timesteps = timesteps * 2
-        t = torch.tensor(data=timesteps, dtype=worker_reqs[0].scheduler_states.timesteps.dtype)
+        t = torch.tensor(data=timesteps, dtype=worker_reqs[0].scheduler_states.timesteps.dtype, device=latents.device)
 
         # expand the latents if we are doing classifier free guidance
         latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-        latent_model_input = self.scheduler.batch_scale_model_input(latent_model_input, t)
+        latent_model_input = self.scheduler.batch_scale_model_input(worker_reqs=worker_reqs,
+                                                                    samples=latent_model_input,
+                                                                    timestep_list=t)
 
         # predict the noise residual
         noise_pred = self.unet(
@@ -332,14 +332,14 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         if do_classifier_free_guidance:
             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
             noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-
+        
         if do_classifier_free_guidance and guidance_rescale > 0.0:
             # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
             noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
-
+        
         # compute the previous noisy sample x_t -> x_t-1
         # * We don't need to split latents here, since it is not updated by the previous steps.
-        latents = self.scheduler.batch_step(worker_reqs, noise_pred, t, **extra_step_kwargs, return_dict=False)
+        latents = self.scheduler.batch_step(worker_reqs, noise_pred, t, latents, **extra_step_kwargs, return_dict=False)
 
         # ! This will not be reached.
         if callback_on_step_end is not None:
@@ -356,7 +356,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         # Update parameters
         for i, req in enumerate(worker_reqs):
             req.scheduler_states.update_states_one_step()
-            req.sampling_params.latents = latents[i]
+            req.sampling_params.latents = latents[i].unsqueeze(dim=0)
             # req.step_output = StableDiffusionPipelineStepOutput()  # Nothing to store
                 
     
@@ -370,7 +370,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
     ) -> None:
         latents: List[torch.Tensor] = []
         for req in worker_reqs:
-            latents.append(req.sampling_params.latents.unsqueeze())
+            latents.append(req.sampling_params.latents)
         latents = torch.cat(latents, dim=0)
 
         if not output_type == "latent":

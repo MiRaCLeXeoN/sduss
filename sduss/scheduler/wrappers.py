@@ -3,9 +3,12 @@ import time
 
 from typing import Union, Optional, List, TYPE_CHECKING, Dict
 
+from sduss.logger import init_logger
+
 if TYPE_CHECKING:
     from sduss.model_executor.sampling_params import BaseSamplingParams
 
+logger = init_logger(__name__)
 
 class RequestStatus(enum.Enum):
     """Status of a sequence."""
@@ -121,6 +124,14 @@ class SchedulerOutput:
             for req_id in reqs_dict.keys():
                 req_ids.append(req_id)
         return req_ids
+    
+    
+    def get_reqs_as_list(self) -> List[Request]:
+        scheduler_reqs = []
+        for res in self.scheduled_requests:
+            for req in self.scheduled_requests[res].values():
+                scheduler_reqs.append(req)
+        return scheduler_reqs
 
 
 class ResolutionRequestQueue:
@@ -261,3 +272,14 @@ class ResolutionRequestQueue:
         if prev_status == RequestStatus.POSTPROCESSING:
             num = len(reqs_dict)
             self._num_unfinished_reqs -= num
+    
+    
+    def log_status(self, return_str: bool = False):
+        format_str = (f"Resolution Queue: resolution={self.resolution} \n"
+                      f"Remaining reqs: {self.get_num_unfinished_reqs()}\n")
+        for status, queue in self.queues.items():
+            format_str += f"{status=}, req_ids={queue.keys()}\n"
+        if return_str:
+            return format_str
+        else:
+            logger.debug(format_str)
