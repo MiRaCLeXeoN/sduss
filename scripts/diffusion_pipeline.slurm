@@ -10,4 +10,4 @@
 #SBATCH --nodelist=hepnode2
 #SBATCH --exclusive
 
-/home/zzp/miniconda3/envs/sduss/bin/python ./tests/entrypoints/diffusion_pipeline_test.py 
+/home/zzp/miniconda3/envs/sduss/bin/python ./tests/entrypoints/diff_pp_test_mixed_steps.py 

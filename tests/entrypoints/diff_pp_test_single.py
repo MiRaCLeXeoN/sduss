@@ -20,7 +20,7 @@ sampling_params.append(sampling_params_cls(prompt="a gigantic flower", num_infer
 outputs = pipe.generate(sampling_params)
 
 for i, output in enumerate(outputs):
-    save_pth = f"./outputs/{i}.png"
+    save_pth = f"./outputs/imgs/{i}.png"
     print(f"saving image from request {output.request_id} to {save_pth}\n")
     print(f"time consumption={output.time_consumption}")
     if isinstance(output.output.images, PIL.Image.Image):

@@ -270,7 +270,6 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
                 timestep = timestep + self.config.num_train_timesteps // req.scheduler_states.num_inference_steps
 
             if len(req.scheduler_states.ets) == 1 and req.scheduler_states.counter == 0:
-                print("case 1")
                 model_output = model_output
                 req.scheduler_states.cur_sample = sample
             elif len(req.scheduler_states.ets) == 1 and req.scheduler_states.counter == 1:
