@@ -139,21 +139,22 @@ class ESyMReDStableDiffusionXLPipeline(BasePipeline):
         **kwargs,
     ):
 
+
         callback = kwargs.pop("callback", None)
         callback_steps = kwargs.pop("callback_steps", None)
 
-        # if callback is not None:
-        #     deprecate(
-        #         "callback",
-        #         "1.0.0",
-        #         "Passing `callback` as an input argument to `__call__` is deprecated, consider use `callback_on_step_end`",
-        #     )
-        # if callback_steps is not None:
-        #     deprecate(
-        #         "callback_steps",
-        #         "1.0.0",
-        #         "Passing `callback_steps` as an input argument to `__call__` is deprecated, consider use `callback_on_step_end`",
-        #     )
+        if callback is not None:
+            deprecate(
+                "callback",
+                "1.0.0",
+                "Passing `callback` as an input argument to `__call__` is deprecated, consider use `callback_on_step_end`",
+            )
+        if callback_steps is not None:
+            deprecate(
+                "callback_steps",
+                "1.0.0",
+                "Passing `callback_steps` as an input argument to `__call__` is deprecated, consider use `callback_on_step_end`",
+            )
 
         # 0. Default height and width to unet
         height = height or self.pipeline.default_sample_size * self.pipeline.vae_scale_factor
@@ -297,6 +298,8 @@ class ESyMReDStableDiffusionXLPipeline(BasePipeline):
             ).to(device=device, dtype=latents.dtype)
 
         self.pipeline._num_timesteps = len(timesteps)
+        # torch.cuda.synchronize()
+        start = time.time()
         with self.pipeline.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.pipeline.interrupt:
@@ -369,37 +372,41 @@ class ESyMReDStableDiffusionXLPipeline(BasePipeline):
                     if callback is not None and i % callback_steps == 0:
                         step_idx = i // getattr(self.pipeline.scheduler, "order", 1)
                         callback(step_idx, t, latents)
-
+        # torch.cuda.synchronize()
+        end = time.time()
+        total_unet_time = end - start
+        start = time.time()
         if not output_type == "latent":
             # make sure the VAE is in float32 mode, as it overflows in float16
             needs_upcasting = self.pipeline.vae.dtype == torch.float16 and self.pipeline.vae.config.force_upcast
             images = dict()
             for resolution in latents:
-                if needs_upcasting:
-                    self.pipeline.upcast_vae()
-                    latents[resolution] = latents[resolution].to(next(iter(self.pipeline.vae.post_quant_conv.parameters())).dtype)
+                if latents[resolution].shape[0] != 0:
+                    if needs_upcasting:
+                        self.pipeline.upcast_vae()
+                        latents[resolution] = latents[resolution].to(next(iter(self.pipeline.vae.post_quant_conv.parameters())).dtype)
 
-                # unscale/denormalize the latents
-                # denormalize with the mean and std if available and not None
-                has_latents_mean = hasattr(self.pipeline.vae.config, "latents_mean") and self.pipeline.vae.config.latents_mean is not None
-                has_latents_std = hasattr(self.pipeline.vae.config, "latents_std") and self.pipeline.vae.config.latents_std is not None
-                if has_latents_mean and has_latents_std:
-                    latents_mean = (
-                        torch.tensor(self.pipeline.vae.config.latents_mean).view(1, 4, 1, 1).to(latents.device, latents.dtype)
-                    )
-                    latents_std = (
-                        torch.tensor(self.pipeline.vae.config.latents_std).view(1, 4, 1, 1).to(latents.device, latents.dtype)
-                    )
-                    latents[resolution] = latents[resolution] * latents_std / self.pipeline.vae.config.scaling_factor + latents_mean
-                else:
-                    latents[resolution] = latents[resolution] / self.pipeline.vae.config.scaling_factor
+                    # unscale/denormalize the latents
+                    # denormalize with the mean and std if available and not None
+                    has_latents_mean = hasattr(self.pipeline.vae.config, "latents_mean") and self.pipeline.vae.config.latents_mean is not None
+                    has_latents_std = hasattr(self.pipeline.vae.config, "latents_std") and self.pipeline.vae.config.latents_std is not None
+                    if has_latents_mean and has_latents_std:
+                        latents_mean = (
+                            torch.tensor(self.pipeline.vae.config.latents_mean).view(1, 4, 1, 1).to(latents.device, latents.dtype)
+                        )
+                        latents_std = (
+                            torch.tensor(self.pipeline.vae.config.latents_std).view(1, 4, 1, 1).to(latents.device, latents.dtype)
+                        )
+                        latents[resolution] = latents[resolution] * latents_std / self.pipeline.vae.config.scaling_factor + latents_mean
+                    else:
+                        latents[resolution] = latents[resolution] / self.pipeline.vae.config.scaling_factor
 
-                image = self.pipeline.vae.decode(latents[resolution], return_dict=False)[0]
-                images[resolution] = image
+                    image = self.pipeline.vae.decode(latents[resolution], return_dict=False)[0]
+                    images[resolution] = image
 
-                # cast back to fp16 if needed
-                if needs_upcasting:
-                    self.pipeline.vae.to(dtype=torch.float16)
+                    # cast back to fp16 if needed
+                    if needs_upcasting:
+                        self.pipeline.vae.to(dtype=torch.float16)
             else:
                 image = latents
 
@@ -413,8 +420,10 @@ class ESyMReDStableDiffusionXLPipeline(BasePipeline):
 
         # Offload all models
         # self.maybe_free_model_hooks()
-
+        # torch.cuda.synchronize()
+        end = time.time()
+        total_post_process_time = end - start
         if not return_dict:
-            return (images,)
+            return (images, total_unet_time, total_post_process_time,)
 
-        return images
+        return images, total_unet_time, total_post_process_time

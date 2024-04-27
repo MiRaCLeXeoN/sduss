@@ -1,50 +1,17 @@
 import inspect
-from typing import Optional, List, Tuple, Union, Dict, Any
+from typing import Optional, List, Tuple, Union, Dict, Any, Callable
 
 import torch
 
 from diffusers import StableDiffusionPipeline, UNet2DConditionModel
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import (
+    retrieve_timesteps, rescale_noise_cfg)
 
 from ..pipeline_utils import BasePipeline
 from ...image_processor import PipelineImageInput
 from sduss.model_executor.modules.unet import PatchUNet
 from sduss.model_executor.modules.resnet import SplitModule
-
-def retrieve_timesteps(
-    scheduler,
-    num_inference_steps: Optional[int] = None,
-    device: Optional[Union[str, torch.device]] = None,
-    timesteps: Optional[List[int]] = None,
-    **kwargs,
-):
-    if timesteps is not None:
-        accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
-        if not accepts_timesteps:
-            raise ValueError(
-                f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
-                f" timestep schedules. Please check whether you are using the correct scheduler."
-            )
-        scheduler.set_timesteps(timesteps=timesteps, device=device, **kwargs)
-        timesteps = scheduler.timesteps
-        num_inference_steps = len(timesteps)
-    else:
-        scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
-        timesteps = scheduler.timesteps
-    return timesteps, num_inference_steps
-
-def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
-    """
-    Rescale `noise_cfg` according to `guidance_rescale`. Based on findings of [Common Diffusion Noise Schedules and
-    Sample Steps are Flawed](https://arxiv.org/pdf/2305.08891.pdf). See Section 3.4
-    """
-    std_text = noise_pred_text.std(dim=list(range(1, noise_pred_text.ndim)), keepdim=True)
-    std_cfg = noise_cfg.std(dim=list(range(1, noise_cfg.ndim)), keepdim=True)
-    # rescale the results from guidance (fixes overexposure)
-    noise_pred_rescaled = noise_cfg * (std_text / std_cfg)
-    # mix with the original results from guidance by factor guidance_rescale to avoid "plain looking" images
-    noise_cfg = guidance_rescale * noise_pred_rescaled + (1 - guidance_rescale) * noise_cfg
-    return noise_cfg
-
+from sduss.worker import WorkerRequest
 
 class ESyMReDStableDiffusionPipeline(BasePipeline):
     def __init__(self, pipeline: StableDiffusionPipeline):
@@ -52,9 +19,9 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
 
     @classmethod
     def instantiate_pipeline(cls, **kwargs):
-        sub_modules: Dict = kwargs.pop("sub_modules", {})
         pretrained_model_name_or_path = kwargs.pop(
             "pretrained_model_name_or_path", "runwayml/stable-diffusion-v1-5")
+        sub_modules: Dict = kwargs.pop("sub_modules", {})
         torch_dtype = kwargs.pop("torch_dtype", torch.float16)
 
         unet = sub_modules.pop("unet", None)
@@ -78,6 +45,67 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
             for subname, submodule in module.named_children():
                 if isinstance(submodule, SplitModule):
                     submodule.get_profile(profile_dir)
+    
+    @torch.inference_mode()
+    def prepare_inference(
+        self,
+        worker_reqs: List[WorkerRequest] = None,
+        prompt: List[str] = None,
+        negative_prompt: Optional[Union[str, List[str]]] = None,
+        num_inference_steps: int = None,
+        latents: Optional[torch.FloatTensor] = None,
+        prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_prompt_embeds: Optional[torch.FloatTensor] = None,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
+        timesteps: List[int] = None,
+        guidance_scale: float = 7.5,
+        eta: float = 0.0,
+        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
+        ip_adapter_image: Optional[PipelineImageInput] = None,
+        ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = None,
+        output_type: Optional[str] = "pil",
+        return_dict: bool = True,
+        cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+        guidance_rescale: float = 0.0,
+        clip_skip: Optional[int] = None,
+        callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
+        callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        **kwargs
+    ) -> None:
+        pass
+
+
+    
+    @torch.inference_mode()
+    def denoising_step(
+        self,
+        worker_reqs: List[WorkerRequest],
+        timestep_cond: torch.Tensor,
+        added_cond_kwargs: Optional[Dict],
+        extra_step_kwargs: Dict,
+        callback_on_step_end: Optional[Callable[[int, int, Dict], None]],
+        callback_on_step_end_tensor_inputs: List[str],
+        do_classifier_free_guidance: bool,
+        guidance_rescale: float,
+        guidance_scale: float,
+        cross_attention_kwargs: Optional[Dict[str, Any]],
+    ) -> None:
+        pass
+        
+    
+    
+    @torch.inference_mode()
+    def post_inference(
+        self,
+        worker_reqs: List[WorkerRequest],
+        output_type: str,
+        device: torch.device,
+        prompt_embeds_dtype: torch.dtype,
+        generator: torch.Generator,
+    ) -> None:
+        pass
+    
 
 
     @torch.no_grad()
@@ -108,18 +136,12 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
         **kwargs,
     ):
 
-        # height = height or self.unet.config.sample_size * self.vae_scale_factor
-        # width = width or self.unet.config.sample_size * self.vae_scale_factor
-
-        height = height or self.default_sample_size * self.vae_scale_factor
-        width = width or self.default_sample_size * self.vae_scale_factor
-        # do_classifier_free_guidance = guidance_scale > 1.0 and self.pipeline.unet.config.time_cond_proj_dim is None
-
         self.pipeline._guidance_scale = guidance_scale
         self.pipeline._guidance_rescale = guidance_rescale
         self.pipeline._clip_skip = clip_skip
         self.pipeline._cross_attention_kwargs = cross_attention_kwargs
         self.pipeline._interrupt = False
+
 
         # 2. Define call parameters
         if prompt is not None and isinstance(prompt, str):
@@ -147,8 +169,14 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
             lora_scale=lora_scale,
             clip_skip=self.pipeline.clip_skip,
         )
-
-        # ! Cat prompt
+        self.scheduler = dict()
+        for resolution in latents:
+            self.scheduler[resolution] = PNDMScheduler(num_train_timesteps=1000,
+                                                        beta_start=0.00085,
+                                                        beta_end=0.012,
+                                                        skip_prk_steps=True,
+                                                        steps_offset=1,
+                                                        beta_schedule="scaled_linear")
         base_offset = 0
         embeds = list()
         if self.pipeline.do_classifier_free_guidance:
@@ -168,10 +196,9 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
             )
 
         # 4. Prepare timesteps
-        timesteps, num_inference_steps = retrieve_timesteps(self.pipeline.scheduler, num_inference_steps, device, timesteps)
-
         for key in latents:
-            latents[key] = latents[key] * self.pipeline.scheduler.init_noise_sigma
+            timesteps, num_inference_steps = retrieve_timesteps(self.scheduler[key], num_inference_steps_total, device, timesteps_total)
+            latents[key] = latents[key] * self.scheduler[key].init_noise_sigma
         # 6. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.pipeline.prepare_extra_step_kwargs(generator, eta)
 
@@ -190,6 +217,8 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
 
         num_warmup_steps = len(timesteps) - num_inference_steps * self.pipeline.scheduler.order
         self._num_timesteps = len(timesteps)
+        torch.cuda.synchronize()
+        start = time.time()
         with self.pipeline.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.pipeline._interrupt:
@@ -199,7 +228,7 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
                 for resolution in latents:
                     latent_model_inputs[resolution] = torch.cat([latents[resolution]] * 2) if self.pipeline.do_classifier_free_guidance else latents[resolution]
                 # latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
-                    latent_model_inputs[resolution] = self.pipeline.scheduler.scale_model_input(latent_model_inputs[resolution], t)
+                    latent_model_inputs[resolution] = self.scheduler[resolution].scale_model_input(latent_model_inputs[resolution], t)
 
                 noise_pred = self.pipeline.unet(
                     latent_model_inputs,
@@ -209,11 +238,10 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
                     cross_attention_kwargs=self.pipeline.cross_attention_kwargs,
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
-                    # is_sliced=is_sliced,
-                    # patch_size=patch_size
+                    is_sliced=is_sliced,
+                    patch_size=patch_size
                 )[0]
 
-                # ! Unet
                 for resolution, res_split_noise in noise_pred.items():
                     if self.pipeline.do_classifier_free_guidance:
                         noise_pred_uncond, noise_pred_text = res_split_noise.chunk(2)
@@ -224,21 +252,27 @@ class ESyMReDStableDiffusionPipeline(BasePipeline):
                         res_split_noise = rescale_noise_cfg(res_split_noise, noise_pred_text, guidance_rescale=self.pipeline._guidance_rescale)
 
                     # compute the previous noisy sample x_t -> x_t-1
-                    latents[resolution] = self.pipeline.scheduler.step(res_split_noise, t, latents[resolution], **extra_step_kwargs, return_dict=False)[0]
-
+                    latents[resolution] = self.scheduler[resolution].step(res_split_noise, t, latents[resolution], **extra_step_kwargs, return_dict=False)[0]
+                #     self.pipeline.scheduler._step_index -= 1
+                # self.pipeline.scheduler._step_index += 1
                 # call the callback, if provided
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.pipeline.scheduler.order == 0):
                     progress_bar.update()
             # make sure the VAE is in float32 mode, as it overflows in float16
-            
         
-        # ! vae     
+        torch.cuda.synchronize()
+        end = time.time()
+        total_unet_time = end - start
+        start =time.time()
         images = list()
         for resolution, res_split_latents in latents.items():
-            image = self.pipeline.vae.decode(res_split_latents / self.pipeline.vae.config.scaling_factor, return_dict=False, generator=generator)[
-                0
-            ]
-            # print(self.pipeline.vae.decode(res_split_latents, return_dict=False)[0])
-            images.append(self.pipeline.image_processor.postprocess(image, output_type="pil"))
-
-        return images
+            if res_split_latents.shape[0] != 0:
+                image = self.pipeline.vae.decode(res_split_latents / self.pipeline.vae.config.scaling_factor, return_dict=False, generator=generator)[
+                    0
+                ]
+                # print(self.pipeline.vae.decode(res_split_latents, return_dict=False)[0])
+                images.append(self.pipeline.image_processor.postprocess(image, output_type="pil"))
+        torch.cuda.synchronize()
+        end = time.time()
+        total_post_process_time = end - start
+        return images, total_unet_time, total_post_process_time

@@ -31,6 +31,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         return StableDiffusionPipelineSamplingParams
 
 
+    @torch.inference_mode()
     def prepare_inference(
         self,
         worker_reqs: List[WorkerRequest] = None,
@@ -276,6 +277,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             req.prepare_output = prepare_output
 
 
+    @torch.inference_mode()
     def denoising_step(
         self,
         worker_reqs: List[WorkerRequest],
@@ -401,6 +403,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             )
 
 
+    @torch.inference_mode()
     def check_inputs(
         self,
         prompt,
