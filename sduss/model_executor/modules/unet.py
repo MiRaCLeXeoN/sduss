@@ -1,7 +1,7 @@
 import math
 import time
 
-from typing import Optional, Union
+from typing import Optional, Union, Dict
 
 import torch
 
@@ -215,7 +215,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
 
     def forward(
         self,
-        sample,
+        sample: Dict[str, torch.Tensor],
         timestep: Union[torch.Tensor,float,int],
         encoder_hidden_states: torch.Tensor,
         class_labels: Optional[torch.Tensor] = None,
@@ -248,6 +248,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
         sample_key = None
         start = time.time()
         if is_sliced:
+            # TODO(MX): Move to scheduler
             def find_greatest_common_divisor(sample):
                 cur_gcd = None
                 def euclid(x, y):

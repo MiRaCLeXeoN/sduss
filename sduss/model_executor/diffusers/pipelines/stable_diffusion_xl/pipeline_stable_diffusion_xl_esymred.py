@@ -1,67 +1,15 @@
 import torch
-import inspect
 from typing import Optional, List, Tuple, Union, Dict, Any, Callable
 
 from diffusers import StableDiffusionXLPipeline, UNet2DConditionModel
 from diffusers.utils import replace_example_docstring
+from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import (
+    retrieve_timesteps, rescale_noise_cfg)
 
 from ..pipeline_utils import BasePipeline
 from ...image_processor import PipelineImageInput
 from sduss.model_executor.modules.unet import PatchUNet
 from sduss.model_executor.modules.resnet import SplitModule
-
-EXAMPLE_DOC_STRING = """
-    Examples:
-        ```py
-        >>> import torch
-        >>> from diffusers import StableDiffusionXLPipeline
-
-        >>> pipe = StableDiffusionXLPipeline.from_pretrained(
-        ...     "stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16
-        ... )
-        >>> pipe = pipe.to("cuda")
-
-        >>> prompt = "a photo of an astronaut riding a horse on mars"
-        >>> image = pipe(prompt).images[0]
-        ```
-"""
-
-def retrieve_timesteps(
-    scheduler,
-    num_inference_steps: Optional[int] = None,
-    device: Optional[Union[str, torch.device]] = None,
-    timesteps: Optional[List[int]] = None,
-    **kwargs,
-):
-    if timesteps is not None:
-        accepts_timesteps = "timesteps" in set(inspect.signature(scheduler.set_timesteps).parameters.keys())
-        if not accepts_timesteps:
-            raise ValueError(
-                f"The current scheduler class {scheduler.__class__}'s `set_timesteps` does not support custom"
-                f" timestep schedules. Please check whether you are using the correct scheduler."
-            )
-        scheduler.set_timesteps(timesteps=timesteps, device=device, **kwargs)
-        timesteps = scheduler.timesteps
-        num_inference_steps = len(timesteps)
-    else:
-        scheduler.set_timesteps(num_inference_steps, device=device, **kwargs)
-        timesteps = scheduler.timesteps
-    return timesteps, num_inference_steps
-
-def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
-    """
-    Rescale `noise_cfg` according to `guidance_rescale`. Based on findings of [Common Diffusion Noise Schedules and
-    Sample Steps are Flawed](https://arxiv.org/pdf/2305.08891.pdf). See Section 3.4
-    """
-    std_text = noise_pred_text.std(dim=list(range(1, noise_pred_text.ndim)), keepdim=True)
-    std_cfg = noise_cfg.std(dim=list(range(1, noise_cfg.ndim)), keepdim=True)
-    # rescale the results from guidance (fixes overexposure)
-    noise_pred_rescaled = noise_cfg * (std_text / std_cfg)
-    # mix with the original results from guidance by factor guidance_rescale to avoid "plain looking" images
-    noise_cfg = guidance_rescale * noise_pred_rescaled + (1 - guidance_rescale) * noise_cfg
-    return noise_cfg
-
-
 
 class ESyMReDStableDiffusionXLPipeline(BasePipeline):
     def __init__(self, pipeline: StableDiffusionXLPipeline):
@@ -85,16 +33,24 @@ class ESyMReDStableDiffusionXLPipeline(BasePipeline):
 
         return cls(pipeline)
 
-    
-    def get_profile(self, profile_dir):
-        for name, module in self.pipeline.unet.named_modules():
-            for subname, submodule in module.named_children():
-                if isinstance(submodule, SplitModule):
-                    submodule.get_profile(profile_dir)
-
 
     def set_progress_bar_config(self, **kwargs):
         self.pipeline.set_progress_bar_config(**kwargs)
+
+        
+    @torch.inference_mode()
+    def prepare_inference() -> None:
+        pass
+
+
+    @torch.inference_mode()
+    def denoising_step() -> None:
+        pass
+
+
+    @torch.inference_mode()
+    def post_inference() -> None:
+        pass
 
 
     @torch.no_grad()

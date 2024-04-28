@@ -20,6 +20,7 @@ class StableDiffusionPipelinePrepareInput:
     @staticmethod
     def prepare_prepare_input(
         worker_reqs: WorkerRequestDictType,
+        **kwargs,
     ) -> Dict:
         # This pipelien doesn't support mixed_precision. Check for compatibility
         resolutions = list(worker_reqs.keys())
@@ -75,6 +76,7 @@ class StableDiffusionPipelineStepInput(BasePipelineStepInput):
     @staticmethod
     def prepare_step_input(
         worker_reqs: WorkerRequestDictType,
+        **kwargs,
     ) -> Dict: 
         """Prepare input parameters for denoising_step function.
 
@@ -124,6 +126,7 @@ class StableDiffusionPipelinePostInput(BasePipelinePostInput):
     @staticmethod
     def prepare_post_input(
         worker_reqs: WorkerRequestDictType,
+        **kwargs,
     ) -> Dict:
         """Prepare input parameters for post_inference function.
 
