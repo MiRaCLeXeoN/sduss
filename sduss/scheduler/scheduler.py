@@ -31,6 +31,7 @@ class Scheduler:
 
         # Unpack scheduler config's argumnents
         self.max_batchsize = scheduler_config.max_batchsize
+        self.use_mixed_precision = scheduler_config.use_mixed_precision
         
         # resolution -> queues -> RequestQueue
         self.request_pool: Dict[int, ResolutionRequestQueue] = {}
@@ -43,7 +44,8 @@ class Scheduler:
 
         # Scheduler policy
         self.policy = PolicyFactory.get_policy(policy_name=self.scheduler_config.policy,
-                                               request_pool=self.request_pool)
+                                               request_pool=self.request_pool,
+                                               use_mixed_precision=self.use_mixed_precision)
         
         # Logs
         self.cycle_counter = 0

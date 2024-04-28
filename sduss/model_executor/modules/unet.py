@@ -248,19 +248,6 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
         sample_key = None
         start = time.time()
         if is_sliced:
-            # TODO(MX): Move to scheduler
-            def find_greatest_common_divisor(sample):
-                cur_gcd = None
-                def euclid(x, y):
-                    while y:
-                        x, y = y, x % y
-                    return x
-                for resolution in sample:
-                    if cur_gcd is None:
-                        cur_gcd = int(resolution)
-                    else:
-                        cur_gcd = euclid(cur_gcd, int(resolution))
-                return cur_gcd
             # patch_size = find_greatest_common_divisor(sample)
             padding_idx, latent_offset, resolution_offset, sample, patch_map = self.split_sample(sample, patch_size)
             encode_latens = list()

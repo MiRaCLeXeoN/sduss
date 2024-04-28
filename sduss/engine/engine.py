@@ -229,15 +229,24 @@ class Engine:
         elif scheduler_output.status == RequestStatus.PREPARE:
             # For prepare stage inference
             # TODO(MX): We may pass schduler output directly
-            output: WorkerOutput = self._run_workers("exec_prepare_stage", scheduler_reqs=scheduler_output.get_reqs_as_list())
+            output: WorkerOutput = self._run_workers(
+                "exec_prepare_stage", 
+                scheduler_reqs=scheduler_output.get_reqs_as_list(),
+                use_mixed_precision=self.scheduler_config.use_mixed_precision)
         elif scheduler_output.status == RequestStatus.DENOISING:
             # For denoising stage inference
-            self._run_workers("exec_denoising_stage", req_ids=req_ids)
+            self._run_workers(
+                "exec_denoising_stage", 
+                req_ids=req_ids,
+                use_mixed_precision=self.scheduler_config.use_mixed_precision,
+                is_sliced=scheduler_output.is_sliced,
+                patch_size=scheduler_output.patch_size)
         elif (scheduler_output.status == RequestStatus.POSTPROCESSING):
             # For post stage inference
             output: WorkerOutput = self._run_workers(
                 "exec_post_stage",
                 req_ids=req_ids,
+                use_mixed_precision=self.scheduler_config.use_mixed_precision,
             )
         else:
             raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
