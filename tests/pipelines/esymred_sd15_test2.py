@@ -7,9 +7,11 @@ from sduss import DiffusionPipeline
 
 # 1. Create pipeline
 pipe = DiffusionPipeline(model_name_or_pth="/data/home/zzp/.cache/huggingface/hub/models--runwayml--stable-diffusion-v1-5/snapshots/1d0c4ebf6ff58a5caecab40fa1406526bca4b5b9",
+                         policy="fcfs_mixed",
                          use_esymred=True,
                          use_mixed_precision=True,
                          disable_log_status=False,
+                         max_batchsize=16,
                          torch_dtype=torch.float16)
 
 sampling_params_cls = pipe.get_sampling_params_cls()
@@ -25,14 +27,17 @@ prompts = [
     "A sleek and stylish robot posing on a runway, wearing a high-fashion outfit and futuristic accessories. Style: Digital art, futuristic.",
     "A mystical forest at night, with bioluminescent mushrooms illuminating the path and fireflies dancing in the air. Style: Fantasy, ethereal.",
     "A Roman gladiator wielding a neon lightsaber in a futuristic colosseum, battling a cyborg centaur. Style: Pop art, unexpected combination.",]
-prompts = prompts * 10  # 100 in total
+prompts = prompts * 10
+
+resolutions = [256, 512, 768]
 
 sampling_params = []
 
 for i, prompt in enumerate(prompts):
     step = random.randint(1, 100)
     print(f"{i=}, {step=}")
-    sampling_params.append(sampling_params_cls(prompt=prompt, num_inference_steps=step))
+    sampling_params.append(sampling_params_cls(prompt=prompt, num_inference_steps=step,
+                                               resolution=resolutions[random.randint(0, 2)]))
 
 
 outputs = pipe.generate(sampling_params)

@@ -22,7 +22,7 @@ class EngineArgs:
         # Scheduler configs
         self.max_batchsize = kwargs.pop("max_batchsize", 32)
         self.use_mixed_precisoin = kwargs.pop("use_mixed_precision", False)
-        self.policy = kwargs.pop("policy", "fcfs")
+        self.policy = kwargs.pop("policy", "fcfs_single")
         # Engine configs
         self.disable_log_status = kwargs.pop("disable_log_status", False)
         # kwargs for `from_pretrained`

@@ -85,7 +85,6 @@ class StableDiffusionEsymredPipelineStepInput(BasePipelineStepInput):
             Dict: kwargs dict as input.
         """
         input_dict: Dict = {}
-        # ! Here we convert dict to list, since this pipeline doesn't support mixed-precision
         input_worker_reqs = {}
         for res in worker_reqs:
             input_worker_reqs[str(res)] = worker_reqs[res]
@@ -136,21 +135,17 @@ class StableDiffusionEsymredPipelinePostInput(BasePipelinePostInput):
         Returns:
             Dict: kwargs dict as input.
         """
-        # This pipelien doesn't support mixed_precision. Check for compatibility
-        resolutions = list(worker_reqs.keys())
-        assert len(resolutions) == 1
-        res = resolutions[0]
-
         input_dict: Dict = {}
-        # ! Here we convert dict to list, since this pipeline doesn't support mixed-precision
-        input_dict["worker_reqs"] = worker_reqs[res]
+        input_dict["worker_reqs"] = worker_reqs
+        example_res = list(worker_reqs.keys())[0]
+        example_req = worker_reqs[example_res][0]
         # params from sampling params
-        sp: "StableDiffusionEsymredPipelineSamplingParams" = worker_reqs[res][0].sampling_params
+        sp: "StableDiffusionEsymredPipelineSamplingParams" = example_req.sampling_params
         input_dict["output_type"] = sp.output_type
         input_dict["prompt_embeds_dtype"] = sp.prompt_embeds.dtype
         input_dict["generator"] = sp.generator
         # params from prepare output
-        po: "StableDiffusionEsymredPipelinePrepareOutput" = worker_reqs[res][0].prepare_output
+        po: "StableDiffusionEsymredPipelinePrepareOutput" = example_req.prepare_output
         input_dict["device"] = po.device
 
         return input_dict

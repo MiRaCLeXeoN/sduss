@@ -1,4 +1,5 @@
 import time
+import os
 
 import torch
 
@@ -8,17 +9,22 @@ from torch.utils.cpp_extension import load
 
 from .base_module import BaseModule
 
+TORCH_INCLUDE_PATH = os.environ.get("TORCH_INCLUDE_PATH", None)
+if TORCH_INCLUDE_PATH is None:
+    raise RuntimeError("Please set TORCH_INCLUDE_PATH as an environment variable before starting the system.")
+
+
 esymred = load(
     name="esymred",
     sources=[
-        "models/kernels/norm_silu_concat.cpp",
-        "models/kernels/norm_silu_concat.cu",
+        "sduss/model_executor/modules/kernels/norm_silu_concat.cpp",
+        "sduss/model_executor/modules/kernels/norm_silu_concat.cu",
     ],
     verbose=True,
     extra_ldflags= ["-fopenmp"],
     extra_cflags = ["-fopenmp"],
     extra_cuda_cflags = [" --ptxas-options=-v --extended-lambda"],
-    extra_include_paths = ["/home/zzp/miniconda3/envs/sduss/lib/python3.9/site-packages/torch/include"])
+    extra_include_paths = [TORCH_INCLUDE_PATH])
 
 class PatchGroupNorm(BaseModule):
     def __init__(self, module: nn.GroupNorm):

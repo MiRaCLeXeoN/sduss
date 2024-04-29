@@ -1,5 +1,5 @@
 import inspect
-from typing import Optional, List, Tuple, Union, Dict, Any, Callable
+from typing import Optional, List, Tuple, Union, Dict, Any, Callable, Type
 
 import torch
 
@@ -16,9 +16,11 @@ from sduss.worker import WorkerRequest, WorkerRequestDictType
 from .pipeline_stable_diffusion_esymred_utils import (
     StableDiffusionEsymredPipelinePrepareInput, StableDiffusionEsymredPipelinePrepareOutput,
     StableDiffusionEsymredPipelineStepInput, StableDiffusionEsymredPipelineStepOutput,
-    StableDiffusionEsymredPipelinePostInput, StableDiffusionEsymredPipelineOutput,)
+    StableDiffusionEsymredPipelinePostInput, StableDiffusionEsymredPipelineOutput,
+    StableDiffusionEsymredPipelineSamplingParams)
 
 class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
+    SUPPORT_MIXED_PRECISION = True
 
     @classmethod
     def instantiate_pipeline(cls, **kwargs):
@@ -29,6 +31,10 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
         sub_modules["unet"] = unet
 
         return cls(**sub_modules)
+    
+    @staticmethod
+    def get_sampling_params_cls() -> Type[StableDiffusionEsymredPipelineSamplingParams]:
+        return StableDiffusionEsymredPipelineSamplingParams
 
 
     @torch.inference_mode()
@@ -203,7 +209,7 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
         patch_size: int,
     ) -> None:
         latent_dict: Dict[str, torch.Tensor] = {}
-        prompt_embeds_dict: Dict[str, torch.Tensor] = []
+        prompt_embeds_dict: Dict[str, torch.Tensor] = {}
         negative_prompt_embeds_dict: Dict[str, torch.Tensor] = {}
         timestep_dict: Dict[str, torch.Tensor] = {}
 
@@ -249,6 +255,12 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
                                                                       samples=latent_dict[res],
                                                                       timestep_list=latent_dict[res])
 
+        print("latent dict")
+        for res in latent_dict:
+            print(f"{res}, shape={latent_dict[res].shape}")
+        print(f"t.shape={t.shape}")
+        print(f"prompt_embeds.shape={prompt_embeds.shape}")
+
         noise_pred = self.unet(
             latent_dict,
             t,
@@ -271,7 +283,7 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
                 res_split_noise = rescale_noise_cfg(res_split_noise, noise_pred_text, guidance_rescale=guidance_rescale)
 
             # compute the previous noisy sample x_t -> x_t-1
-            latent_dict[res] = self.scheduler.batch_step(worker_reqs[res], res_split_noise, timestep_list[res], 
+            latent_dict[res] = self.scheduler.batch_step(worker_reqs[res], res_split_noise, timestep_dict[res], 
                                                          latent_dict[res], **extra_step_kwargs, return_dict=False)
         
         # Update parameters
@@ -284,7 +296,7 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
     @torch.inference_mode()
     def post_inference(
         self,
-        worker_reqs: Dict[str, List[WorkerRequest]],
+        worker_reqs: Dict[int, List[WorkerRequest]],
         output_type: str,
         device: torch.device,
         prompt_embeds_dtype: torch.dtype,

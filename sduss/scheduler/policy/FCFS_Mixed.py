@@ -3,10 +3,9 @@ import time
 from typing import List, TYPE_CHECKING, Dict
 
 from .policy import Policy
-from ..wrappers import SchedulerOutput
+from ..wrappers import SchedulerOutput, RequestStatus
 from ..utils import find_gcd
 
-from sduss.scheduler import RequestStatus
 
 if TYPE_CHECKING:
     from sduss.scheduler import Request
@@ -58,17 +57,17 @@ class FCFS_Mixed(Policy):
         queue = self._get_all_reqs_by_status(target_status)
         queue.sort(key=lambda req: now - req.arrival_time, reverse=True)
 
-        res_reqs_dict: Dict[int, List[Request]] = {}
+        res_reqs_dict: Dict[int, Dict[int, Request]] = {}
         
         # Collect reqs
         num_to_collect = max_num
-        while num_to_collect > 0:
+        while num_to_collect > 0 and queue:
             req = queue.pop(0)
             res = req.sampling_params.resolution
             if res not in res_reqs_dict:
-                res_reqs_dict[res] = [queue[0]]
+                res_reqs_dict[res] = {req.request_id : req}
             else:
-                res_reqs_dict[res].append(queue[0])
+                res_reqs_dict[res][req.request_id] = req
             num_to_collect -= 1
         
         # Mixed precision arguments
@@ -81,7 +80,7 @@ class FCFS_Mixed(Policy):
                 patch_size = find_gcd(list(res_reqs_dict))
             else:
                 is_sliced = False
-                patch_size = res_reqs_dict.keys()[0]
+                patch_size = list(res_reqs_dict.keys())[0]
         
         return SchedulerOutput(
             scheduled_requests=res_reqs_dict,

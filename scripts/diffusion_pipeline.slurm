@@ -7,7 +7,9 @@
 #SBATCH --partition=Compute
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --nodelist=hepnode2
+#SBATCH --nodelist=hepnode3
 #SBATCH --exclusive
 
-/home/zzp/miniconda3/envs/sduss/bin/python ./tests/entrypoints/diff_pp_test_mixed_steps.py 
+export TORCH_INCLUDE_PATH="/home/zzp/miniconda3/envs/sduss/lib/python3.9/site-packages/torch/include"
+
+/home/zzp/miniconda3/envs/sduss/bin/python ./tests/pipelines/esymred_sd15_test2.py 
