@@ -253,13 +253,15 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
             encode_latens = list()
             text_embs_list = list()
             text_ids_list = list()
+            latent_timesteps = list()
             for index in range(len(latent_offset["cpu"]) - 1):
                 for i in range(latent_offset["cpu"][index + 1] - latent_offset["cpu"][index]):
                     encode_latens.append(encoder_hidden_states[index].unsqueeze(0))
+                    latent_timesteps.append(timestep[index])
                     if added_cond_kwargs is not None and added_cond_kwargs['text_embeds'] is not None:
                         text_embs_list.append(added_cond_kwargs["text_embeds"][index].unsqueeze(0))
                         text_ids_list.append(added_cond_kwargs["time_ids"][index].unsqueeze(0))
-
+            timestep = torch.tensor(latent_timesteps, device="cuda", dtype=torch.int32)
             encoder_hidden_states = torch.cat(encode_latens, dim=0)
             if added_cond_kwargs is not None and added_cond_kwargs['text_embeds'] is not None:
                 added_cond_kwargs["text_embeds"]= torch.cat(text_embs_list, dim=0)

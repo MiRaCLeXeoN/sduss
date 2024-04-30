@@ -208,12 +208,15 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
         is_sliced: bool,
         patch_size: int,
     ) -> None:
+        # keep the iteration in fixed order
+        resolution_list = list(worker_reqs.keys()).sort(key= lambda res_str: int(res_str))
+    
         latent_dict: Dict[str, torch.Tensor] = {}
         prompt_embeds_dict: Dict[str, torch.Tensor] = {}
         negative_prompt_embeds_dict: Dict[str, torch.Tensor] = {}
         timestep_dict: Dict[str, torch.Tensor] = {}
 
-        for res in worker_reqs.keys():
+        for res in resolution_list:
             local_latent_list = []
             local_prompt_embeds_list = []
             local_negative_prompt_embeds_list = []
@@ -233,7 +236,7 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
         if do_classifier_free_guidance:
             prompt_embeds_list: List[torch.Tensor] = []
             timestep_list: List[torch.Tensor] = []
-            for res in latent_dict:
+            for res in resolution_list:
                 latent_dict[res] = torch.cat([latent_dict[res]] * 2, dim=0)
                 prompt_embeds_list.append(negative_prompt_embeds_dict[res])
                 prompt_embeds_list.append(prompt_embeds_dict[res])
@@ -243,20 +246,20 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
         else:
             prompt_embeds_list = []
             timestep_list = []
-            for res in latent_dict:
+            for res in resolution_list:
                 prompt_embeds_list.append(prompt_embeds_dict[res])
                 timestep_list.append(timestep_dict[res])
             prompt_embeds = torch.cat(prompt_embeds_list, dim=0)
             t = torch.cat(timestep_list, dim=0)
         
         # Scale input
-        for res in latent_dict:
+        for res in resolution_list:
             latent_dict[res] = self.scheduler.batch_scale_model_input(worker_reqs=worker_reqs[res],
                                                                       samples=latent_dict[res],
-                                                                      timestep_list=latent_dict[res])
+                                                                      timestep_list=timestep_dict[res])
 
         print("latent dict")
-        for res in latent_dict:
+        for res in resolution_list:
             print(f"{res}, shape={latent_dict[res].shape}")
         print(f"t.shape={t.shape}")
         print(f"prompt_embeds.shape={prompt_embeds.shape}")
@@ -287,7 +290,7 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
                                                          latent_dict[res], **extra_step_kwargs, return_dict=False)
         
         # Update parameters
-        for res in worker_reqs:
+        for res in resolution_list:
             for i, req in enumerate(worker_reqs[res]):
                 req.scheduler_states.update_states_one_step()
                 req.sampling_params.latents = latent_dict[res][i].unsqueeze(dim=0)

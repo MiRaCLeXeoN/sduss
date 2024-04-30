@@ -203,19 +203,19 @@ class StableDiffusionEsymredPipelineSamplingParams(BaseSamplingParams):
         self.height: Optional[int] = self.resolution
         self.width: Optional[int] = self.resolution
 
-        self.timesteps: List[int] = self._get_value_from_kwargs("timesteps", kwargs)
-        self.guidance_scale: float = self._get_value_from_kwargs("guidance_scale", kwargs)
-        self.eta: float = self._get_value_from_kwargs("eta", kwargs)
-        self.generator: Optional[Union[torch.Generator, List[torch.Generator]]] = self._get_value_from_kwargs("generator", kwargs)
-        self.ip_adapter_image: Optional[PipelineImageInput] = self._get_value_from_kwargs("ip_adapter_image", kwargs)
-        self.ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = self._get_value_from_kwargs("ip_adapter_image_embeds", kwargs)
-        self.output_type: Optional[str] = self._get_value_from_kwargs("output_type", kwargs)
-        self.return_dict: bool = self._get_value_from_kwargs("return_dict", kwargs)
-        self.cross_attention_kwargs: Optional[Dict[str, Any]] = self._get_value_from_kwargs("cross_attention_kwargs", kwargs)
-        self.guidance_rescale: float = self._get_value_from_kwargs("guidance_rescale", kwargs)
-        self.clip_skip: Optional[int] = self._get_value_from_kwargs("clip_skip", kwargs)
-        self.callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = self._get_value_from_kwargs("callback_on_step_end", kwargs)
-        self.callback_on_step_end_tensor_inputs: List[str] = self._get_value_from_kwargs("callback_on_step_end_tensor_inputs", kwargs)
+        self.timesteps: List[int] = self._get_volatile_params_from_kwargs("timesteps", kwargs)
+        self.guidance_scale: float = self._get_volatile_params_from_kwargs("guidance_scale", kwargs)
+        self.eta: float = self._get_volatile_params_from_kwargs("eta", kwargs)
+        self.generator: Optional[Union[torch.Generator, List[torch.Generator]]] = self._get_volatile_params_from_kwargs("generator", kwargs)
+        self.ip_adapter_image: Optional[PipelineImageInput] = self._get_volatile_params_from_kwargs("ip_adapter_image", kwargs)
+        self.ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = self._get_volatile_params_from_kwargs("ip_adapter_image_embeds", kwargs)
+        self.output_type: Optional[str] = self._get_volatile_params_from_kwargs("output_type", kwargs)
+        self.return_dict: bool = self._get_volatile_params_from_kwargs("return_dict", kwargs)
+        self.cross_attention_kwargs: Optional[Dict[str, Any]] = self._get_volatile_params_from_kwargs("cross_attention_kwargs", kwargs)
+        self.guidance_rescale: float = self._get_volatile_params_from_kwargs("guidance_rescale", kwargs)
+        self.clip_skip: Optional[int] = self._get_volatile_params_from_kwargs("clip_skip", kwargs)
+        self.callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = self._get_volatile_params_from_kwargs("callback_on_step_end", kwargs)
+        self.callback_on_step_end_tensor_inputs: List[str] = self._get_volatile_params_from_kwargs("callback_on_step_end_tensor_inputs", kwargs)
         self._check_volatile_params()
 
 
