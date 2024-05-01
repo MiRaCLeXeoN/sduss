@@ -58,6 +58,8 @@ class ModelRunner:
         self.pipeline: BasePipeline = get_pipeline(self.pipeline_config)
         if self.scheduler_config.use_mixed_precision and not self.pipeline.SUPPORT_MIXED_PRECISION:
             raise ValueError("This pipeline doesn't support mixed precision input!")
+        
+        self.pipeline.__post_init__()
 
         self.pipeline.to("cuda")
         self.utils_cls = self.pipeline.get_sampling_params_cls().utils_cls

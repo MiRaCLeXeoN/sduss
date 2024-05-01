@@ -249,6 +249,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
         start = time.time()
         if is_sliced:
             # patch_size = find_greatest_common_divisor(sample)
+            self.model.conv_in.module.padding = (0, 0)
             padding_idx, latent_offset, resolution_offset, sample, patch_map = self.split_sample(sample, patch_size)
             encode_latens = list()
             text_embs_list = list()
@@ -267,7 +268,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                 added_cond_kwargs["text_embeds"]= torch.cat(text_embs_list, dim=0)
                 added_cond_kwargs["time_ids"] = torch.cat(text_ids_list, dim=0)          
         else:
-            self.model.conv_in.module.padding = (1,1)
+            self.model.conv_in.module.padding = (1, 1)
             padding_idx = {"cpu": None, "cuda": None}
             latent_offset = {"cpu": None, "cuda": None}
             patch_map = {"cpu": None, "cuda": None}

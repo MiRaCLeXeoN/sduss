@@ -35,6 +35,10 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
     @staticmethod
     def get_sampling_params_cls() -> Type[StableDiffusionEsymredPipelineSamplingParams]:
         return StableDiffusionEsymredPipelineSamplingParams
+    
+    
+    def __post_init__(self):
+        pass
 
 
     @torch.inference_mode()
@@ -259,9 +263,8 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
                                                                       samples=latent_dict[res],
                                                                       timestep_list=timestep_dict[res])
 
-        print("latent dict")
         for res in resolution_list:
-            print(f"{res}, shape={latent_dict[res].shape}")
+            print(f"latent_dict {res}, shape={latent_dict[res].shape}")
         print(f"t.shape={t.shape}")
         print(f"prompt_embeds.shape={prompt_embeds.shape}")
 
@@ -278,7 +281,7 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
         )[0]
 
         for res in resolution_list:
-            print(res, f"{noise_pred[res].shape}")
+            print("noise_pred ", res, f" {noise_pred[res].shape}")
 
         for res, res_split_noise in noise_pred.items():
             if do_classifier_free_guidance:

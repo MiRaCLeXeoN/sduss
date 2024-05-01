@@ -28,6 +28,9 @@ class PNDMSchedulerStates(BaseSchedulerStates):
         "cur_sample",
     ]
     def __init__(self, **kwargs) -> None:
+        # Common variables
+        super().__init__()
+
         self.prk_timesteps: np.ndarray = kwargs.pop("prk_timesteps")
         self.num_inference_steps: int = kwargs.pop("num_inference_steps")
         self.timesteps: torch.FloatTensor = kwargs.pop("timesteps")
@@ -37,8 +40,6 @@ class PNDMSchedulerStates(BaseSchedulerStates):
         self.ets: List[torch.FloatTensor] = kwargs.pop("ets")
         self.cur_sample: torch.FloatTensor = kwargs.pop("cur_sample")
 
-        # Common variables
-        super().__init__()
     
     def update_states_one_step(self):
         self.timestep_idx += 1

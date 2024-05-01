@@ -52,14 +52,14 @@ class StableDiffusionXLEsymredPipelinePrepareInput:
 @dataclass
 class StableDiffusionXLEsymredPipelinePrepareOutput:
     """Params that are same as sampling_params will not be stored here."""
-    pooled_prompt_embeds = None
-    negative_pooled_prompt_embeds = None
-    add_time_ids = None
-    negative_add_time_ids = None
-    timestep_cond: torch.Tensor = None
-    extra_step_kwargs: Dict = None
-    device: torch.device = None
-    do_classifier_free_guidance: bool = None
+    pooled_prompt_embeds : torch.Tensor
+    negative_pooled_prompt_embeds : torch.Tensor
+    add_time_ids : torch.Tensor
+    negative_add_time_ids : torch.Tensor
+    timestep_cond: torch.Tensor
+    extra_step_kwargs: Dict
+    device: torch.device
+    do_classifier_free_guidance: bool
     # latents: torch.Tensor  # update to sampling_params
     # prompt_embeds: torch.FloatTensor  # update to sampling_params
 

@@ -29,6 +29,10 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
     @staticmethod
     def get_sampling_params_cls() -> Type[StableDiffusionPipelineSamplingParams]:
         return StableDiffusionPipelineSamplingParams
+    
+    
+    def __post_init__(self):
+        pass
 
 
     @torch.inference_mode()

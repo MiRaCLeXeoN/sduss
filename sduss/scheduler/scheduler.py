@@ -53,7 +53,6 @@ class Scheduler:
 
     def schedule(self) -> SchedulerOutput:
         """Schedule requests for next iteration."""
-        self.log_status()
         scheduler_output = self.policy.schedule_requests(max_num=self.max_batchsize)
         # More wrappers will be added here.
 

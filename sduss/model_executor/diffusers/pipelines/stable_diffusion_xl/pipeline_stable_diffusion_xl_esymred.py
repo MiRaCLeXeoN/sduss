@@ -1,3 +1,5 @@
+from diffusers.models import AutoencoderKL
+from diffusers.schedulers import KarrasDiffusionSchedulers
 import torch
 from typing import Optional, List, Tuple, Union, Dict, Any, Callable, Type, TYPE_CHECKING
 
@@ -6,6 +8,7 @@ from diffusers.utils import replace_example_docstring
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import (
     StableDiffusionXLPipeline as DiffusersStableDiffusionXLPipeline,
     retrieve_timesteps, rescale_noise_cfg)
+from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer, CLIPVisionModelWithProjection
 
 from ..pipeline_utils import BasePipeline
 from ...image_processor import PipelineImageInput
@@ -39,6 +42,13 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
     def get_sampling_params_cls() -> Type[StableDiffusionXLEsymredPipelineSamplingParams]:
         return StableDiffusionXLEsymredPipelineSamplingParams
 
+    
+    def __post_init__(self):
+        self.needs_upcasting = (self.vae.dtype == torch.float16 and self.vae.config.force_upcast)
+        if self.needs_upcasting:
+            self.upcast_vae()
+            self.vae_upcast_dtype = next(iter(self.vae.post_quant_conv.parameters())).dtype
+
         
     @torch.inference_mode()
     def prepare_inference(
@@ -62,7 +72,8 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         negative_target_size: Optional[Tuple[int, int]] = None,
         clip_skip: Optional[int] = None,
     ) -> None:
-        resolution_list = list(worker_reqs.keys()).sort()
+        resolution_list = list(worker_reqs.keys())
+        resolution_list.sort()
     
         # 0. Collect args
         worker_reqs_list: List[WorkerRequest] = []
@@ -120,10 +131,10 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             do_classifier_free_guidance=self.do_classifier_free_guidance,
             negative_prompt=negative_prompt,
             negative_prompt_2=negative_prompt_2,
-            prompt_embeds=prompt_embeds,
-            negative_prompt_embeds=negative_prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            prompt_embeds=None,
+            negative_prompt_embeds=None,
+            pooled_prompt_embeds=None,
+            negative_pooled_prompt_embeds=None,
             lora_scale=lora_scale,
             clip_skip=self.clip_skip,
         )
@@ -184,9 +195,9 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         
         # * if do_classifier_free, tensors will be cat before each denoising steps
 
-        prompt_embeds = prompt_embeds.to(device)
-        add_text_embeds = add_text_embeds.to(device)
+        # add_text_embeds = add_text_embeds.to(device)
         add_time_ids = add_time_ids.to(device)  # ! Propagate (1024, 1024)
+        negative_add_time_ids = negative_add_time_ids.to(device)
 
         # * We won't step inside
         if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
@@ -227,8 +238,8 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             ).to(device=device, dtype=latent_list[0].dtype)
         
         for i, req in enumerate(worker_reqs_list):
-            req.sampling_params.prompt_embeds = prompt_embeds[i]
-            req.sampling_params.negative_prompt_embeds = negative_prompt_embeds[i]
+            req.sampling_params.prompt_embeds = prompt_embeds[i].unsqueeze(0)
+            req.sampling_params.negative_prompt_embeds = negative_prompt_embeds[i].unsqueeze(0)
             req.sampling_params.latents = latent_list[i]
             # Create prepare output
             req.prepare_output = StableDiffusionXLEsymredPipelinePrepareOutput(
@@ -341,6 +352,14 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
         # if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
         #     added_cond_kwargs["image_embeds"] = image_embeds
+
+        for res in latent_dict:
+            print(f"latent[{res}].shape={latent_dict[res].shape}")
+        print(f"{t.shape=}")
+        print(f"{prompt_embeds.shape=}")
+        for name in added_cond_kwargs:
+            print(f"added_cond_kwargs[{name}].shape={added_cond_kwargs[name].shape}")
+
         noise_pred = self.unet(
             latent_dict,
             t,
@@ -387,31 +406,31 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         latent_dict: Dict[str, torch.Tensor] = {}
         for res in worker_reqs:
             latent_list = []
-            for wr in worker_reqs[res]:
-                latent_list.append(wr.sampling_params.latents)
+            for req in worker_reqs[res]:
+                latent_list.append(req.sampling_params.latents)
             latent_dict[res] = torch.cat(latent_list, dim=0)
         device = latent_dict[res].device
         dtype = latent_dict[res].dtype
+        print(f"{latent_dict[res].device=}, {latent_dict[res].dtype=}")
+        print(f"{device=}, {dtype=}")
+        print(f"{req.sampling_params.latents.dtype=}, {req.sampling_params.latents.device=}")
 
         images = {}
         if not output_type == "latent":
             # make sure the VAE is in float32 mode, as it overflows in float16
-            needs_upcasting = self.vae.dtype == torch.float16 and self.vae.config.force_upcast
-            latents_mean = (
-                torch.tensor(self.vae.config.latents_mean).view(1, 4, 1, 1).to(device, dtype)
-            )
-            latents_std = (
-                torch.tensor(self.vae.config.latents_std).view(1, 4, 1, 1).to(device, dtype)
-            )
+            # upcast has been moved to __post_init__
+            has_latents_mean = hasattr(self.vae.config, "latents_mean") and self.vae.config.latents_mean is not None
+            has_latents_std = hasattr(self.vae.config, "latents_std") and self.vae.config.latents_std is not None
+            if has_latents_mean and has_latents_std:
+                latents_mean = torch.tensor(self.vae.config.latents_mean).view(1, 4, 1, 1).to(latent_dict[res].device, latent_dict[res].dtype)
+                latents_std = torch.tensor(self.vae.config.latents_std).view(1, 4, 1, 1).to(latent_dict[res].device, latent_dict[res].dtype)
+
             for res in latent_dict:
-                if needs_upcasting:
-                    self.upcast_vae()
-                    latent_dict[res] = latent_dict[res].to(next(iter(self.vae.post_quant_conv.parameters())).dtype)
+                if self.needs_upcasting:
+                    latent_dict[res] = latent_dict[res].to(self.vae_upcast_dtype)
 
                 # unscale/denormalize the latents
                 # denormalize with the mean and std if available and not None
-                has_latents_mean = hasattr(self.vae.config, "latents_mean") and self.vae.config.latents_mean is not None
-                has_latents_std = hasattr(self.vae.config, "latents_std") and self.vae.config.latents_std is not None
                 if has_latents_mean and has_latents_std:
                     latent_dict[res] = latent_dict[res] * latents_std / self.vae.config.scaling_factor + latents_mean
                 else:
@@ -420,9 +439,9 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
                 image = self.vae.decode(latent_dict[res], return_dict=False)[0]
                 images[res] = image
 
-                # cast back to fp16 if needed
-                if needs_upcasting:
-                    self.vae.to(dtype=torch.float16)
+                # ! We don't cast back
+                # if needs_upcasting:
+                #     self.vae.to(dtype=torch.float16)
         else:
             images = latent_dict
 
@@ -431,6 +450,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             # apply watermark if available
                 # if self.watermark is not None:
                 #     images[resolution] = self.watermark.apply_watermark(images[resolution])
+                print(images[res])
                 image = self.image_processor.postprocess(images[res], output_type=output_type)
 
                 for i, req in enumerate(worker_reqs[res]):
@@ -438,5 +458,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
                         images=image[i],
                         nsfw_content_detected=None,
                     )
+        else:
+            raise NotImplementedError
 
 
