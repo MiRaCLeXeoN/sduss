@@ -43,7 +43,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
     @torch.inference_mode()
     def prepare_inference(
         self,
-        worker_reqs: WorkerRequestDictType = None,
+        worker_reqs: "WorkerRequestDictType" = None,
         denoising_end: Optional[float] = None,
         guidance_scale: float = 5.0,
         eta: float = 0.0,
@@ -259,7 +259,8 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         patch_size: int = 256,   
     ) -> None:
         # keep the iteration in fixed order
-        resolution_list = list(worker_reqs.keys()).sort(key= lambda res_str: int(res_str))
+        resolution_list = list(worker_reqs.keys())
+        resolution_list.sort(key= lambda res_str: int(res_str))
         # Collect args 
         latent_dict: Dict[str, torch.Tensor] = {}
         prompt_embeds_dict: Dict[str, torch.Tensor] = {}
@@ -380,7 +381,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
     @torch.inference_mode()
     def post_inference(
         self,
-        worker_reqs: WorkerRequestDictType,
+        worker_reqs: "WorkerRequestDictType",
         output_type: str = "pil",
     ) -> None:
         latent_dict: Dict[str, torch.Tensor] = {}

@@ -209,7 +209,8 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
         patch_size: int,
     ) -> None:
         # keep the iteration in fixed order
-        resolution_list = list(worker_reqs.keys()).sort(key= lambda res_str: int(res_str))
+        resolution_list = list(worker_reqs.keys())
+        resolution_list.sort(key= lambda res_str: int(res_str))
     
         latent_dict: Dict[str, torch.Tensor] = {}
         prompt_embeds_dict: Dict[str, torch.Tensor] = {}
@@ -275,6 +276,9 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
             is_sliced=is_sliced,
             patch_size=patch_size
         )[0]
+
+        for res in resolution_list:
+            print(res, f"{noise_pred[res].shape}")
 
         for res, res_split_noise in noise_pred.items():
             if do_classifier_free_guidance:
