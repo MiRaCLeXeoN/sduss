@@ -38,19 +38,19 @@ class PatchTransformer2DModel(BaseModule):
         class_labels=None,
         cross_attention_kwargs=None,
         return_dict: bool = True,
-        image_offset: list = [],
-        padding_idx: list = [],
+        latent_offset: dict = None,
+        padding_idx: dict = None,
         is_sliced:bool = False,
-        resolution_offset: list = [],
+        resolution_offset: dict = None,
     ):
         # 1. Input
         if self.module.is_input_continuous:
             batch, _, height, width = hidden_states.shape
             residual = hidden_states
 
-            hidden_states = self.module.norm(hidden_states, is_sliced=is_sliced, image_offset=image_offset)
+            hidden_states = self.module.norm(hidden_states, is_sliced=is_sliced, is_fused=False)
             if not self.module.use_linear_projection:
-                hidden_states = self.module.proj_in(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx)
+                hidden_states = self.module.proj_in(hidden_states, is_sliced=is_sliced)
                 inner_dim = hidden_states.shape[1]
                 hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch, height * width, inner_dim)
             else:
@@ -76,7 +76,7 @@ class PatchTransformer2DModel(BaseModule):
                 timestep=timestep,
                 cross_attention_kwargs=cross_attention_kwargs,
                 class_labels=class_labels,
-                image_offset=image_offset,
+                latent_offset=latent_offset,
                 is_sliced=is_sliced,
                 resolution_offset=resolution_offset,
             )            
@@ -85,7 +85,7 @@ class PatchTransformer2DModel(BaseModule):
         if self.module.is_input_continuous:
             if not self.module.use_linear_projection:
                 hidden_states = hidden_states.reshape(batch, height, width, inner_dim).permute(0, 3, 1, 2).contiguous()
-                hidden_states = self.module.proj_out(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx)
+                hidden_states = self.module.proj_out(hidden_states, is_sliced=is_sliced)
             else:
                 hidden_states = self.module.proj_out(hidden_states)
                 hidden_states = hidden_states.reshape(batch, height, width, inner_dim).permute(0, 3, 1, 2).contiguous()
@@ -170,9 +170,9 @@ class PatchBasicTransformerBlock(BaseModule):
         cross_attention_kwargs: Dict[str, Any] = None,
         class_labels: Optional[torch.LongTensor] = None,
         added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
-        image_offset: list = [],
+        latent_offset: dict = None,
         is_sliced: bool = False,
-        resolution_offset: list = [],
+        resolution_offset: dict = None,
     ):
         batch = hidden_states.shape[0]
         if self.module.norm_type == "ada_norm":
@@ -207,9 +207,9 @@ class PatchBasicTransformerBlock(BaseModule):
             norm_hidden_states,
             encoder_hidden_states=encoder_hidden_states if self.module.only_cross_attention else None,
             attention_mask=attention_mask,
-            image_offset=image_offset,
+            latent_offset=latent_offset["cpu"],
             is_sliced=is_sliced,
-            resolution_offset=resolution_offset,
+            resolution_offset=resolution_offset["cpu"],
             **cross_attention_kwargs,
         )
         # hidden_states = hidden_states.reshape(batch, height * width, -1)
@@ -243,7 +243,7 @@ class PatchBasicTransformerBlock(BaseModule):
                 norm_hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=attention_mask,
-                image_offset=image_offset,
+                latent_offset=latent_offset["cpu"],
                 is_sliced=is_sliced,
                 **cross_attention_kwargs,
             )

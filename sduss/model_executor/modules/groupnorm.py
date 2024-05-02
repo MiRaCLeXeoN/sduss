@@ -1,11 +1,30 @@
 import time
+import os
 
 import torch
 
 from torch import distributed as dist
 from torch import nn
+from torch.utils.cpp_extension import load
 
 from .base_module import BaseModule
+
+TORCH_INCLUDE_PATH = os.environ.get("TORCH_INCLUDE_PATH", None)
+if TORCH_INCLUDE_PATH is None:
+    raise RuntimeError("Please set TORCH_INCLUDE_PATH as an environment variable before starting the system.")
+
+
+esymred = load(
+    name="esymred",
+    sources=[
+        "sduss/model_executor/modules/kernels/norm_silu_concat.cpp",
+        "sduss/model_executor/modules/kernels/norm_silu_concat.cu",
+    ],
+    verbose=True,
+    extra_ldflags= ["-fopenmp"],
+    extra_cflags = ["-fopenmp"],
+    extra_cuda_cflags = [" --ptxas-options=-v --extended-lambda"],
+    extra_include_paths = [TORCH_INCLUDE_PATH])
 
 class PatchGroupNorm(BaseModule):
     def __init__(self, module: nn.GroupNorm):
@@ -14,36 +33,12 @@ class PatchGroupNorm(BaseModule):
         self.groupnorm_time = 0
 
    
-    def forward(self, input: torch.Tensor, is_sliced: bool = False, image_offset: list=[]) -> torch.Tensor:
+    def forward(self, input: torch.Tensor, is_sliced: bool = False, latent_offset: torch.Tensor=None, patch_map: torch.Tensor = None, padding_idx: torch.Tensor = None, is_fused: bool = True) -> torch.Tensor:
         assert input.ndim == 4
-        if not is_sliced:
-            return self.module(input)
-        b, c, h, w = input.shape
-        group_size = c // self.module.num_groups
-        # reshape mean mean stack
-        input = input.view([b, self.module.num_groups, group_size, h, w])
-        input_mean = input.mean(dim=[2, 3, 4], keepdim=True)  # [1, num_groups, 1, 1, 1]
-        input2_mean = (input**2).mean(dim=[2, 3, 4], keepdim=True)  # [1, num_groups, 1, 1, 1]
-        if is_sliced:
-            start = time.time()
-            for index in range(len(image_offset) - 1):
-                new_input_mean = [input_mean[x] for x in range(image_offset[index], image_offset[index + 1])]
-                new_input2_mean = [input2_mean[x] for x in range(image_offset[index], image_offset[index + 1])]
-                mean = sum(new_input_mean) / (image_offset[index + 1] - image_offset[index])
-                mean2 = sum(new_input2_mean) / (image_offset[index + 1] - image_offset[index])
-                for x in range(image_offset[index], image_offset[index + 1]):
-                    input_mean[x] = mean
-                    input2_mean[x] = mean2
-            end = time.time()
-            self.groupnorm_time += (end - start)
-        var = input2_mean - input_mean**2
-        num_elements = group_size * h * w
-        var = var * (num_elements / (num_elements - 1))
-        std = (var + self.module.eps).sqrt()
-        output = (input - input_mean) / std
-        output = output.view([b, c, h, w])
-        if self.module.affine:
-            output = output * self.module.weight.view([1, -1, 1, 1])
-            output = output + self.module.bias.view([1, -1, 1, 1])
-        # self.counter += 1
-        return output
+        if not is_sliced or not is_fused:
+            result = self.module(input)
+            return result
+        else:
+            N, C, H, W = input.shape
+            result = esymred.groupnorm(input, self.module.weight, self.module.bias, N, C, H, W, int(C / self.module.num_groups), self.module.eps, latent_offset, patch_map, padding_idx)
+            return result

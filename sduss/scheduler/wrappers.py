@@ -108,10 +108,18 @@ class SchedulerOutput:
     def __init__(
         self,
         scheduled_requests: SchedulerOutputReqsType,
-        status: RequestStatus
+        status: RequestStatus,
+        **kwargs,
     ) -> None:
         self.scheduled_requests: SchedulerOutputReqsType = scheduled_requests  
         self.status = status
+
+        self.is_sliced = kwargs.pop("is_sliced", None)
+        self.patch_size = kwargs.pop("patch_size", None)
+
+        mixed_precision = len(scheduled_requests) > 1
+        if mixed_precision and self.status == RequestStatus.DENOISING:
+            assert self.is_sliced is not None and self.patch_size is not None
 
     
     def is_empty(self) -> bool:
@@ -207,6 +215,10 @@ class ResolutionRequestQueue:
             return self.finished
         else:
             raise ValueError(f"Unexpected status {status}.")
+    
+    
+    def get_all_reqs_by_status(self, status: RequestStatus) -> List[Request]:
+        return list(self.queues[status].values())
 
     
     def get_num_unfinished_reqs(self) -> int:

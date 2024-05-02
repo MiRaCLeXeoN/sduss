@@ -1,7 +1,7 @@
 import math
 import time
 
-from typing import Optional, Union
+from typing import Optional, Union, Dict
 
 import torch
 
@@ -101,124 +101,110 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
 
 
     def split_sample(self, samples, patch_size):
-        left_idx = list()
-        top_idx = list()
-        right_idx = list()
-        bottom_idx = list()
-        image_offset = list()
-        image_offset.append(0)
+        # left_idx = list()
+        # top_idx = list()
+        # right_idx = list()
+        # bottom_idx = list()
+        latent_offset = list()
+        patch_map = list()
+        latent_offset.append(0)
         resolution_offset = list()
         resolution_offset.append(0)
+        padding_idx = list()
         new_sample = list()
         for resolution, res_sample in samples.items():
             resolution = int(resolution)
             patch_on_height = (resolution // patch_size)
             patch_on_width = (resolution // patch_size)
             latent_patch_size = int(patch_size // 8)
-            
+            if res_sample is None or res_sample.shape[0] == 0:
+                continue
             for sample in res_sample:
-                image_offset.append(image_offset[-1] + patch_on_width ** 2)
+                latent_offset.append(latent_offset[-1] + patch_on_width ** 2)
                 sample = torch.nn.functional.pad(sample, (1, 1, 1, 1), "constant", 0).unsqueeze(0)
                 
                 for h in range((patch_on_height)):
                     for w in range((patch_on_width)):
+                        paddings = torch.empty(4, device=sample.device, dtype=torch.int32)
+                        # paddings = [None] * 4
                         if (patch_on_height) == 1:
-                            left_idx.append(-1)
-                            right_idx.append(-1)
-                            top_idx.append(-1)
-                            bottom_idx.append(-1)
+                            # left_idx.append(-1)
+                            # right_idx.append(-1)
+                            # top_idx.append(-1)
+                            # bottom_idx.append(-1)
+                            paddings[0] = -1
+                            paddings[1] = -1
+                            paddings[2] = -1
+                            paddings[3] = -1
                             new_sample.append(sample[:, :, h * latent_patch_size : (h + 1) * latent_patch_size + 2, w * latent_patch_size : (w + 1) * latent_patch_size + 2])
+                            patch_map.append(len(latent_offset)-1)
+                            padding_idx.append(paddings)
                             continue
                         if w == 0:
-                            left_idx.append(-1)
-                            right_idx.append(len(new_sample) + 1)
+                            # left_idx.append(-1)
+                            # right_idx.append(len(new_sample) + 1)
+                            paddings[1] = -1
+                            paddings[3] = len(new_sample) + 1
                         elif w == (patch_on_width) - 1:
-                            left_idx.append(len(new_sample) - 1)
-                            right_idx.append(-1)
+                            # left_idx.append(len(new_sample) - 1)
+                            # right_idx.append(-1)
+                            paddings[1] = len(new_sample) - 1
+                            paddings[3] = -1
                         else:
-                            left_idx.append(len(new_sample) - 1)
-                            right_idx.append(len(new_sample) + 1)
+                            # left_idx.append(len(new_sample) - 1)
+                            # right_idx.append(len(new_sample) + 1)
+                            paddings[1] = len(new_sample) - 1
+                            paddings[3] = len(new_sample) + 1
                         if h == 0:
-                            top_idx.append(-1)
-                            bottom_idx.append(len(new_sample) + (patch_on_height))
+                            # top_idx.append(-1)
+                            # bottom_idx.append(len(new_sample) + (patch_on_height))
+                            paddings[0] = -1
+                            paddings[2] = len(new_sample) + (patch_on_height)
                         elif h == (patch_on_height) - 1:
-                            top_idx.append(len(new_sample) - (patch_on_height))
-                            bottom_idx.append(-1)
+                            # top_idx.append(len(new_sample) - (patch_on_height))
+                            # bottom_idx.append(-1)
+                            paddings[0] = len(new_sample) - (patch_on_height)
+                            paddings[2] = -1
                         else:
-                            top_idx.append(len(new_sample) - (patch_on_height))
-                            bottom_idx.append(len(new_sample) + (patch_on_height))
+                            # top_idx.append(len(new_sample) - (patch_on_height))
+                            # bottom_idx.append(len(new_sample) + (patch_on_height))
+                            paddings[0] = len(new_sample) - (patch_on_height)
+                            paddings[2] = len(new_sample) + (patch_on_height)
                         new_sample.append(sample[:, :, h * latent_patch_size : (h + 1) * latent_patch_size + 2, w * latent_patch_size : (w + 1) * latent_patch_size + 2])
-            resolution_offset.append(len(image_offset)-1)
-        padding_idx = [left_idx, top_idx, right_idx, bottom_idx]
+                        patch_map.append(len(latent_offset)-1)
+                        padding_idx.append(paddings)
+            if res_sample.shape[0] != 0:
+                resolution_offset.append(len(latent_offset)-1)
+        # padding_idx = [left_idx, top_idx, right_idx, bottom_idx]
+        padding_idx = {
+            "cuda": torch.cat(padding_idx, dim=0).cuda(),
+            "cpu": padding_idx
+        }
+        latent_offset = {
+            "cuda": torch.tensor(latent_offset, device="cuda", dtype=torch.int32),
+            "cpu": latent_offset
+        }
+        resolution_offset = {
+            "cuda": torch.tensor(resolution_offset, device="cuda", dtype=torch.int32),
+            "cpu": resolution_offset
+        }
+        patch_map = {
+            "cuda": torch.tensor(patch_map, device="cuda", dtype=torch.int32),
+            "cpu": patch_map
+        }
+        return padding_idx, latent_offset, resolution_offset, torch.cat(new_sample, dim=0), patch_map
+        # return torch.cat(padding_idx, dim=0).cuda(), torch.tensor(latent_offset, device="cuda", dtype=torch.int32), torch.tensor(resolution_offset, device="cuda", dtype=torch.int32), torch.cat(new_sample, dim=0), torch.tensor(patch_map, device="cuda", dtype=torch.int32)
 
-        # print(padding_idx)
-        return padding_idx, image_offset, resolution_offset, torch.cat(new_sample, dim=0)
-
-    def split_row_sample(self, samples, patch_size):
-        left_idx = list()
-        top_idx = list()
-        right_idx = list()
-        bottom_idx = list()
-        image_offset = list()
-        image_offset.append(0)
-        new_sample = list()
-        for resolution, res_sample in samples.items():
-            resolution = int(resolution)
-            patch_on_height = (resolution // patch_size)
-            latent_patch_size = int(patch_size // 8)
-            
-            for sample in res_sample:
-                image_offset.append(image_offset[-1] + patch_on_height)
-                sample = torch.nn.functional.pad(sample, (1, 1, 1, 1), "constant", 0).unsqueeze(0)
-                
-                for h in range((patch_on_height)):
-                        if (patch_on_height) == 1:
-                            left_idx.append(-1)
-                            right_idx.append(-1)
-                            top_idx.append(-1)
-                            bottom_idx.append(-1)
-                            new_sample.append(sample[:, :, h * latent_patch_size : (h + 1) * latent_patch_size + 2, :])
-                            continue
-                        left_idx.append(-1)
-                        right_idx.append(-1)
-                        if h == 0:
-                            top_idx.append(-1)
-                            bottom_idx.append(len(new_sample) + 1)
-                        elif h == (patch_on_height) - 1:
-                            top_idx.append(len(new_sample) - 1)
-                            bottom_idx.append(-1)
-                        else:
-                            top_idx.append(len(new_sample) - 1)
-                            bottom_idx.append(len(new_sample) + 1)
-                        new_sample.append(sample[:, h * latent_patch_size : (h + 1) * latent_patch_size + 2, :].unsqueeze(0))
-        padding_idx = [left_idx, top_idx, right_idx, bottom_idx]
-        # print(padding_idx)
-        return padding_idx, image_offset, torch.cat(new_sample, dim=0)
-
-    def concat_row_sample(self, patch_size, new_sample, image_offset):
+    def concat_sample(self, patch_size, new_sample, latent_offset):
         samples = dict()
-        for index in range(len(image_offset) - 1):
-            patches_per_image = image_offset[index + 1] - image_offset[index]
-            image_size = patches_per_image * patch_size
-            # for h in range(patches_per_image):
-            image_arr = torch.cat([new_sample[x].unsqueeze(0) for x in range(image_offset[index], image_offset[index + 1])], dim=-2)
-            if str(image_size) not in samples:
-                samples[str(image_size)] = list()
-            samples[str(image_size)].append((image_arr))
-        for key in samples:
-            samples[key] = torch.cat(samples[key], dim=0)
-        return samples
-
-    def concat_sample(self, patch_size, new_sample, image_offset):
-        samples = dict()
-        for index in range(len(image_offset) - 1):
-            patches_per_image = image_offset[index + 1] - image_offset[index]
+        for index in range(len(latent_offset) - 1):
+            patches_per_image = latent_offset[index + 1] - latent_offset[index]
             patch_on_height = int(math.sqrt(patches_per_image))
             image_size = patch_on_height * patch_size
             image_arr = list()
             for h in range(patch_on_height):
-                # new_sample[image_offset[index] + h * patch_on_height : image_offset[index] + (h + 1) * patch_on_height]
-                image_arr.append(torch.cat([new_sample[x].unsqueeze(0) for x in range(image_offset[index] + h * patch_on_height, image_offset[index] + (h + 1) * patch_on_height)], dim=-1))
+                # new_sample[latent_offset[index] + h * patch_on_height : latent_offset[index] + (h + 1) * patch_on_height]
+                image_arr.append(torch.cat([new_sample[x].unsqueeze(0) for x in range(latent_offset[index] + h * patch_on_height, latent_offset[index] + (h + 1) * patch_on_height)], dim=-1))
             if str(image_size) not in samples:
                 samples[str(image_size)] = list()
             samples[str(image_size)].append(torch.cat(image_arr, dim=-2))
@@ -229,7 +215,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
 
     def forward(
         self,
-        sample,
+        sample: Dict[str, torch.Tensor],
         timestep: Union[torch.Tensor,float,int],
         encoder_hidden_states: torch.Tensor,
         class_labels: Optional[torch.Tensor] = None,
@@ -262,26 +248,31 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
         sample_key = None
         start = time.time()
         if is_sliced:
-            padding_idx, image_offset, resolution_offset, sample = self.split_sample(sample, patch_size)
+            # patch_size = find_greatest_common_divisor(sample)
+            self.model.conv_in.module.padding = (0, 0)
+            padding_idx, latent_offset, resolution_offset, sample, patch_map = self.split_sample(sample, patch_size)
             encode_latens = list()
             text_embs_list = list()
             text_ids_list = list()
-            for index in range(len(image_offset) - 1):
-                for i in range(image_offset[index + 1] - image_offset[index]):
+            latent_timesteps = list()
+            for index in range(len(latent_offset["cpu"]) - 1):
+                for i in range(latent_offset["cpu"][index + 1] - latent_offset["cpu"][index]):
                     encode_latens.append(encoder_hidden_states[index].unsqueeze(0))
+                    latent_timesteps.append(timestep[index])
                     if added_cond_kwargs is not None and added_cond_kwargs['text_embeds'] is not None:
                         text_embs_list.append(added_cond_kwargs["text_embeds"][index].unsqueeze(0))
                         text_ids_list.append(added_cond_kwargs["time_ids"][index].unsqueeze(0))
-
+            timestep = torch.tensor(latent_timesteps, device="cuda")
             encoder_hidden_states = torch.cat(encode_latens, dim=0)
             if added_cond_kwargs is not None and added_cond_kwargs['text_embeds'] is not None:
                 added_cond_kwargs["text_embeds"]= torch.cat(text_embs_list, dim=0)
-                added_cond_kwargs["time_ids"] = torch.cat(text_ids_list, dim=0)            
+                added_cond_kwargs["time_ids"] = torch.cat(text_ids_list, dim=0)          
         else:
-            self.model.conv_in.module.padding = (1,1)
-            padding_idx = None
-            image_offset = None
-            resolution_offset = None
+            self.model.conv_in.module.padding = (1, 1)
+            padding_idx = {"cpu": None, "cuda": None}
+            latent_offset = {"cpu": None, "cuda": None}
+            patch_map = {"cpu": None, "cuda": None}
+            resolution_offset = {"cpu": None, "cuda": None}
             for key in sample:
                 patch_size = sample[key].shape[-1]
                 sample_key = key
@@ -388,12 +379,14 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                     encoder_attention_mask=encoder_attention_mask,
                     is_sliced=is_sliced,    
                     padding_idx=padding_idx,
-                    image_offset=image_offset,
+                    latent_offset=latent_offset,
+                    patch_map=patch_map,
                     resolution_offset = resolution_offset,
                     **additional_residuals,
                 )
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb, 
+                                                       patch_map=patch_map,latent_offset=latent_offset,
                                                        is_sliced=is_sliced, padding_idx=padding_idx
                                                        )
                 if is_adapter and len(down_intrablock_additional_residuals) > 0:
@@ -424,11 +417,13 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                     encoder_attention_mask=encoder_attention_mask,
                     is_sliced=is_sliced,
                     padding_idx=padding_idx,
-                    image_offset=image_offset,
+                    patch_map=patch_map,
+                    latent_offset=latent_offset,
                     resolution_offset=resolution_offset,
                 )
             else:
                 sample = self.model.mid_block(sample, emb, 
+                                              patch_map=patch_map,latent_offset=latent_offset,
                                               is_sliced=is_sliced, padding_idx=padding_idx
                                               )
 
@@ -467,7 +462,8 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                     encoder_attention_mask=encoder_attention_mask,
                     is_sliced=is_sliced,
                     padding_idx=padding_idx,
-                    image_offset=image_offset,
+                    patch_map=patch_map,
+                    latent_offset=latent_offset,
                     resolution_offset=resolution_offset,
                 )
             else:
@@ -476,21 +472,25 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
                     upsample_size=upsample_size,
+                    patch_map=patch_map,
+                    latent_offset=latent_offset,
                     is_sliced=is_sliced, padding_idx=padding_idx
                 )
 
         # 6. post-process
         if self.model.conv_norm_out:
-            sample = self.model.conv_norm_out(sample, 
-                                              is_sliced=is_sliced, image_offset=image_offset
-                                              )
+            # sample = self.model.conv_norm_out(sample, 
+            #                                   is_sliced=is_sliced, latent_offset=latent_offset
+            #                                   )
+            # sample = self.model.conv_act(sample)
+            sample = self.model.conv_norm_out(sample, is_sliced=is_sliced, latent_offset=latent_offset["cuda"], patch_map=patch_map["cuda"], padding_idx=padding_idx["cuda"])
             sample = self.model.conv_act(sample)
         sample = self.model.conv_out(sample, 
-                                     is_sliced=is_sliced, padding_idx=padding_idx
+                                     is_sliced=is_sliced, padding_idx=padding_idx, is_padding=False
                                      )
         start = time.time()
         if is_sliced:
-            sample = (self.concat_sample(patch_size, sample, image_offset), )
+            sample = (self.concat_sample(patch_size, sample, latent_offset["cpu"]), )
         else:
             sample = ({
                 sample_key: sample

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, fields, field
-from typing import Union, Optional, List, Dict, Callable, Any, Type
+from typing import Union, Optional, List, Dict, Callable, Any, Type, Tuple
 
 import PIL
 import numpy as np
@@ -16,55 +16,47 @@ from sduss.worker import WorkerRequest, WorkerRequestDictType
 logger = init_logger(__name__)
 
 
-class StableDiffusionPipelinePrepareInput:
+class StableDiffusionXLEsymredPipelinePrepareInput:
     @staticmethod
     def prepare_prepare_input(
         worker_reqs: WorkerRequestDictType,
         **kwargs,
     ) -> Dict:
-        # This pipelien doesn't support mixed_precision. Check for compatibility
-        resolutions = list(worker_reqs.keys())
-        assert len(resolutions) == 1
-        res = resolutions[0]
-
         input_dict: Dict = {}
-        # ! Here we convert dict to list, since this pipeline doesn't support mixed-precision
-        input_dict["worker_reqs"] = worker_reqs[res]
-        # These variables must be none right now
-        input_dict["prompt"] = None
-        input_dict["negative_prompt"] = None
-        input_dict["num_inference_steps"] = None
-        input_dict["latents"] = None
-        input_dict["prompt_embeds"] = None
-        input_dict["negative_prompt_embeds"] = None
+        input_dict["worker_reqs"] =  worker_reqs
 
         # Get a example sampling params
-        sp: "StableDiffusionPipelineSamplingParams" = worker_reqs[res][0].sampling_params
+        sp: "StableDiffusionXLEsymredPipelineSamplingParams" = worker_reqs[next(iter(worker_reqs.keys()))][0].sampling_params
         # These variables are all set as default, we can use them across all reqs.
-        input_dict["height"] = sp.height  
-        input_dict["width"] = sp.width  
-        input_dict["timesteps"] = sp.timesteps  
-        input_dict["guidance_scale"] = sp.guidance_scale  
-        input_dict["eta"] = sp.eta  
-        input_dict["generator"] = sp.generator  
-        input_dict["ip_adapter_image"] = sp.ip_adapter_image  
-        input_dict["ip_adapter_image_embeds"] = sp.ip_adapter_image_embeds  
-        input_dict["output_type"] = sp.output_type  
-        input_dict["return_dict"] = sp.return_dict  
-        input_dict["cross_attention_kwargs"] = sp.cross_attention_kwargs  
-        input_dict["guidance_rescale"] = sp.guidance_rescale  
-        input_dict["clip_skip"] = sp.clip_skip  
-        input_dict["callback_on_step_end"] = sp.callback_on_step_end  
-        input_dict["callback_on_step_end_tensor_inputs"] = sp.callback_on_step_end_tensor_inputs  
+        input_dict["denoising_end"] = sp.denoising_end
+        input_dict["guidance_scale"] = sp.guidance_scale
+        input_dict["eta"] = sp.eta
+        input_dict["generator"] = sp.generator
+        input_dict["pooled_prompt_embeds"] = sp.pooled_prompt_embeds
+        input_dict["negative_pooled_prompt_embeds"] = sp.negative_pooled_prompt_embeds
+        input_dict["ip_adapter_image"] = sp.ip_adapter_image
+        input_dict["ip_adapter_image_embeds"] = sp.ip_adapter_image_embeds
+        input_dict["output_type"] = sp.output_type
+        input_dict["return_dict"] = sp.return_dict
+        input_dict["cross_attention_kwargs"] = sp.cross_attention_kwargs
+        input_dict["guidance_rescale"] = sp.guidance_rescale
+        input_dict["crops_coords_top_left"] = sp.crops_coords_top_left
+        input_dict["negative_original_size"] = sp.negative_original_size
+        input_dict["negative_crops_coords_top_left"] = sp.negative_crops_coords_top_left
+        input_dict["negative_target_size"] = sp.negative_target_size
+        input_dict["clip_skip"] = sp.clip_skip
     
         return input_dict
         
 
 @dataclass
-class StableDiffusionPipelinePrepareOutput:
+class StableDiffusionXLEsymredPipelinePrepareOutput:
     """Params that are same as sampling_params will not be stored here."""
+    pooled_prompt_embeds : torch.Tensor
+    negative_pooled_prompt_embeds : torch.Tensor
+    add_time_ids : torch.Tensor
+    negative_add_time_ids : torch.Tensor
     timestep_cond: torch.Tensor
-    added_cond_kwargs: Optional[Dict]
     extra_step_kwargs: Dict
     device: torch.device
     do_classifier_free_guidance: bool
@@ -72,7 +64,7 @@ class StableDiffusionPipelinePrepareOutput:
     # prompt_embeds: torch.FloatTensor  # update to sampling_params
 
 
-class StableDiffusionPipelineStepInput(BasePipelineStepInput):
+class StableDiffusionXLEsymredPipelineStepInput(BasePipelineStepInput):
     @staticmethod
     def prepare_step_input(
         worker_reqs: WorkerRequestDictType,
@@ -86,35 +78,35 @@ class StableDiffusionPipelineStepInput(BasePipelineStepInput):
         Returns:
             Dict: kwargs dict as input.
         """
-        # This pipelien doesn't support mixed_precision. Check for compatibility
-        resolutions = list(worker_reqs.keys())
-        assert len(resolutions) == 1
-        res = resolutions[0]
-        
         input_dict: Dict = {}
-        # ! Here we convert dict to list, since this pipeline doesn't support mixed-precision
-        input_dict["worker_reqs"] = worker_reqs[res]
+
+        worker_reqs_dict = {}
+        for res in worker_reqs:
+            worker_reqs_dict[str(res)] = worker_reqs[res]
+        input_dict["worker_reqs"] = worker_reqs_dict
         
-        sp: "StableDiffusionPipelineSamplingParams" = worker_reqs[res][0].sampling_params
         # params from sampling_params
-        input_dict["callback_on_step_end"] = sp.callback_on_step_end
-        input_dict["callback_on_step_end_tensor_inputs"] = sp.callback_on_step_end_tensor_inputs
+        sp: "StableDiffusionXLEsymredPipelineSamplingParams" = worker_reqs[res][0].sampling_params
         input_dict["guidance_rescale"] = sp.guidance_rescale
         input_dict["guidance_scale"] = sp.guidance_scale
         input_dict["cross_attention_kwargs"] = sp.cross_attention_kwargs
+        input_dict["ip_adapter_image"] = sp.ip_adapter_image
+        input_dict["ip_adapter_image_embeds"] = sp.ip_adapter_image_embeds
 
-        po: "StableDiffusionPipelinePrepareOutput" = worker_reqs[res][0].prepare_output
-        # params from prepare_output
-        input_dict["timestep_cond"] = po.timestep_cond
-        input_dict["added_cond_kwargs"] = po.added_cond_kwargs
-        input_dict["extra_step_kwargs"] = po.extra_step_kwargs
+        # params from prepare output
+        po: "StableDiffusionXLEsymredPipelinePrepareOutput" = worker_reqs[res][0].prepare_output
         input_dict["do_classifier_free_guidance"] = po.do_classifier_free_guidance
+        input_dict["timestep_cond"] = po.timestep_cond
+        input_dict["extra_step_kwargs"] = po.extra_step_kwargs
+
+        input_dict["is_sliced"] = kwargs.pop("is_sliced")
+        input_dict["patch_size"] = kwargs.pop("patch_size")
     
         return input_dict
         
 
 @dataclass
-class StableDiffusionPipelineStepOutput:
+class StableDiffusionXLEsymredPipelineStepOutput:
     """Step output class.
     
     For this pipeline, nothing should be stored.
@@ -122,7 +114,7 @@ class StableDiffusionPipelineStepOutput:
     pass
 
 
-class StableDiffusionPipelinePostInput(BasePipelinePostInput):
+class StableDiffusionXLEsymredPipelinePostInput(BasePipelinePostInput):
     @staticmethod
     def prepare_post_input(
         worker_reqs: WorkerRequestDictType,
@@ -132,32 +124,21 @@ class StableDiffusionPipelinePostInput(BasePipelinePostInput):
 
         Args:
             worker_reqs (List[WorkerRequest]): Reqs to be batched.
-
         Returns:
             Dict: kwargs dict as input.
         """
-        # This pipelien doesn't support mixed_precision. Check for compatibility
-        resolutions = list(worker_reqs.keys())
-        assert len(resolutions) == 1
-        res = resolutions[0]
-
         input_dict: Dict = {}
-        # ! Here we convert dict to list, since this pipeline doesn't support mixed-precision
-        input_dict["worker_reqs"] = worker_reqs[res]
-        # params from sampling params
-        sp: "StableDiffusionPipelineSamplingParams" = worker_reqs[res][0].sampling_params
+
+        input_dict["worker_reqs"] = worker_reqs
+
+        sp: "StableDiffusionXLEsymredPipelineSamplingParams" = worker_reqs[next(iter(worker_reqs.keys()))][0].sampling_params
         input_dict["output_type"] = sp.output_type
-        input_dict["prompt_embeds_dtype"] = sp.prompt_embeds.dtype
-        input_dict["generator"] = sp.generator
-        # params from prepare output
-        po: "StableDiffusionPipelinePrepareOutput" = worker_reqs[res][0].prepare_output
-        input_dict["device"] = po.device
 
         return input_dict
 
 
 @dataclass
-class StableDiffusionPipelineOutput(BaseOutput):
+class StableDiffusionXLEsymredPipelineOutput(BaseOutput):
     """
     Output class for Stable Diffusion pipelines.
 
@@ -174,13 +155,16 @@ class StableDiffusionPipelineOutput(BaseOutput):
     nsfw_content_detected: Optional[List[bool]]
 
 
-class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
+class StableDiffusionXLEsymredPipelineSamplingParams(BaseSamplingParams):
     """Sampling parameters for StableDiffusionPipeline."""
     # Params that vary
     # Defined in BaseSampling Params
     volatile_params = {
+        "pooled_prompt_embeds" : None,
+        "negative_pooled_prompt_embeds" : None,
         "timesteps" : None,
-        "guidance_scale" : 7.5,
+        "denoising_end" : None,
+        "guidance_scale" : 5.0,
         "eta" : 0.0,
         "generator" : None,
         "ip_adapter_image" : None,
@@ -189,18 +173,24 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
         "return_dict" : True,
         "cross_attention_kwargs" : None,
         "guidance_rescale" : 0.0,
+        "original_size" : None,
+        "crops_coords_top_left" : (0, 0),
+        "target_size" : None,
+        "negative_original_size" : None,
+        "negative_crops_coords_top_left" : (0, 0),
+        "negative_target_size" : None,
         "clip_skip" : None,
         "callback_on_step_end" : None,
-        "callback_on_step_end_tensor_inputs" : ["latents"]
+        "callback_on_step_end_tensor_inputs" : ["latents"],
     }
     
     utils_cls = {
-        "prepare_input" : StableDiffusionPipelinePrepareInput,
-        "prepare_output" : StableDiffusionPipelinePrepareOutput,
-        "step_input" : StableDiffusionPipelineStepInput,
-        "step_output" : StableDiffusionPipelineStepOutput,
-        "post_input" : StableDiffusionPipelinePostInput,
-        "pipeline_output" : StableDiffusionPipelineOutput,
+        "prepare_input" : StableDiffusionXLEsymredPipelinePrepareInput,
+        "prepare_output" : StableDiffusionXLEsymredPipelinePrepareOutput,
+        "step_input" : StableDiffusionXLEsymredPipelineStepInput,
+        "step_output" : StableDiffusionXLEsymredPipelineStepOutput,
+        "post_input" : StableDiffusionXLEsymredPipelinePostInput,
+        "pipeline_output" : StableDiffusionXLEsymredPipelineOutput,
     }
 
     def __init__(self, **kwargs):
@@ -208,7 +198,15 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
         self.height: Optional[int] = self.resolution
         self.width: Optional[int] = self.resolution
 
+        # Specific params that can be mutable
+        self.prompt_2: Optional[Union[str, List[str]]] = kwargs.pop("prompt_2", "")
+        self.negative_prompt_2: Optional[Union[str, List[str]]] = kwargs.pop("negative_prompt_2", "")
+
+        self.original_size: Optional[Tuple[int, int]] = self._get_volatile_params_from_kwargs("original_size", kwargs)
+        self.pooled_prompt_embeds: Optional[torch.FloatTensor] = self._get_volatile_params_from_kwargs("pooled_prompt_embeds", kwargs)
+        self.negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = self._get_volatile_params_from_kwargs("negative_pooled_prompt_embeds", kwargs)
         self.timesteps: List[int] = self._get_volatile_params_from_kwargs("timesteps", kwargs)
+        self.denoising_end: Optional[float] = self._get_volatile_params_from_kwargs("denoising_end", kwargs)
         self.guidance_scale: float = self._get_volatile_params_from_kwargs("guidance_scale", kwargs)
         self.eta: float = self._get_volatile_params_from_kwargs("eta", kwargs)
         self.generator: Optional[Union[torch.Generator, List[torch.Generator]]] = self._get_volatile_params_from_kwargs("generator", kwargs)
@@ -218,13 +216,19 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
         self.return_dict: bool = self._get_volatile_params_from_kwargs("return_dict", kwargs)
         self.cross_attention_kwargs: Optional[Dict[str, Any]] = self._get_volatile_params_from_kwargs("cross_attention_kwargs", kwargs)
         self.guidance_rescale: float = self._get_volatile_params_from_kwargs("guidance_rescale", kwargs)
+        self.crops_coords_top_left: Tuple[int, int] = self._get_volatile_params_from_kwargs("crops_coords_top_left", kwargs)
+        self.target_size: Optional[Tuple[int, int]] = self._get_volatile_params_from_kwargs("target_size", kwargs)
+        self.negative_original_size: Optional[Tuple[int, int]] = self._get_volatile_params_from_kwargs("negative_original_size", kwargs)
+        self.negative_crops_coords_top_left: Tuple[int, int] = self._get_volatile_params_from_kwargs("negative_crops_coords_top_left", kwargs)
+        self.negative_target_size: Optional[Tuple[int, int]] = self._get_volatile_params_from_kwargs("negative_target_size", kwargs)
         self.clip_skip: Optional[int] = self._get_volatile_params_from_kwargs("clip_skip", kwargs)
         self.callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = self._get_volatile_params_from_kwargs("callback_on_step_end", kwargs)
         self.callback_on_step_end_tensor_inputs: List[str] = self._get_volatile_params_from_kwargs("callback_on_step_end_tensor_inputs", kwargs)
+
         self._check_volatile_params()
 
 
-    def is_compatible_with(self, sampling_params: "StableDiffusionPipelineSamplingParams") -> bool:
+    def is_compatible_with(self, sampling_params: "StableDiffusionXLEsymredPipelineSamplingParams") -> bool:
         is_compatible = True
         # Only volatile params are sure to influce the compatibility
         # But since we've fixed them, params must be compatible

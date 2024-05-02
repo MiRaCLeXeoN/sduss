@@ -23,22 +23,23 @@ class PatchUNetMidBlock2DCrossAttn(BaseModule):
         attention_mask: Optional[torch.FloatTensor] = None,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        image_offset: list = [],
-        padding_idx: list = [],
+        latent_offset: dict = None,
+        padding_idx: dict = None,
         is_sliced:bool = False,
-        resolution_offset: list = [],
+        patch_map:dict = None,
+        resolution_offset: dict = None,
     ):
-        hidden_states = self.module.resnets[0](hidden_states, temb)
+        hidden_states = self.module.resnets[0](hidden_states, temb, is_sliced=is_sliced, patch_map=patch_map, latent_offset=latent_offset, padding_idx=padding_idx)
         for attn, resnet in zip(self.module.attentions, self.module.resnets[1:]):
             hidden_states = attn(
                 hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 cross_attention_kwargs=cross_attention_kwargs,
-                # is_sliced=is_sliced,
-                # image_offset=image_offset,
-                # resolution_offset=resolution_offset,
+                is_sliced=is_sliced,
+                latent_offset=latent_offset,
+                resolution_offset=resolution_offset,
             ).sample
-            hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, padding_idx=padding_idx)
+            hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, patch_map=patch_map, latent_offset=latent_offset, padding_idx=padding_idx)
 
         return hidden_states
 
@@ -58,10 +59,11 @@ class PatchCrossAttnDownBlock2D(BaseModule):
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
         additional_residuals: Optional[torch.FloatTensor] = None,
-        image_offset: list = [],
-        padding_idx: list = [],
+        latent_offset: dict = None,
+        padding_idx: dict = None,
         is_sliced:bool = False,
-        resolution_offset: list = [],
+        patch_map: dict = None,
+        resolution_offset: dict = None,
     ):
         # TODO(Patrick, William) - attention mask is not used
         output_states = ()
@@ -86,14 +88,14 @@ class PatchCrossAttnDownBlock2D(BaseModule):
                     cross_attention_kwargs,
                 )[0]
             else:
-                hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, padding_idx=padding_idx)
+                hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, patch_map=patch_map, latent_offset=latent_offset, padding_idx=padding_idx)
                 hidden_states = attn(
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
-                    # is_sliced=is_sliced,
-                    # image_offset=image_offset,
-                    # resolution_offset=resolution_offset,
+                    is_sliced=is_sliced,
+                    latent_offset=latent_offset,
+                    resolution_offset=resolution_offset,
                 ).sample
 
             output_states += (hidden_states,)
@@ -114,8 +116,9 @@ class PatchDownBlock2D(BaseModule):
         super().__init__(module)
 
     def forward(self, hidden_states, temb=None, 
-                image_offset: list = [],
-                padding_idx: list = [],
+                latent_offset: dict = None,
+                padding_idx: dict = None,
+                patch_map: dict = None,
                 is_sliced:bool = False):
         output_states = ()
 
@@ -130,7 +133,7 @@ class PatchDownBlock2D(BaseModule):
 
                 hidden_states = torch.utils.checkpoint.checkpoint(create_custom_forward(resnet), hidden_states, temb)
             else:
-                hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, padding_idx=padding_idx)
+                hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, patch_map=patch_map, latent_offset=latent_offset,padding_idx=padding_idx)
 
             output_states += (hidden_states,)
 
@@ -160,10 +163,11 @@ class PatchCrossAttnUpBlock2D(BaseModule):
         upsample_size: Optional[int] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        image_offset: list = [],
-        padding_idx: list = [],
+        latent_offset: dict = None,
+        padding_idx: dict = None,
         is_sliced:bool = False,
-        resolution_offset: list = [],
+        patch_map: dict = None,
+        resolution_offset: dict = None,
     ):
         is_freeu_enabled = (
             getattr(self.module, "s1", None)
@@ -208,14 +212,14 @@ class PatchCrossAttnUpBlock2D(BaseModule):
                     cross_attention_kwargs,
                 )[0]
             else:
-                hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, padding_idx=padding_idx)
+                hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, patch_map=patch_map, latent_offset=latent_offset,padding_idx=padding_idx)
                 hidden_states = attn(
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
-                    # is_sliced=is_sliced,
-                    # image_offset=image_offset,
-                    # resolution_offset=resolution_offset,
+                    is_sliced=is_sliced,
+                    latent_offset=latent_offset,
+                    resolution_offset=resolution_offset,
                 ).sample
 
         if self.module.upsamplers is not None:
@@ -234,8 +238,9 @@ class PatchUpBlock2D(BaseModule):
     def forward(self, hidden_states, 
                 res_hidden_states_tuple, 
                 temb=None, upsample_size=None,
-                image_offset: list = [],
-                padding_idx: list = [],
+                latent_offset: dict = None,
+                padding_idx: dict = None,
+                patch_map: dict = None,
                 is_sliced:bool = False):
         
         is_freeu_enabled = (
@@ -271,7 +276,7 @@ class PatchUpBlock2D(BaseModule):
 
                 hidden_states = torch.utils.checkpoint.checkpoint(create_custom_forward(resnet), hidden_states, temb)
             else:
-                hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, padding_idx=padding_idx)
+                hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, patch_map=patch_map, latent_offset=latent_offset, padding_idx=padding_idx)
 
         if self.module.upsamplers is not None:
             for upsampler in self.module.upsamplers:

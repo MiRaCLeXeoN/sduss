@@ -51,7 +51,7 @@ class PatchCrossAttention(PatchAttention):
     def forward(
         self,
         hidden_states: torch.FloatTensor,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
+        encoder_hidden_states: torch.FloatTensor or None = None,
         scale: float = 1.0,
         *args,
         **kwargs,
@@ -95,75 +95,80 @@ class PatchSelfAttention(PatchAttention):
     def __init__(self, module: Attention):
         super(PatchSelfAttention, self).__init__(module)
         self.self_attention_time = 0
-
+        self.streams = []
+        for _ in range(3):
+            self.streams.append(torch.cuda.Stream())
     def forward(
         self,
         hidden_states: torch.FloatTensor,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
+        encoder_hidden_states: torch.FloatTensor or None = None,
         scale: float = 1.0,
         is_sliced: bool = False,
-        image_offset: list = [],
-        resolution_offset: list = [],
+        latent_offset: list = None,
+        resolution_offset: list = None,
         *args,
         **kwargs,
     ) -> torch.FloatTensor:
-        # b, sl, c = hidden_states.shape
-        
-        encoder_hidden_states = encoder_hidden_states if encoder_hidden_states is not None else hidden_states
+        shape = hidden_states.shape
+        if len(shape) == 3:
+            b, sl, q_c = hidden_states.shape
+        else:
+            b, h, w, q_c = hidden_states.shape[-1]
         
         residual = hidden_states
-        states = list()
-        kv = self.to_kv(encoder_hidden_states)
-        query = self.module.to_q(hidden_states)
         bs = 0
+        encoder_hidden_states = hidden_states
+        kv = self.to_kv(encoder_hidden_states)
+        c = kv.shape[-1]
+        query = self.module.to_q(hidden_states)
         if is_sliced:
+            states = [None] * (len(resolution_offset) - 1)
             for resolution_index in range(len(resolution_offset) - 1):
-                target_kv = list()
-                start = time.time()
-                for index in range(resolution_offset[resolution_index], resolution_offset[resolution_index + 1]):
-                    patches_per_image = image_offset[index + 1] - image_offset[index]
-                    current_kv = torch.cat([kv[x] for x in range(image_offset[index], image_offset[index + 1])], dim=0).unsqueeze(0)
-                    for _ in range(image_offset[index], image_offset[index + 1]):
-                        target_kv.append(current_kv)
-                kv_per_resolution = torch.cat(target_kv, dim=0)
-                end = time.time()
-                self.self_attention_time += (end - start)
-                key, value = torch.split(kv_per_resolution, kv_per_resolution.shape[-1] // 2, dim=-1)
+                batch_size = latent_offset[resolution_offset[resolution_index + 1]] - latent_offset[resolution_offset[resolution_index]]
+                base = 0
+                latent_size = resolution_offset[resolution_index + 1] - resolution_offset[resolution_index]
+                patch_per_latent = batch_size // latent_size
+                # cur_states = hidden_states[latent_offset[resolution_offset[resolution_index]] : latent_offset[resolution_offset[resolution_index + 1]]].view(latent_size, -1, q_c)
+                # encoder_hidden_states = cur_states
+                # kv = self.to_kv(encoder_hidden_states)
+                c = kv.shape[-1]
+                # query = self.module.to_q(cur_states)
+                ker_per_resolution = kv[latent_offset[resolution_offset[resolution_index]] : latent_offset[resolution_offset[resolution_index + 1]]].view(latent_size, -1, c)
+                query_per_resolution = query[latent_offset[resolution_offset[resolution_index]] : latent_offset[resolution_offset[resolution_index + 1]]].view(latent_size, -1, q_c)
+                key, value = torch.split(ker_per_resolution, ker_per_resolution.shape[-1] // 2, dim=-1)
                 inner_dim = key.shape[-1]
-                query_per_resolution = self.module.head_to_batch_dim(query[bs:bs+key.shape[0]]).contiguous()
+                query_per_resolution = self.module.head_to_batch_dim(query_per_resolution).contiguous()
                 bs = bs+key.shape[0]
                 key = self.module.head_to_batch_dim(key).contiguous()
                 value = self.module.head_to_batch_dim(value).contiguous()
-                states.append(xformers.ops.memory_efficient_attention(
-                    query_per_resolution, key, value,
-                ))
+                result = xformers.ops.memory_efficient_attention(query_per_resolution, key, value,)
+                result = result.to(query.dtype)
+                result = self.module.batch_to_head_dim(result)
+                # result = self.module.to_out[0](result)
+                states[resolution_index] = result.view(batch_size, -1, q_c)
             hidden_states = torch.cat(states, dim=0)
 
         else:
+            # encoder_hidden_states = hidden_states
+            # kv = self.to_kv(encoder_hidden_states)
+            # query = self.module.to_q(hidden_states)
             key, value = torch.split(kv, kv.shape[-1] // 2, dim=-1)
-            # print(key.shape)
             inner_dim = key.shape[-1]
             head_dim = inner_dim // self.module.heads
 
             query = self.module.head_to_batch_dim(query).contiguous()
             key = self.module.head_to_batch_dim(key).contiguous()
             value = self.module.head_to_batch_dim(value).contiguous()
-            start = time.time()
             hidden_states = xformers.ops.memory_efficient_attention(
                 query, key, value,
             )
-            # torch.cuda.synchronize()
-            end = time.time()
-            self.attention_time += (end - start)
-        hidden_states = hidden_states.to(query.dtype)
-        hidden_states = self.module.batch_to_head_dim(hidden_states)
-
-        # linear proj
+            hidden_states = hidden_states.to(query.dtype)
+            hidden_states = self.module.batch_to_head_dim(hidden_states)
+        
         hidden_states = self.module.to_out[0](hidden_states)
         # dropout
         hidden_states = self.module.to_out[1](hidden_states)
         if self.module.residual_connection:
             hidden_states = hidden_states + residual
         hidden_states = hidden_states / self.module.rescale_output_factor
-        
         return hidden_states

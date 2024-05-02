@@ -58,6 +58,8 @@ class ModelRunner:
         self.pipeline: BasePipeline = get_pipeline(self.pipeline_config)
         if self.scheduler_config.use_mixed_precision and not self.pipeline.SUPPORT_MIXED_PRECISION:
             raise ValueError("This pipeline doesn't support mixed precision input!")
+        
+        self.pipeline.__post_init__()
 
         self.pipeline.to("cuda")
         self.utils_cls = self.pipeline.get_sampling_params_cls().utils_cls
@@ -77,9 +79,11 @@ class ModelRunner:
     def exec_denoising_stage(
         self,
         worker_reqs: "WorkerRequestDictType",
+        is_sliced: bool,
+        patch_size: int,
     ) -> None:
         step_input_cls = self.utils_cls['step_input']
-        input_dict = step_input_cls.prepare_step_input(worker_reqs)
+        input_dict = step_input_cls.prepare_step_input(worker_reqs, is_sliced=is_sliced, patch_size=patch_size)
         self.pipeline.denoising_step(**input_dict)
         # We don't need to find out finished ones, since scheduler can predict
         # request's status accoding to its num_inference_steps

@@ -22,16 +22,19 @@ class EulerDiscreteSchedulerStates(BaseSchedulerStates):
         "_step_index"
     ]
     def __init__(self, **kwargs) -> None:
+        super().__init__()
+
         self.sigmas = kwargs.pop("sigmas")
         self.num_inference_steps = kwargs.pop("num_inference_steps")
         self.timesteps = kwargs.pop("timesteps")
 
-        self._step_index = kwargs.pop("_step_index")
+        # self._step_index = kwargs.pop("_step_index")
+        self._step_index = 0
 
     
     def update_states_one_step(self):
         self.timestep_idx += 1
-        self._step_index += 1
+        # self._step_index += 1  # Handled in `step` method
         assert self.timestep_idx <= self.timesteps.shape[0]
 
     
@@ -106,10 +109,12 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
         # pos = 1 if len(indices) > 1 else 0
         # return indices[pos].item()
         
-        if (req.scheduler_states.timestpes.shape[0] > 1):
-            return 1
-        else:
-            return 0
+        # if (req.scheduler_states.timesteps.shape[0] > 1):
+        #     return 1
+        # else:
+        #     return 0
+    
+        return 0
         
 
     def _batch_init_step_index(
@@ -147,8 +152,11 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
         for req in worker_reqs:
             req_sigma = req.scheduler_states.sigmas[req.scheduler_states._step_index]
             collected_sigmas.append(req_sigma)
-        sigmas_torch = torch.tensor(data=collected_sigmas, dtype=torch.float32).to(torch.cuda.current_device())
-        shape = [len(collected_sigmas)] + [1] *(samples.ndim - 1)
+        sigmas_torch = torch.tensor(data=collected_sigmas, dtype=samples.dtype).to(samples.device)
+        shape = [samples.shape[0]] + [1] *(samples.ndim - 1)
+        if shape[0] == sigmas_torch.shape[0] * 2:
+            # classifier free
+            sigmas_torch = sigmas_torch.repeat(2)
         sigmas_torch = sigmas_torch.reshape(shape=shape)
 
         samples = samples / ((sigmas_torch ** 2 + 1) ** 0.5)
@@ -174,7 +182,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
         if (s_churn != 0.0 or 
             s_tmin != 0.0 or 
             s_tmax != float("inf") or
-            s_noise != 0.0 or
+            s_noise != 1.0 or
             generator is not None):
             raise NotImplementedError("We do not support custom parameters at this time.")
 
@@ -186,10 +194,10 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
         for req in worker_reqs:
             req_sigma = req.scheduler_states.sigmas[req.scheduler_states._step_index]
             collected_sigmas.append(req_sigma)
-        sigmas_torch = torch.tensor(data=collected_sigmas, dtype=torch.float32).to(torch.cuda.current_device())
-        shape = [len(collected_sigmas)] + [1] *(model_outputs.ndim - 1)
+        sigmas_torch = torch.tensor(data=collected_sigmas).to(samples.device)
+        shape = [model_outputs.shape[0]] + [1] *(model_outputs.ndim - 1)
         sigmas_torch = sigmas_torch.reshape(shape=shape)
-        
+
         # 3. Calculate Gamma
         # Since we've set the defualt parameters, gammas must be 0
         gamma = torch.zeros_like(sigmas_torch)
@@ -219,6 +227,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
             raise ValueError(
                 f"prediction_type given as {self.config.prediction_type} must be one of `epsilon`, or `v_prediction`"
             )
+        
 
         # 6. Convert to an ODE derivative
         derivative = (samples - pred_original_sample) / sigma_hat_torch
@@ -238,7 +247,6 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
         # Cast sample back to model compatible dtype
         prev_sample = prev_sample.to(model_outputs.dtype)
 
-        # upon completion increase step index by one
         # self._step_index += 1
         for req in worker_reqs:
             req.scheduler_states._step_index += 1

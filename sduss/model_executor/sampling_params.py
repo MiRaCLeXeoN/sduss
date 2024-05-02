@@ -67,6 +67,6 @@ class BaseSamplingParams():
         raise NotImplementedError("_check_volatile_params method must be overridden by derived classes.")
     
     
-    def _get_value_from_kwargs(self, key: str, kwargs: Dict):
+    def _get_volatile_params_from_kwargs(self, key: str, kwargs: Dict):
         # volatile_params is should be defined in derived classes
         return kwargs.pop(key, self.volatile_params[key])

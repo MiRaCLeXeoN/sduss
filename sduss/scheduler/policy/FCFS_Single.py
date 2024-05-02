@@ -8,12 +8,14 @@ from ..wrappers import SchedulerOutput
 if TYPE_CHECKING:
     from sduss.scheduler import Request
 
-class FCFS(Policy):
+class FCFS_Single(Policy):
     """First Come First Serve.
     
     FCFS always selects the oldest requests, and the find any other requests
     that can be batched with it (A giant request will be split as many single
     requests at the entrypoint. They can be processed together).
+
+    Don't support mixed precision.
     """
     def _flatten_all_reqs(self) -> List['Request']:
         reqs = []

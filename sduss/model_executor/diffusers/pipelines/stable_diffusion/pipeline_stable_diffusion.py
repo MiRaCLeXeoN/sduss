@@ -29,8 +29,13 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
     @staticmethod
     def get_sampling_params_cls() -> Type[StableDiffusionPipelineSamplingParams]:
         return StableDiffusionPipelineSamplingParams
+    
+    
+    def __post_init__(self):
+        pass
 
 
+    @torch.inference_mode()
     def prepare_inference(
         self,
         worker_reqs: List[WorkerRequest] = None,
@@ -152,15 +157,9 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             prompt.append(req.sampling_params.prompt)
             negative_prompt.append(req.sampling_params.negative_prompt)
         
-        # 0. Set height and width of Image
-        height = height or self.unet.config.sample_size * self.vae_scale_factor
-        width = width or self.unet.config.sample_size * self.vae_scale_factor
-        
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
             prompt,
-            height,
-            width,
             negative_prompt,
             prompt_embeds,
             negative_prompt_embeds,
@@ -224,7 +223,6 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         # Latents must be kept separate, since it will be stored independently
         num_channels_latents = self.unet.config.in_channels
         latents: List = []
-        base_shape = (1, num_channels_latents, height // self.vae_scale_factor, width // self.vae_scale_factor)
         for req in worker_reqs:
             if req.sampling_params.latents is None:
                 latent = self.prepare_latents(
@@ -236,6 +234,8 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
                     device=device,
                     generator=generator)
             else:
+                base_shape = (1, num_channels_latents, req.sampling_params.height // self.vae_scale_factor, 
+                              req.sampling_params.width // self.vae_scale_factor)
                 latent = req.sampling_params.latents.reshape(base_shape).to(device)
             latents.append(latent)
         
@@ -256,7 +256,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(batch_size)
             timestep_cond = self.get_guidance_scale_embedding(
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
-            ).to(device=device, dtype=latents.dtype)
+            ).to(device=device, dtype=latents[0].dtype)
 
         # self._num_timesteps = len(timesteps)
 
@@ -264,8 +264,8 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         for i, req in enumerate(worker_reqs):
             # update necessary variables
             req.sampling_params.latents = latents[i]
-            req.sampling_params.prompt_embeds = prompt_embeds[i]
-            req.sampling_params.negative_prompt_embeds = negative_prompt_embeds[i]
+            req.sampling_params.prompt_embeds = prompt_embeds[i].unsqueeze(dim=0)
+            req.sampling_params.negative_prompt_embeds = negative_prompt_embeds[i].unsqueeze(dim=0)
             # Create prepare output
             prepare_output = StableDiffusionPipelinePrepareOutput(
                 timestep_cond=timestep_cond,
@@ -276,6 +276,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             req.prepare_output = prepare_output
 
 
+    @torch.inference_mode()
     def denoising_step(
         self,
         worker_reqs: List[WorkerRequest],
@@ -297,8 +298,8 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
         timestep_idxs: List[int] = []
         for req in worker_reqs:
             latents.append(req.sampling_params.latents)
-            prompt_embeds.append(req.sampling_params.prompt_embeds.unsqueeze(dim=0))
-            negative_prompt_embeds.append(req.sampling_params.negative_prompt_embeds.unsqueeze(dim=0))
+            prompt_embeds.append(req.sampling_params.prompt_embeds)
+            negative_prompt_embeds.append(req.sampling_params.negative_prompt_embeds)
             timesteps.append(req.scheduler_states.get_next_timestep())
             timestep_idxs.append(req.scheduler_states.get_step_idx())
             # TODO(MX): Check tensor shape here
@@ -401,19 +402,15 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
             )
 
 
+    @torch.inference_mode()
     def check_inputs(
         self,
         prompt,
-        height,
-        width,
         negative_prompt=None,
         prompt_embeds=None,
         negative_prompt_embeds=None,
         callback_on_step_end_tensor_inputs=None,
     ):
-        if height % 8 != 0 or width % 8 != 0:
-            raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
-
         if callback_on_step_end_tensor_inputs is not None and not all(
             k in self._callback_tensor_inputs for k in callback_on_step_end_tensor_inputs
         ):

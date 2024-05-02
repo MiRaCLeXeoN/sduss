@@ -7,6 +7,7 @@ import copy
 import os
 import time
 import datetime
+import sys
 
 from typing import Optional, Union, List, Any, Tuple, Dict, TYPE_CHECKING, Iterable
 from functools import partial
@@ -18,7 +19,6 @@ from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from sduss.scheduler import Scheduler, SchedulerOutput, Request, RequestStatus
 from sduss.worker import WorkerOutput
-
 from sduss.logger import init_logger
 from sduss.entrypoints.outputs import RequestOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
@@ -47,7 +47,7 @@ class Engine:
         scheduler_config: SchedulerConfig,
         distributed_init_method: str,
         placement_group: Optional["PlacementGroup"],
-        log_states: bool,
+        log_status: bool,
     ) -> None:
         logger.info(
             "Initializing an engine with config: "
@@ -57,7 +57,7 @@ class Engine:
         self.pipeline_config = pipeline_config
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
-        self.log_states = log_states
+        self.log_status = log_status
         
         self._verify_args()
         
@@ -87,7 +87,7 @@ class Engine:
         return cls(model_config, parallel_config, scheduler_config,
                    distributed_init_method, 
                    placement_group,
-                   log_states=not engine_args.disable_log_status)
+                   log_status=not engine_args.disable_log_status)
         
 
     def _verify_args(self):
@@ -229,15 +229,24 @@ class Engine:
         elif scheduler_output.status == RequestStatus.PREPARE:
             # For prepare stage inference
             # TODO(MX): We may pass schduler output directly
-            output: WorkerOutput = self._run_workers("exec_prepare_stage", scheduler_reqs=scheduler_output.get_reqs_as_list())
+            output: WorkerOutput = self._run_workers(
+                "exec_prepare_stage", 
+                scheduler_reqs=scheduler_output.get_reqs_as_list(),
+                use_mixed_precision=self.scheduler_config.use_mixed_precision)
         elif scheduler_output.status == RequestStatus.DENOISING:
             # For denoising stage inference
-            self._run_workers("exec_denoising_stage", req_ids=req_ids)
+            self._run_workers(
+                "exec_denoising_stage", 
+                req_ids=req_ids,
+                use_mixed_precision=self.scheduler_config.use_mixed_precision,
+                is_sliced=scheduler_output.is_sliced,
+                patch_size=scheduler_output.patch_size)
         elif (scheduler_output.status == RequestStatus.POSTPROCESSING):
             # For post stage inference
             output: WorkerOutput = self._run_workers(
                 "exec_post_stage",
                 req_ids=req_ids,
+                use_mixed_precision=self.scheduler_config.use_mixed_precision,
             )
         else:
             raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
@@ -246,7 +255,7 @@ class Engine:
                                        req_ids=req_ids,
                                        output=output,)
 
-        if self.log_states:
+        if self.log_status:
             self._log_system_states(scheduler_output)
         
         return output
@@ -366,6 +375,6 @@ class Engine:
         #     gpu_cache_usage=gpu_cache_usage,
         #     cpu_cache_usage=cpu_cache_usage,
         # ) 
-        
-        logger.info(f"Running: {self.scheduler.get_num_unfinished_requests()} reqs ")
-        
+
+        self.scheduler.log_status()
+        sys.stdout.flush()

@@ -101,6 +101,7 @@ class Worker:
     def exec_prepare_stage(
         self,
         scheduler_reqs: List[Request],
+        use_mixed_precision: bool,
     ) -> None:
         """Execute prepare stage inference.
         
@@ -130,6 +131,9 @@ class Worker:
     def exec_denoising_stage(
         self,
         req_ids: List[int],
+        use_mixed_precision: bool,
+        is_sliced: bool,
+        patch_size: int,
     ):
         """Execute denoising stage.
 
@@ -149,9 +153,8 @@ class Worker:
             else:
                 worker_reqs[res].append(wq)
 
-
         # 2. Execute
-        self.model_runner.exec_denoising_stage(worker_reqs)
+        self.model_runner.exec_denoising_stage(worker_reqs, is_sliced, patch_size)
 
         # 3. Update reqs states
         # But maybe unnecessary
@@ -161,6 +164,7 @@ class Worker:
     def exec_post_stage(
         self,
         req_ids: List[int],
+        use_mixed_precision: bool,
     ) -> WorkerOutput:
         # 1. Collect requests and wrap as dict
         worker_reqs_dict: "WorkerRequestDictType" = {}
