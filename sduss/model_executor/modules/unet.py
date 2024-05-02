@@ -262,7 +262,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                     if added_cond_kwargs is not None and added_cond_kwargs['text_embeds'] is not None:
                         text_embs_list.append(added_cond_kwargs["text_embeds"][index].unsqueeze(0))
                         text_ids_list.append(added_cond_kwargs["time_ids"][index].unsqueeze(0))
-            timestep = torch.tensor(latent_timesteps, device="cuda", dtype=torch.int32)
+            timestep = torch.tensor(latent_timesteps, device="cuda")
             encoder_hidden_states = torch.cat(encode_latens, dim=0)
             if added_cond_kwargs is not None and added_cond_kwargs['text_embeds'] is not None:
                 added_cond_kwargs["text_embeds"]= torch.cat(text_embs_list, dim=0)

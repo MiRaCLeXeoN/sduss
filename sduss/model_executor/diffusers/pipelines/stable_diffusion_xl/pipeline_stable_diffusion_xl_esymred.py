@@ -125,12 +125,12 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             negative_pooled_prompt_embeds,
         ) = self.encode_prompt(
             prompt=prompt,
-            prompt_2=prompt_2,
+            prompt_2=None,
             device=device,
             num_images_per_prompt=1,
             do_classifier_free_guidance=self.do_classifier_free_guidance,
-            negative_prompt=negative_prompt,
-            negative_prompt_2=negative_prompt_2,
+            negative_prompt=None,
+            negative_prompt_2=None,
             prompt_embeds=None,
             negative_prompt_embeds=None,
             pooled_prompt_embeds=None,
@@ -251,7 +251,6 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
                 extra_step_kwargs=extra_step_kwargs,
                 device=device,
                 do_classifier_free_guidance=self.do_classifier_free_guidance)
-            
 
 
     @torch.inference_mode()
@@ -308,6 +307,9 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             timestep_dict[res] = torch.tensor(data=local_timestep_list, dtype=req.scheduler_states.timesteps.dtype,
                                               device=req.scheduler_states.timesteps.device)
             add_time_ids_dict[res] = torch.cat(local_add_time_ids_list, dim=0)
+        
+        # We shoule preserve the lantent_dict as original
+        latent_input_dict : Dict[str, torch.Tensor] = {}
 
         # classifier free
         if do_classifier_free_guidance:
@@ -316,7 +318,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             add_text_embeds_list: List[torch.Tensor] = []
             add_time_ids_list: List[torch.Tensor] = []
             for res in resolution_list:
-                latent_dict[res] = torch.cat([latent_dict[res]] * 2, dim=0)
+                latent_input_dict[res] = torch.cat([latent_dict[res]] * 2, dim=0)
                 prompt_embeds_list.append(negative_prompt_embeds_dict[res])
                 prompt_embeds_list.append(prompt_embeds_dict[res])
                 add_text_embeds_list.append(negative_pooled_prompt_embeds_dict[res])
@@ -333,6 +335,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             add_text_embeds_list: List[torch.Tensor] = []
             add_time_ids_list: List[torch.Tensor] = []
             for res in resolution_list:
+                latent_input_dict[res] = latent_dict[res]
                 prompt_embeds_list.append(prompt_embeds_dict[res])
                 add_text_embeds_list.append(pooled_prompt_embeds_dict[res])
                 timestep_list.append(timestep_dict[res])
@@ -344,8 +347,8 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         
         # Scale input
         for res in resolution_list:
-            latent_dict[res] = self.scheduler.batch_scale_model_input(worker_reqs=worker_reqs[res],
-                                                                      samples=latent_dict[res],
+            latent_input_dict[res] = self.scheduler.batch_scale_model_input(worker_reqs=worker_reqs[res],
+                                                                      samples=latent_input_dict[res],
                                                                       timestep_list=timestep_dict[res])
         
         # predict the noise residual
@@ -353,15 +356,17 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         # if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
         #     added_cond_kwargs["image_embeds"] = image_embeds
 
-        for res in latent_dict:
-            print(f"latent[{res}].shape={latent_dict[res].shape}")
-        print(f"{t.shape=}")
-        print(f"{prompt_embeds.shape=}")
-        for name in added_cond_kwargs:
-            print(f"added_cond_kwargs[{name}].shape={added_cond_kwargs[name].shape}")
+        # TODO: Clean up
+        for res in latent_input_dict:
+            print(f"latent[{res}].shape={latent_input_dict[res].shape}")
+        print(f"{is_sliced=}, {patch_size=}")
+        # print(f"{t.shape=}, {t=}")
+        # print(f"{prompt_embeds.shape=}, {prompt_embeds=}")
+        # for name in added_cond_kwargs:
+        #     print(f"added_cond_kwargs[{name}].shape={added_cond_kwargs[name].shape}, {added_cond_kwargs[name]}")
 
         noise_pred = self.unet(
-            latent_dict,
+            latent_input_dict,
             t,
             encoder_hidden_states=prompt_embeds,
             timestep_cond=timestep_cond,
@@ -371,6 +376,9 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             is_sliced=is_sliced,
             patch_size=patch_size,
         )[0]
+
+        # for res in noise_pred:
+        #     print(f"noise_pred[{res}].shape={noise_pred[res].shape}, {noise_pred[res]}")
 
         # perform guidance
         for res, res_split_noise in noise_pred.items():
@@ -411,9 +419,6 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             latent_dict[res] = torch.cat(latent_list, dim=0)
         device = latent_dict[res].device
         dtype = latent_dict[res].dtype
-        print(f"{latent_dict[res].device=}, {latent_dict[res].dtype=}")
-        print(f"{device=}, {dtype=}")
-        print(f"{req.sampling_params.latents.dtype=}, {req.sampling_params.latents.device=}")
 
         images = {}
         if not output_type == "latent":
@@ -450,7 +455,6 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             # apply watermark if available
                 # if self.watermark is not None:
                 #     images[resolution] = self.watermark.apply_watermark(images[resolution])
-                print(images[res])
                 image = self.image_processor.postprocess(images[res], output_type=output_type)
 
                 for i, req in enumerate(worker_reqs[res]):

@@ -194,10 +194,10 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
         for req in worker_reqs:
             req_sigma = req.scheduler_states.sigmas[req.scheduler_states._step_index]
             collected_sigmas.append(req_sigma)
-        sigmas_torch = torch.tensor(data=collected_sigmas, dtype=torch.float32).to(torch.cuda.current_device())
-        shape = [len(collected_sigmas)] + [1] *(model_outputs.ndim - 1)
+        sigmas_torch = torch.tensor(data=collected_sigmas).to(samples.device)
+        shape = [model_outputs.shape[0]] + [1] *(model_outputs.ndim - 1)
         sigmas_torch = sigmas_torch.reshape(shape=shape)
-        
+
         # 3. Calculate Gamma
         # Since we've set the defualt parameters, gammas must be 0
         gamma = torch.zeros_like(sigmas_torch)
@@ -227,6 +227,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
             raise ValueError(
                 f"prediction_type given as {self.config.prediction_type} must be one of `epsilon`, or `v_prediction`"
             )
+        
 
         # 6. Convert to an ODE derivative
         derivative = (samples - pred_original_sample) / sigma_hat_torch
@@ -246,7 +247,6 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
         # Cast sample back to model compatible dtype
         prev_sample = prev_sample.to(model_outputs.dtype)
 
-        # upon completion increase step index by one
         # self._step_index += 1
         for req in worker_reqs:
             req.scheduler_states._step_index += 1

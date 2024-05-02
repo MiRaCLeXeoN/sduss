@@ -22,7 +22,7 @@ resolutions = [256, 512, 768]
 sampling_params = []
 
 sampling_params.append(sampling_params_cls(prompt=prompt, num_inference_steps=50,
-                                            resolution=resolutions[2]))
+                                            resolution=resolutions[0]))
 
 
 outputs = pipe.generate(sampling_params)

@@ -23,18 +23,19 @@ prompts = [
     "A majestic steampunk airship soaring through a cloudy sky, with gears and pistons visible on its hull. Style: Detailed, painterly.",
     "A fluffy cat wearing a spacesuit, floating in zero gravity with a playful grin on its face. Style: Cartoon, humorous.",
     "A close-up of a sparkling crystal, with tiny rainbows refracting in its facets and dewdrops clinging to its surface. Style: Photorealistic, high magnification.",
-    "A towering art deco skyscraper bathed in the golden light of sunrise, with geometric patterns adorning its facade. Style: Architectural, detailed.",
-    "A sleek and stylish robot posing on a runway, wearing a high-fashion outfit and futuristic accessories. Style: Digital art, futuristic.",
+    "A grand library built within a sunken city, sunlight filtering through cracks in the ruins, with schools of fish weaving between towering bookshelves.",
+    "A cascading waterfall hidden behind a bustling city street, accessible only through a secret alleyway.",
     "A mystical forest at night, with bioluminescent mushrooms illuminating the path and fireflies dancing in the air. Style: Fantasy, ethereal.",
     "A Roman gladiator wielding a neon lightsaber in a futuristic colosseum, battling a cyborg centaur. Style: Pop art, unexpected combination.",]
-prompts = prompts * 10
+prompts = prompts * 5
 
-resolutions = [256, 512, 768]
+resolutions = [512, 768, 1024]
 
 sampling_params = []
 
 for i, prompt in enumerate(prompts):
-    step = random.randint(1, 100)
+    # step = random.randint(30, 50)
+    step = 50
     print(f"{i=}, {step=}")
     sampling_params.append(sampling_params_cls(prompt=prompt, num_inference_steps=step,
                                                resolution=resolutions[random.randint(0, 2)]))

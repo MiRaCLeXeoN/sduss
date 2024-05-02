@@ -236,13 +236,15 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
             negative_prompt_embeds_dict[res] = torch.cat(local_negative_prompt_embeds_list, dim=0)
             timestep_dict[res] = torch.tensor(data=local_timestep_list, dtype=wr.scheduler_states.timesteps.dtype,
                                               device=wr.scheduler_states.timesteps.device)
+        
+        latent_input_dict: Dict[str, torch.Tensor] = {}
 
         # classifier free
         if do_classifier_free_guidance:
             prompt_embeds_list: List[torch.Tensor] = []
             timestep_list: List[torch.Tensor] = []
             for res in resolution_list:
-                latent_dict[res] = torch.cat([latent_dict[res]] * 2, dim=0)
+                latent_input_dict[res] = torch.cat([latent_dict[res]] * 2, dim=0)
                 prompt_embeds_list.append(negative_prompt_embeds_dict[res])
                 prompt_embeds_list.append(prompt_embeds_dict[res])
                 timestep_list.extend([timestep_dict[res]] * 2)
@@ -259,17 +261,12 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
         
         # Scale input
         for res in resolution_list:
-            latent_dict[res] = self.scheduler.batch_scale_model_input(worker_reqs=worker_reqs[res],
-                                                                      samples=latent_dict[res],
+            latent_input_dict[res] = self.scheduler.batch_scale_model_input(worker_reqs=worker_reqs[res],
+                                                                      samples=latent_input_dict[res],
                                                                       timestep_list=timestep_dict[res])
 
-        for res in resolution_list:
-            print(f"latent_dict {res}, shape={latent_dict[res].shape}")
-        print(f"t.shape={t.shape}")
-        print(f"prompt_embeds.shape={prompt_embeds.shape}")
-
         noise_pred = self.unet(
-            latent_dict,
+            latent_input_dict,
             t,
             encoder_hidden_states=prompt_embeds,
             timestep_cond=timestep_cond,
@@ -279,9 +276,6 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
             is_sliced=is_sliced,
             patch_size=patch_size
         )[0]
-
-        for res in resolution_list:
-            print("noise_pred ", res, f" {noise_pred[res].shape}")
 
         for res, res_split_noise in noise_pred.items():
             if do_classifier_free_guidance:
@@ -321,7 +315,6 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
 
         for res, latent in latent_dict.items():
             image = self.vae.decode(latent / self.vae.config.scaling_factor, return_dict=False, generator=generator)[0]
-            # print(self.pipeline.vae.decode(res_split_latents, return_dict=False)[0])
             image = self.image_processor.postprocess(image, output_type=output_type)
 
             for i, req in enumerate(worker_reqs[res]):
