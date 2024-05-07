@@ -9,6 +9,78 @@ if TYPE_CHECKING:
     from sduss.model_executor.sampling_params import BaseSamplingParams
 
 logger = init_logger(__name__)
+DISCARD_SLACK = 100
+DENOISING_DDL = {
+    "sd1.5": {
+        "256": (3.1356 + 0.0394) * 5 * 0.95,
+        "512": (3.1788 + 0.06974) * 5 * 0.95,
+        "768": (3.87 + 0.1363) * 5 * 0.95,
+    },
+    "sdxl": {
+        "512": (8.587 + 0.13413) * 5 * 0.95,
+        "768": (8.6663 + 0.24094) * 5 * 0.95,
+        "1024": (8.7663 + 0.434) * 5 * 0.95,
+    }
+}
+
+POSTPROCESSING_DDL = {
+    "sd1.5": {
+        "256": (3.1356 + 0.0394) * 5,
+        "512": (3.1788 + 0.06974) * 5,
+        "768": (3.87 + 0.1363) * 5,
+    },
+    "sdxl": {
+        "512": (8.587 + 0.13413) * 5,
+        "768": (8.6663 + 0.24094) * 5,
+        "1024": (8.7663 + 0.434) * 5,
+    }
+}
+
+STANDALONE = {
+    "sd1.5": {
+        "denoising": {
+            "256": 3.1356,
+            "512": 3.1788,
+            "768": 3.87,
+        },
+        "postprocessing": {
+            "256": 0.0394,
+            "512": 0.06974,
+            "768": 0.1363,
+        }
+    },
+    "sdxl": {
+        "denoising": {
+            "512": 8.587,
+            "768": 8.6663,
+            "1024": 8.7663,
+        },
+        "postprocessing": {
+            "512": 0.13413,
+            "768": 0.24094,
+            "1024": 0.434,
+        }
+    }
+}
+
+Hyper_Parameter = {
+    "sd1.5": {
+        "postprocessing": {
+            "256": 4,
+            "512": 2,
+            "768": 1,
+        }
+    },
+    "sdxl": {
+        "postprocessing": {
+            "512": 4,
+            "768": 2,
+            "1024": 1,
+        }
+    },
+    "get_best_tp_th": 1,
+    "active_queue_timeout_th": 0.1,
+}
 
 class RequestStatus(enum.Enum):
     """Status of a sequence."""
@@ -77,11 +149,44 @@ class Request:
         # Set afterwards
         self.output = None
         self.finish_time = None
+        self.start_denoising = False
+        self.is_discard = False
 
 
     def is_finished(self):
         return RequestStatus.is_finished(self.status)
 
+    def update_predict_time(self, predict_time:float):
+        self.predict_time = predict_time
+
+    def get_slack(self, model_name:str, is_running:bool, current_running_time_cost:float):
+        if self.is_discard:
+            self.slack = DISCARD_SLACK
+            return
+        resolution = self.sampling_params.resolution
+        runtime = STANDALONE[model_name][str(resolution)]
+        status = self.status
+        if status == RequestStatus.DENOISING:
+            stage = "denoising"
+            ddl = DENOISING_DDL[model_name][str(resolution)]
+        elif status == RequestStatus.POSTPROCESSING:
+            stage = "postprocessing"
+            ddl = POSTPROCESSING_DDL[model_name][str(resolution)]
+        runtime = STANDALONE[model_name][stage][str(resolution)]
+        if status == RequestStatus.PREPARE:
+            # prepare阶段直接开始在CPU执行
+            self.slack = 0
+        else:
+            if stage == "postprocessing":
+                self.slack = (ddl - runtime - current_running_time_cost - (time.time() - self.arrival_time)) / (runtime * Hyper_Parameter[model_name][str(resolution)])
+            elif stage == "denoising":
+                if is_running:
+                    # 计算中的denoising阶段
+                    self.slack = (ddl - self.predict_time - current_running_time_cost - (time.time() - self.arrival_time)) / runtime
+                else:
+                    # 等待中的denoising阶段
+                    self.slack = (ddl - runtime - current_running_time_cost - (time.time() - self.arrival_time)) / runtime
+            self.remain_time = ddl - current_running_time_cost - (time.time() - self.arrival_time)
     
     def is_compatible_with(self, req: "Request") -> bool:
         return (self.status == req.status and

@@ -1,5 +1,6 @@
 from .FCFS_Single import FCFS_Single
 from .FCFS_Mixed import FCFS_Mixed
+from .ESyMReD import ESyMReD_Scheduler
 
 class PolicyFactory:
     
@@ -7,6 +8,7 @@ class PolicyFactory:
     _POLICY_REGISTRY = {
         'fcfs_single': (FCFS_Single, False),
         'fcfs_mixed' : (FCFS_Mixed, True),
+        'esymred' : (ESyMReD_Scheduler, True),
     }
     
     @classmethod
