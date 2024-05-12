@@ -1,5 +1,5 @@
 # Target_name -> (folder, class_name)
-from .pipeline_utils import BasePipeline
+from .pipeline_utils import BasePipeline, BasePipelinePrepareOutput
 
 from .stable_diffusion import (
     StableDiffusionPipeline,

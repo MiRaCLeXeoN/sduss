@@ -130,5 +130,7 @@ class EngineConfig:
     
     
     def verify_with_scheduler_config(self, scheduler_config: SchedulerConfig):
-        if scheduler_config.overlap_prepare:
-            assert self.non_blocking_step
+        # Currently we only support 2 combinations:
+        # 1. blocking + non-overlapped
+        # 2. nonblocking + overlapped
+        assert self.non_blocking_step == scheduler_config.overlap_prepare

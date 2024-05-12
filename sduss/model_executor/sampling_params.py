@@ -60,6 +60,12 @@ class BaseSamplingParams():
 
     def clone(self) -> "BaseSamplingParams":
         return copy.deepcopy(self)
+    
+    
+    def to_device(self, device) -> None:
+        self.latents.to(device=device)
+        self.prompt_embeds.to(device=device)
+        self.negative_prompt_embeds.to(device=device)
             
 
     def _check_volatile_params(self):

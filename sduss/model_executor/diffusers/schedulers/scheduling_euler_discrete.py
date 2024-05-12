@@ -45,6 +45,12 @@ class EulerDiscreteSchedulerStates(BaseSchedulerStates):
     def get_step_idx(self):
         assert self.timestep_idx == self._step_index
         return self.timestep_idx
+    
+    
+    def to_device(self, device) -> None:
+        # self.sigmas should be on CPU
+        self.sigmas.to("cpu")
+        self.timesteps.to(device=device)
 
 
 class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportScheduler):

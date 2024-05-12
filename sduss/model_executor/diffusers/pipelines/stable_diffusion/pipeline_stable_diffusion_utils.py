@@ -5,7 +5,7 @@ import PIL
 import numpy as np
 import torch
 
-from ..pipeline_utils import (BasePipelineStepInput, BasePipelinePostInput)
+from ..pipeline_utils import (BasePipelineStepInput, BasePipelinePostInput, BasePipelinePrepareOutput)
 
 from sduss.model_executor.utils import BaseOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
@@ -61,7 +61,7 @@ class StableDiffusionPipelinePrepareInput:
         
 
 @dataclass
-class StableDiffusionPipelinePrepareOutput:
+class StableDiffusionPipelinePrepareOutput(BasePipelinePrepareOutput):
     """Params that are same as sampling_params will not be stored here."""
     timestep_cond: torch.Tensor
     added_cond_kwargs: Optional[Dict]
@@ -70,6 +70,9 @@ class StableDiffusionPipelinePrepareOutput:
     do_classifier_free_guidance: bool
     # latents: torch.Tensor  # update to sampling_params
     # prompt_embeds: torch.FloatTensor  # update to sampling_params
+
+    def to_device(self, device) -> None:
+        self.device = device
 
 
 class StableDiffusionPipelineStepInput(BasePipelineStepInput):
@@ -236,3 +239,7 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
         for param_name in self.volatile_params:
             if getattr(self, param_name) != self.volatile_params[param_name]:
                 raise RuntimeError(f"Currently, we do not support customized {param_name} parameter.")
+    
+    
+    def to_device(self, device) -> None:
+        return super().to_device(device)

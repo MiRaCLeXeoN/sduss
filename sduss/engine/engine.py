@@ -123,6 +123,7 @@ class Engine:
             self.pipeline_config,
             self.parallel_config,
             self.scheduler_config,
+            self.engine_config,
             0,
             distributed_init_method,
         )
@@ -180,6 +181,7 @@ class Engine:
         model_config = copy.deepcopy(self.pipeline_config)
         parallel_config = copy.deepcopy(self.parallel_config)
         scheduler_config = copy.deepcopy(self.scheduler_config)
+        engine_config = copy.deepcopy(self.engine_config)
         
         # execute `init_worker` method of workers
         self._run_workers_blocking(
@@ -190,6 +192,7 @@ class Engine:
                 model_config,
                 parallel_config,
                 scheduler_config,
+                engine_config
             )
         )
         self._run_workers_blocking("init_dis_env", self.workers, get_all_outputs=True)
@@ -203,6 +206,7 @@ class Engine:
                     model_config,
                     parallel_config,
                     scheduler_config,
+                    engine_config,
                     is_prepare_worker=True,
                 )
             )
@@ -210,7 +214,6 @@ class Engine:
             self._run_workers_blocking("load_model", self.workers + self.prepare_workers, get_all_outputs=True)
         else:
             self._run_workers_blocking("load_model", self.workers, get_all_outputs=True)
-            
     
 
     def add_request(
@@ -245,12 +248,15 @@ class Engine:
 
     
     def _schedule(self) -> Tuple[SchedulerOutput, List[int]] :
-        """Scheduling for current round."""        
-        scheduler_outputs = self.scheduler.schedule()
+        """Scheduling for current round."""
+        if self.scheduler_config.overlap_prepare:
+            scheduler_output = self.scheduler.schedule_overlap_prepare()
+        else:
+            scheduler_output = self.scheduler.schedule()
         # Extract request ids
-        req_ids = scheduler_outputs.get_req_ids()
+        req_ids = scheduler_output.get_req_ids()
         
-        return scheduler_outputs, req_ids
+        return scheduler_output, req_ids
     
     
     def _step_blocking(self) -> List[RequestOutput]:

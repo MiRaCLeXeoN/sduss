@@ -6,7 +6,7 @@ import torch.distributed
 
 from .model_runner import ModelRunner
 from .wrappers import WorkerOutput, WorkerRequest
-from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
+from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig, EngineConfig
 
 from sduss.scheduler import Request, RequestStatus
 from sduss.model_executor import set_random_seed
@@ -31,6 +31,7 @@ class Worker:
         pipeline_config: PipelineConfig,
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
+        engine_config: EngineConfig,
         rank: Optional[int] = None,
         is_prepare_worker: bool = False,
         distributed_init_method: Optional[str] = None,
@@ -46,6 +47,7 @@ class Worker:
         self.pipeline_config = pipeline_config
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
+        self.engine_config = engine_config
         self.rank = rank
         self.is_prepare_worker = is_prepare_worker
         self.distributed_init_method = distributed_init_method
@@ -104,8 +106,8 @@ class Worker:
         self.model_runner.load_model()
     
 
-    def add_request(self, req_id: int, wq: WorkerRequest):
-        self.request_pool[req_id] = wq
+    def add_request(self, req_id: int, wr: WorkerRequest):
+        self.request_pool[req_id] = wr
     
     
     def remove_requests_by_id(self, req_ids: Union[int, List[int]]):
@@ -130,18 +132,22 @@ class Worker:
         # 1. Create WorkerRequests to track reqs.
         worker_reqs: "WorkerRequestDictType" = {}
         for sche_req in scheduler_reqs:
-            wq = WorkerRequest(sche_req)
-            res = wq.sampling_params.resolution
+            wr = WorkerRequest(sche_req)
+            # Only register when prepare stage is not overlapped
+            if not self.scheduler_config.overlap_prepare:
+                self.request_pool[wr.request_id] = wr
+            res = wr.sampling_params.resolution
             if res not in worker_reqs:
-                worker_reqs[res] = [wq]
+                worker_reqs[res] = [wr]
             else:
-                worker_reqs[res].append(wq)
+                worker_reqs[res].append(wr)
         
         # 2. Execute
         self.model_runner.exec_prepare_stage(worker_reqs)
 
         # 3. Create return wrapper
-        return WorkerOutput(worker_reqs=worker_reqs, status=RequestStatus.PREPARE)
+        return WorkerOutput(worker_reqs=worker_reqs, status=RequestStatus.PREPARE,
+                            overlap_prepare=self.scheduler_config.overlap_prepare)
         
     
     def exec_denoising_stage(
@@ -150,7 +156,7 @@ class Worker:
         use_mixed_precision: bool,
         is_sliced: bool,
         patch_size: int,
-        prepare_output: WorkerOutput,
+        prepare_output: WorkerOutput = None,
     ):
         """Execute denoising stage.
 
@@ -160,6 +166,10 @@ class Worker:
         Args:
             req_ids (List[int]): IDs of requests to execute one iteration.
         """
+        # 0. Store prepare results
+        if prepare_output is not None:
+            self._process_prepare_output(prepare_output)
+        
         # 1. Collect requests and wrap as dict
         worker_reqs: "WorkerRequestDictType" = {}
         for req_id in req_ids:
@@ -174,7 +184,6 @@ class Worker:
         self.model_runner.exec_denoising_stage(worker_reqs, is_sliced, patch_size)
 
         # 3. Update reqs states
-        # But maybe unnecessary
         return
     
     
@@ -182,8 +191,12 @@ class Worker:
         self,
         req_ids: List[int],
         use_mixed_precision: bool,
-        prepare_output: WorkerOutput,
+        prepare_output: WorkerOutput = None,
     ) -> WorkerOutput:
+        # 0. Store prepare results
+        if prepare_output is not None:
+            self._process_prepare_output(prepare_output)
+
         # 1. Collect requests and wrap as dict
         worker_reqs_dict: "WorkerRequestDictType" = {}
         for req_id in req_ids:
@@ -203,6 +216,22 @@ class Worker:
         self.remove_requests_by_id(req_ids)
 
         return output
+
+
+    def _process_prepare_output(self, prepare_output: WorkerOutput) -> None:
+        """Process prepare output.
+        
+        Register worker requests from prepare stage.
+
+        Args:
+            prepare_output (WorkerOutput): Output.
+        """
+        worker_reqs = prepare_output.worker_reqs
+        for worker_req_list in worker_reqs.values():
+            for wr in worker_req_list:
+                self.add_request(wr.request_id, wr)
+                # Move tensors to current device
+                wr.to_device(self.device)
 
         
     def warm_up_model(self) -> None:

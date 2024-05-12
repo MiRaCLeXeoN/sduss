@@ -24,3 +24,17 @@ class Policy(ABC):
             SchedulerOutput: output
         """
         raise NotImplementedError("You must implemente this method in the derived class.")
+    
+    
+    @abstractmethod
+    def scheduler_request_overlap_prepare(self, max_num: int) -> 'SchedulerOutput':
+        """Scheduler requests for next iteration regarding overlapping prepare
+        stage requests.
+
+        Args:
+            max_num (int): Maximum number of requests to scheduler within each round.
+
+        Returns:
+            SchedulerOutput: Output.
+        """
+        raise NotImplementedError("You must implemente this method in the derived class.")

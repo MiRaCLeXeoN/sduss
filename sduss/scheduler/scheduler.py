@@ -60,7 +60,18 @@ class Scheduler:
         self.cycle_counter += 1
         
         return scheduler_output
+    
+    
+    def schedule_overlap_prepare(self) -> SchedulerOutput:
+        """Scheduler requests with overlapped prepare stage."""
+        scheduler_output = self.policy.scheduler_request_overlap_prepare(max_num=self.max_batchsize)
+        # More wrappers will be added here.
 
+        # FIXME: DEBUG
+        self.cycle_counter += 1
+        
+        return scheduler_output
+        
         
     def add_request(self, req: Request) -> None:
         """Add a new request to waiting queue."""

@@ -2,6 +2,8 @@ from .FCFS_Single import FCFS_Single
 from .FCFS_Mixed import FCFS_Mixed
 from .ESyMReD import ESyMReD_Scheduler
 
+from .policy import Policy
+
 class PolicyFactory:
     
     # map: name -> (cls, support_mixed_precision)
@@ -12,7 +14,7 @@ class PolicyFactory:
     }
     
     @classmethod
-    def get_policy(cls, policy_name: str, **kwargs):
+    def get_policy(cls, policy_name: str, **kwargs) -> Policy:
         # Check name
         if policy_name not in cls._POLICY_REGISTRY:
             raise ValueError(f"Policy name {policy_name} is invalid. Please check up registry.")
