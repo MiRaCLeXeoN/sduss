@@ -81,7 +81,7 @@ class Scheduler:
         self.req_mapping[req.request_id] = req
         
 
-    def abort_request(self, request_ids: Union[int, Iterable[int]]) -> None:
+    def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> None:
         """Abort a handful of requests.
 
         Args:

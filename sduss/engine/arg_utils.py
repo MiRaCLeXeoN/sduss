@@ -40,24 +40,17 @@ class EngineArgs:
     ) -> argparse.ArgumentParser:
         # NOTE: If you update any of the arguments below, please also
         # make sure to update docs/source/models/engine_args.rst
-        
-        # parallel arguments
-        # Model arguments
-        raise NotImplementedError
+        pass
     
 
     @classmethod
     def from_cli_args(cls, args: argparse.Namespace) -> 'EngineArgs':
         # get all the attributes into the form of list
-        attr_names = [attr.name for attr in fields(cls)]
-        # generate an instance
-        return cls(**{attr_name: getattr(args, attr_name) for attr_name in attr_names})
+        raise NotImplementedError
 
     
-    def create_engine_configs(
-        self,
-    ) -> Tuple[PipelineConfig, ParallelConfig, SchedulerConfig]:
-        pipeline_config = PipelineConfig(
+    def get_pipeline_config(self) -> PipelineConfig:
+        return PipelineConfig(
             pipeline=self.model_name_or_pth, 
             trust_remote_code=self.trust_remote_code,
             seed=self.seed, 
@@ -65,7 +58,9 @@ class EngineArgs:
             use_batch_split=self.use_batch_split,
             kwargs=self.kwargs
         )
-        parallel_config = ParallelConfig(
+    
+    def get_parallel_config(self) -> ParallelConfig
+        return ParallelConfig(
             pipeline_parallel_size=self.pipeline_parallel_size,
             tensor_parallel_size=self.tensor_parallel_size,
             data_parallel_size=self.data_parallel_size,
@@ -73,16 +68,29 @@ class EngineArgs:
             worker_use_ray=self.worker_use_ray,
             max_parallel_loading_workers=self.max_parallel_loading_workers
         )
-        scheduler_config = SchedulerConfig(
+    
+    def get_scheduler_config(self) -> SchedulerConfig:
+        return SchedulerConfig(
             max_bathsize=self.max_batchsize,
             use_mixed_precision=self.use_mixed_precisoin,
             policy=self.policy,
             overlap_prepare=self.overlap_prepare,
         )
-        engine_config = EngineConfig(
+    
+    def get_engine_config(self) -> EngineConfig:
+        return EngineConfig(
             log_status=not self.disable_log_status,
             non_blocking_step=self.non_blocking_step
         )
+        
+    
+    def create_engine_configs(
+        self,
+    ) -> Tuple[PipelineConfig, ParallelConfig, SchedulerConfig, EngineConfig]:
+        pipeline_config = self.get_engine_config()
+        parallel_config = self.get_scheduler_config()
+        scheduler_config = self.get_parallel_config()
+        engine_config = self.get_pipeline_config()
         return pipeline_config, parallel_config, scheduler_config, engine_config
 
 
@@ -94,27 +102,30 @@ class AsyncEngineArgs(EngineArgs):
         self.max_log_len = kwargs.pop("max_log_len", None)
         super().__init__(model_name_or_pth, **kwargs)
     
+    
+    def get_engine_config(self) -> EngineConfig:
+        return EngineConfig(
+            log_status=not self.disable_log_status,
+            non_blocking_step=self.non_blocking_step,
+            engine_use_ray=self.engine_use_ray,
+            log_requests=not self.disable_log_requests,
+        )
+    
     @staticmethod
     def add_args_to_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         # add args from base engine
-        parser = EngineArgs.add_cli_args(parser)
+        parser = EngineArgs.add_args_to_parser(parser)
         
         parser.add_argument(
             '--engine-use-ray',
             action='store_true',
-            help='use Ray to start the Execution engine in a separate process '
+            help='Use Ray to start the Execution engine in a separate process '
                 'as the server process'
         )
         parser.add_argument(
             '--disable-log-requests',
             action='store_true',
-            help='disable logging requests'
+            help='Disable logging requests\' timeline'
         )
-        parser.add_argument('--max-log-len',
-                            type=int,
-                            default=None,
-                            help='max number of prompt characters or prompt '
-                            'ID numbers being printed in log. '
-                            'Default: unlimited.')
         
         return parser

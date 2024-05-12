@@ -236,6 +236,16 @@ class Engine:
 
         # Add the request to the scheduler.
         self.scheduler.add_request(req)
+    
+    
+    def add_request_batch(
+        self,
+        new_requests_params: List[Dict],
+    ) -> None:
+        """Add a batch of requests."""
+        for req_param_dict in new_requests_params:
+            req = Request(**req_param_dict)
+            self.scheduler.add_request(req)
 
     
     def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> None:
@@ -244,7 +254,7 @@ class Engine:
         Args:
             request_id: The ID(s) of the request to abort.
         """
-        self.scheduler.abort_request(request_ids)
+        self.scheduler.abort_requests(request_ids)
 
     
     def _schedule(self) -> Tuple[SchedulerOutput, List[int]] :
@@ -483,13 +493,10 @@ class Engine:
         Returns:
             List[ray.ObjectRef]: List of object references of ray to get the results later.
         """
+        assert self.parallel_config.worker_use_ray, "Only ray workers supports non blocking calls."
         obj_refs = []
         for worker in workers:
-            if self.parallel_config.worker_use_ray:
-                executor = partial(worker.execute_method.remote, method)
-            else:
-                raise RuntimeError("Only ray workers supports non blocking calls.")
-            obj_ref = executor(*args, **kwargs)
+            obj_ref = worker.execute_method.remote(method, *args, **kwargs)
             obj_refs.append(obj_ref)
         return obj_refs
         

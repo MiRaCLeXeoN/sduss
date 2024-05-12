@@ -1,0 +1,2 @@
+class AsyncEngineDeadError(RuntimeError):
+    pass
