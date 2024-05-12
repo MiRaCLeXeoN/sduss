@@ -60,6 +60,8 @@ class ParallelConfig:
         self,
         pipeline_parallel_size: int,
         tensor_parallel_size: int,
+        data_parallel_size: int,
+        num_cpus_extra_worker: int,
         worker_use_ray: bool,
         max_parallel_loading_workers: Optional[int] = None,
     ) -> None:
@@ -74,40 +76,59 @@ class ParallelConfig:
         """
         self.pipeline_parallel_size = pipeline_parallel_size
         self.tensor_parallel_size = tensor_parallel_size
+        self.data_parallel_size = data_parallel_size
         self.worker_use_ray = worker_use_ray
         self.max_parallel_loading_workers = max_parallel_loading_workers
 
-        self.world_size = pipeline_parallel_size * tensor_parallel_size
+        self.world_size = pipeline_parallel_size * tensor_parallel_size * data_parallel_size
+
+        self.num_workers = self.world_size + 1 # 1 worker for prepare stage
+        self.num_cpus_extra_worker = num_cpus_extra_worker
+        
         if self.world_size > 1:
             self.worker_use_ray = True
         self._verify_args()
 
 
     def _verify_args(self) -> None:
-        if self.pipeline_parallel_size > 1 or self.tensor_parallel_size > 1:
+        if (self.pipeline_parallel_size > 1 or self.tensor_parallel_size > 1 
+            or self.data_parallel_size > 1):
             raise NotImplementedError(
                 "Parallelism is not supported yet.")
 
 
 class SchedulerConfig:
-    """Init method
-
-    Args:
-
-    """   
+    """Scheduler config class."""   
     def __init__(
         self, 
         max_bathsize: int,
         use_mixed_precision: bool, 
         policy: str,
+        overlap_prepare: bool,
     ) -> None:
 
         self.max_batchsize = max_bathsize
         self.use_mixed_precision = use_mixed_precision
         self.policy = policy
+        self.overlap_prepare = overlap_prepare
         
         self._verify_args()
         
     def _verify_args(self) -> None:
         if self.max_batchsize <= 0:
             raise ValueError(f"Invalid max bathsize={self.max_batchsize}")
+
+
+class EngineConfig:
+    def __init__(
+        self,
+        log_status: bool,
+        non_blocking_step: bool,
+    ) -> None:
+        self.log_status = log_status
+        self.non_blocking_step = non_blocking_step
+    
+    
+    def verify_with_scheduler_config(self, scheduler_config: SchedulerConfig):
+        if scheduler_config.overlap_prepare:
+            assert self.non_blocking_step

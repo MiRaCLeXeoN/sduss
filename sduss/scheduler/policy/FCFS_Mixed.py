@@ -82,6 +82,8 @@ class FCFS_Mixed(Policy):
                 is_sliced = False
                 patch_size = list(res_reqs_dict.keys())[0]
         
+        # FIXME: arrange prepare stage
+        
         return SchedulerOutput(
             scheduled_requests=res_reqs_dict,
             status=target_status,

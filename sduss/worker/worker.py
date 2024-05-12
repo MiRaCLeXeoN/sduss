@@ -11,9 +11,12 @@ from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
 from sduss.scheduler import Request, RequestStatus
 from sduss.model_executor import set_random_seed
 from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
+from sduss.logger import init_logger
 
 if TYPE_CHECKING:
     from .wrappers import WorkerRequestDictType
+
+logger = init_logger(__name__)
 
 class Worker:
     """A worker GPU class
@@ -29,10 +32,10 @@ class Worker:
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
         rank: Optional[int] = None,
+        is_prepare_worker: bool = False,
         distributed_init_method: Optional[str] = None,
     ) -> None:
-        """ FIXME
-
+        """
         Args:
             model_config (ModelConfig): Model config
             parallel_config (ParallelConfig): Parallel config
@@ -44,6 +47,7 @@ class Worker:
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
         self.rank = rank
+        self.is_prepare_worker = is_prepare_worker
         self.distributed_init_method = distributed_init_method
 
         self.use_esymred = pipeline_config.use_esymred
@@ -52,7 +56,7 @@ class Worker:
         # Updated and maintained by `execute_model` method
         self.request_pool: Dict[int, WorkerRequest] = {} 
 
-        self.model_runner = ModelRunner(pipeline_config, parallel_config, scheduler_config)
+        self.model_runner = ModelRunner(pipeline_config, parallel_config, scheduler_config, is_prepare_worker)
         
     
     def init_dis_env(self) -> None:
@@ -65,21 +69,34 @@ class Worker:
         # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
         os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
 
+        # Check up
+        assert self.is_prepare_worker == False
+
         # ? This env var set by Ray causes exceptions with graph building
         os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
         
         # Env vars will be set by Ray
-        # ? What are these variables?
         self.rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
         if self.rank < 0:
             raise ValueError("Invalid or unspecified rank")
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
         self.device = torch.device(f"cuda:{local_rank}")
         torch.cuda.set_device(self.device)
+
+        logger.debug(f"rank={self.rank}, local_rank={local_rank}")
         
         _init_distributed_environment(self.parallel_config, self.rank, 
                                       self.distributed_init_method)
         
+        set_random_seed(self.pipeline_config.seed)
+    
+    
+    def init_prepare(self) -> None:
+        assert self.is_prepare_worker
+
+        rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
+        local_rank = int(os.getenv("LOCAL_RANK", "0"))
+        logger.debug(f"rank={self.rank}, local_rank={local_rank}")
         set_random_seed(self.pipeline_config.seed)
     
 
@@ -91,7 +108,7 @@ class Worker:
         self.request_pool[req_id] = wq
     
     
-    def remove_requests(self, req_ids: Union[int, List[int]]):
+    def remove_requests_by_id(self, req_ids: Union[int, List[int]]):
         if isinstance(req_ids, int):
             req_ids = [req_ids]
         for req_id in req_ids:
@@ -114,7 +131,6 @@ class Worker:
         worker_reqs: "WorkerRequestDictType" = {}
         for sche_req in scheduler_reqs:
             wq = WorkerRequest(sche_req)
-            self.add_request(sche_req.request_id, wq)
             res = wq.sampling_params.resolution
             if res not in worker_reqs:
                 worker_reqs[res] = [wq]
@@ -134,6 +150,7 @@ class Worker:
         use_mixed_precision: bool,
         is_sliced: bool,
         patch_size: int,
+        prepare_output: WorkerOutput,
     ):
         """Execute denoising stage.
 
@@ -165,6 +182,7 @@ class Worker:
         self,
         req_ids: List[int],
         use_mixed_precision: bool,
+        prepare_output: WorkerOutput,
     ) -> WorkerOutput:
         # 1. Collect requests and wrap as dict
         worker_reqs_dict: "WorkerRequestDictType" = {}
@@ -182,7 +200,7 @@ class Worker:
         output = WorkerOutput(worker_reqs=worker_reqs_dict, status=RequestStatus.POSTPROCESSING)
 
         # Remove finished requests
-        self.remove_requests(req_ids)
+        self.remove_requests_by_id(req_ids)
 
         return output
 

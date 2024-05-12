@@ -212,23 +212,34 @@ class SchedulerOutput:
     
     def __init__(
         self,
-        scheduled_requests: SchedulerOutputReqsType,
-        status: RequestStatus,
+        scheduled_requests: SchedulerOutputReqsType = None,
+        status: RequestStatus = None,
+        prepare_requests: SchedulerOutputReqsType = None,
         **kwargs,
     ) -> None:
         self.scheduled_requests: SchedulerOutputReqsType = scheduled_requests  
+        self.prepare_requests: SchedulerOutputReqsType = prepare_requests
         self.status = status
 
         self.is_sliced = kwargs.pop("is_sliced", None)
         self.patch_size = kwargs.pop("patch_size", None)
 
-        mixed_precision = len(scheduled_requests) > 1
+        # Check up
+        self._verify_params()
+    
+    def _verify_params(self):
+        # mixed precision
+        mixed_precision = len(self.scheduled_requests) > 1
         if mixed_precision and self.status == RequestStatus.DENOISING:
             assert self.is_sliced is not None and self.patch_size is not None
 
     
     def is_empty(self) -> bool:
         return len(self.scheduled_requests) == 0
+    
+    
+    def has_prepare_requests(self) -> bool:
+        return self.prepare_requests is not None
     
     
     def get_req_ids(self) -> List[int]:
@@ -243,6 +254,14 @@ class SchedulerOutput:
         scheduler_reqs = []
         for res in self.scheduled_requests:
             for req in self.scheduled_requests[res].values():
+                scheduler_reqs.append(req)
+        return scheduler_reqs
+    
+    
+    def get_prepare_reqs_as_list(self) -> List[Request]:
+        scheduler_reqs = []
+        for res in self.prepare_requests:
+            for req in self.prepare_requests[res].values():
                 scheduler_reqs.append(req)
         return scheduler_reqs
 
@@ -358,7 +377,14 @@ class ResolutionRequestQueue:
 
     def free_all_finished_reqs(self) -> None:
         self.finished.clear()
-
+    
+    
+    def free_finished_reqs(self, reqs: Union[List[Request], Request]) -> None:
+        if isinstance(reqs, Request):
+            reqs = [reqs]
+        for req in reqs:
+            self.finished.pop(req.request_id)
+    
     
     def update_reqs_status(
         self, 

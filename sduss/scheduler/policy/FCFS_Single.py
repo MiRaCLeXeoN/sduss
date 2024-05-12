@@ -66,6 +66,8 @@ class FCFS_Single(Policy):
         # wrapper
         ret = {}
         ret[target_res] = resolution_req_dict
+    
+        # FIXME: Arange prepare stage
 
         return SchedulerOutput(
             scheduled_requests=ret,

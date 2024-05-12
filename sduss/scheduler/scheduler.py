@@ -90,7 +90,6 @@ class Scheduler:
         # Abort reqs in resolution queues
         for res in res_reqid_dict:
             self.request_pool[res].abort_requests(res_reqid_dict[res])
-        
         return
         
     
@@ -138,7 +137,6 @@ class Scheduler:
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
             return 
         elif sche_status == RequestStatus.PREPARE:
-            # First iteration of denoising has done
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
             # The real remaining step may not be initial parameter
             self._update_remain_steps(reqs=sche_reqs, reqs_steps_dict=output.reqs_steps_dict)
@@ -164,6 +162,77 @@ class Scheduler:
             return 
         else:
             raise RuntimeError(f"Unexpected status {sche_status} to update.")
+    
+    
+    def update_reqs_status_nonblocking(
+        self,
+        scheduler_outputs: SchedulerOutput,
+        req_ids: List[int],
+        prepare_output: WorkerOutput,
+        denoising_output,
+        postprocessing_output: WorkerOutput,
+        prev_scheduler_output: SchedulerOutput,
+    ) -> List[Request]:
+        """Update requests status regarding nonblocking execution paradigm.
+
+        Args:
+            scheduler_outputs (SchedulerOutput): Scheduler output in this round.
+            req_ids (List[int]): Request ids in this round.
+            prepare_output (WorkerOutput): Prepare output from previous round.
+            denoising_output (None): Denoising output from previous round.
+            postprocessing_output (WorkerOutput): Postprocessing output from previous round.
+            prev_scheduler_output (SchedulerOutput): Scheduler output in previous round.
+
+        Returns:
+            List[Request]: Requests that can be freed.
+        """
+        # 0. If prepare_output available, use it to update requests
+        if prepare_output is not None:
+            self._update_remain_steps(reqs_steps_dict=prepare_output.reqs_steps_dict)
+
+        finished_reqs: List[Request] = []
+        # 1. Process output from previous round.
+        prev_sche_status = prev_scheduler_output.status
+        if prev_sche_status == RequestStatus.WAITING:
+            pass
+        elif prev_sche_status == RequestStatus.PREPARE:
+            # update remain steps is done at step 0, nothing more to do here.
+            pass
+        elif prev_sche_status == RequestStatus.DENOISING:
+            pass
+        elif prev_sche_status == RequestStatus.POSTPROCESSING:
+            assert postprocessing_output is not None
+            # create finish timestamp
+            current_timestamp = time.time()
+            # store output
+            for req_id in req_ids:
+                self.req_mapping[req_id].output = postprocessing_output.req_output_dict[req_id]
+                self.req_mapping[req_id].finish_time = current_timestamp
+                finished_reqs.append(self.req_mapping[req_id])
+        
+        # 2. To ensure consistency, reqs in this round must be updated.
+        sche_status = scheduler_outputs.status
+        sche_reqs: "SchedulerOutputReqsType" = scheduler_outputs.scheduled_requests
+        next_status = self._get_next_status(sche_status)
+        if sche_status == RequestStatus.WAITING:
+            self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
+        elif sche_status == RequestStatus.PREPARE:
+            self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
+        elif sche_status == RequestStatus.DENOISING:
+            # More steps done
+            # Some reqs may need move to post stage
+            denoising_complete_reqs = self._decrease_one_step(sche_reqs)
+            if len(denoising_complete_reqs) > 0:
+                self._update_reqs_to_next_status(prev_status=sche_status, 
+                                                  next_status=RequestStatus.POSTPROCESSING, 
+                                                  reqs=denoising_complete_reqs)
+        elif sche_status == RequestStatus.POSTPROCESSING:
+            # finished reqs should be freed by calls to `free_finished_reqs`
+            self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
+        else:
+            raise RuntimeError(f"Unexpected status {sche_status} to update.")
+        
+        return finished_reqs
             
         
     def free_all_finished_requests(self) -> None:
@@ -176,6 +245,13 @@ class Scheduler:
         # 2. clear mapping reference
         for req_id in req_ids:
             self.req_mapping.pop(req_id)
+    
+    
+    def free_finished_requests(self, reqs: List[Request]) -> None:
+        """Untrack input reqs if they are finished."""
+        for req in reqs:
+            res = req.sampling_params.resolution
+            self.request_pool[res].free_finished_reqs(req)
         
         
     def _initialize_resolution_queues(self, res: int) -> None:
@@ -218,7 +294,7 @@ class Scheduler:
         return denoising_complete_reqs
     
     
-    def _update_remain_steps(self, reqs: "SchedulerOutputReqsType", reqs_steps_dict: Dict[int, int]):
+    def _update_remain_steps(self, reqs_steps_dict: Dict[int, int]):
         for req_id, remain_steps in reqs_steps_dict.items():
             req = self.req_mapping[req_id]
             req.remain_steps = remain_steps
