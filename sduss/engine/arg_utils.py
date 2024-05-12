@@ -3,7 +3,8 @@ import argparse
 from dataclasses import dataclass, fields
 from typing import Optional, Tuple
 
-from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
+from sduss.config import (PipelineConfig, ParallelConfig, SchedulerConfig,
+                          EngineConfig)
 class EngineArgs:
     """Arguments for the base class Engine
     """
@@ -18,13 +19,17 @@ class EngineArgs:
         self.worker_use_ray = kwargs.pop("worker_use_ray", True)
         self.pipeline_parallel_size = kwargs.pop("pipeline_parallel_size", 1)
         self.tensor_parallel_size = kwargs.pop("tensor_parallel_size", 1)
+        self.data_parallel_size = kwargs.pop("data_parallel_size", 1)
+        self.num_cpus_extra_worker = kwargs.pop("num_cpus_extra_worker ", 2)
         self.max_parallel_loading_workers = kwargs.pop("max_parallel_loading_workers", None)
         # Scheduler configs
         self.max_batchsize = kwargs.pop("max_batchsize", 32)
         self.use_mixed_precisoin = kwargs.pop("use_mixed_precision", False)
         self.policy = kwargs.pop("policy", "fcfs_single")
+        self.overlap_prepare = kwargs.pop("overlap_prepare", False)
         # Engine configs
         self.disable_log_status = kwargs.pop("disable_log_status", False)
+        self.non_blocking_step = kwargs.pop("non_blocking_step", False)
         # kwargs for `from_pretrained`
         self.kwargs = kwargs
 
@@ -63,6 +68,8 @@ class EngineArgs:
         parallel_config = ParallelConfig(
             pipeline_parallel_size=self.pipeline_parallel_size,
             tensor_parallel_size=self.tensor_parallel_size,
+            data_parallel_size=self.data_parallel_size,
+            num_cpus_extra_worker=self.num_cpus_extra_worker,
             worker_use_ray=self.worker_use_ray,
             max_parallel_loading_workers=self.max_parallel_loading_workers
         )
@@ -70,8 +77,13 @@ class EngineArgs:
             max_bathsize=self.max_batchsize,
             use_mixed_precision=self.use_mixed_precisoin,
             policy=self.policy,
+            overlap_prepare=self.overlap_prepare,
         )
-        return pipeline_config, parallel_config, scheduler_config
+        engine_config = EngineConfig(
+            log_status=not self.disable_log_status,
+            non_blocking_step=self.non_blocking_step
+        )
+        return pipeline_config, parallel_config, scheduler_config, engine_config
 
 
 class AsyncEngineArgs(EngineArgs):

@@ -18,6 +18,10 @@ class BaseSchedulerStates:
 
     def log_status(self):
         raise NotImplementedError
+    
+    
+    def to_device(self, device) -> None:
+        raise NotImplementedError
 
 
 class BatchSupportScheduler:

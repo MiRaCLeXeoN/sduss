@@ -47,13 +47,25 @@ class PNDMSchedulerStates(BaseSchedulerStates):
     
     def get_next_timestep(self):
         return self.timesteps[self.timestep_idx]
+
     
     def get_step_idx(self):
         return self.timestep_idx
+
     
     def log_status(self):
         logger.debug(f"{self.num_inference_steps=}, {self.counter=}, {len(self.ets)=}, {self.timestep_idx=}")
         logger.debug(f"{self.prk_timesteps.shape=}, current_time_step={self.timesteps[self.timestep_idx]}")
+    
+    
+    def to_device(self, device) -> None:
+        # counter
+        # cur_model_output
+        # ets
+        # cur_sample
+        # num_inference_steps
+        # prk_timesteps: np.ndarray
+        self.timesteps.to(device=device)
 
 
 class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):

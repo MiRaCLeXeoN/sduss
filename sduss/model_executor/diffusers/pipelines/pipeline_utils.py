@@ -10,7 +10,12 @@ class BasePipeline:
     
     @staticmethod
     def get_sampling_params_cls():
-        pass
+        raise NotImplementedError
+
+
+class BasePipelinePrepareOutput:
+    def to_device(self, device) -> None:
+        raise NotImplementedError
 
 
 class BasePipelineStepInput:

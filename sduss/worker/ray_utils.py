@@ -3,7 +3,7 @@ from typing import Any, Optional, TYPE_CHECKING, Tuple
 
 from sduss.utils import get_open_port
 from sduss.logger import init_logger
-from sduss.config import ParallelConfig
+from sduss.config import ParallelConfig, SchedulerConfig
 
 logger = init_logger(__name__)
 
@@ -34,7 +34,6 @@ try:
         def execute_method(self, method: str, *method_args, **method_kwargs):
             task_handler = getattr(self, method)
             return task_handler(*method_args, **method_kwargs)
-        
 except ImportError as e:
     logger.warning(f"Failed to import Ray with {e!r}. "
                    "For distributed inference, please install Ray with "
@@ -48,6 +47,7 @@ if TYPE_CHECKING:
     
 def initialize_cluster(
     parallel_config: ParallelConfig,
+    scheduler_config: SchedulerConfig,
     engine_use_ray: bool = False,
     ray_address: Optional[str] = None,
 ) -> Tuple[str, Optional["PlacementGroup"]]:
@@ -67,8 +67,8 @@ def initialize_cluster(
             raise ImportError("Ray is not properly installed! It is necessary "
                               "for distributed inference")
         
-        ray.init(address=ray_address, ignore_reinit_error=True,
-                 num_gpus=parallel_config.world_size)
+        ray.init(address=ray_address,
+                 ignore_reinit_error=True)
     
     if not parallel_config.worker_use_ray:
         # Initialize cluster locally
@@ -98,13 +98,21 @@ def initialize_cluster(
             raise ValueError(
                 "The number of required GPUs exceeds the total number of "
                 "available GPUs in the cluster.")
+
         # Create a new placement group
-        current_placement_group = ray.util.placement_group([{
-            "GPU": 1
-        }] * parallel_config.world_size)
+        bundles = [{"GPU": 1}] * parallel_config.world_size
+        if scheduler_config.overlap_prepare:
+            # We need extra workers
+            bundles += [{"CPU": parallel_config.num_cpus_extra_worker}] * (parallel_config.num_workers 
+                                                                           - parallel_config.world_size)
+
+        current_placement_group = ray.util.placement_group()
+        
         # We should wait until PG is ready -- this will block until all 
         # requested resources are available, and will timeout if 
         # they cannot be provisioned
+        logger.debug("Start ray placement group allocation.")
         ray.get(current_placement_group.ready(), timeout=1800)
+        logger.debug("Ray plamencement group ready.")
     
     return None, current_placement_group

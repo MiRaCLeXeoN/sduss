@@ -36,11 +36,13 @@ class ModelRunner:
         pipeline_config: PipelineConfig,
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
+        is_prepare_worker: bool,
     ):
         
         self.pipeline_config = pipeline_config
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
+        self.is_prepare_worker = is_prepare_worker
 
         self.pipeline: BasePipeline = None  # Set in load_model
 
@@ -60,9 +62,14 @@ class ModelRunner:
             raise ValueError("This pipeline doesn't support mixed precision input!")
         
         self.pipeline.__post_init__()
-
-        self.pipeline.to("cuda")
         self.utils_cls = self.pipeline.get_sampling_params_cls().utils_cls
+
+        if self.is_prepare_worker:
+            logger.debug(f"pipeline to cpu")
+            self.pipeline.to("cpu")
+        else:
+            logger.debug(f"pipeline to {torch.cuda.current_device()}")
+            self.pipeline.to(torch.cuda.current_device())
         
 
     @torch.inference_mode()

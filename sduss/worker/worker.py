@@ -6,14 +6,17 @@ import torch.distributed
 
 from .model_runner import ModelRunner
 from .wrappers import WorkerOutput, WorkerRequest
-from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
+from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig, EngineConfig
 
 from sduss.scheduler import Request, RequestStatus
 from sduss.model_executor import set_random_seed
 from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
+from sduss.logger import init_logger
 
 if TYPE_CHECKING:
     from .wrappers import WorkerRequestDictType
+
+logger = init_logger(__name__)
 
 class Worker:
     """A worker GPU class
@@ -28,11 +31,12 @@ class Worker:
         pipeline_config: PipelineConfig,
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
+        engine_config: EngineConfig,
         rank: Optional[int] = None,
+        is_prepare_worker: bool = False,
         distributed_init_method: Optional[str] = None,
     ) -> None:
-        """ FIXME
-
+        """
         Args:
             model_config (ModelConfig): Model config
             parallel_config (ParallelConfig): Parallel config
@@ -43,7 +47,9 @@ class Worker:
         self.pipeline_config = pipeline_config
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
+        self.engine_config = engine_config
         self.rank = rank
+        self.is_prepare_worker = is_prepare_worker
         self.distributed_init_method = distributed_init_method
 
         self.use_esymred = pipeline_config.use_esymred
@@ -52,7 +58,7 @@ class Worker:
         # Updated and maintained by `execute_model` method
         self.request_pool: Dict[int, WorkerRequest] = {} 
 
-        self.model_runner = ModelRunner(pipeline_config, parallel_config, scheduler_config)
+        self.model_runner = ModelRunner(pipeline_config, parallel_config, scheduler_config, is_prepare_worker)
         
     
     def init_dis_env(self) -> None:
@@ -65,21 +71,34 @@ class Worker:
         # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
         os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
 
+        # Check up
+        assert self.is_prepare_worker == False
+
         # ? This env var set by Ray causes exceptions with graph building
         os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
         
         # Env vars will be set by Ray
-        # ? What are these variables?
         self.rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
         if self.rank < 0:
             raise ValueError("Invalid or unspecified rank")
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
         self.device = torch.device(f"cuda:{local_rank}")
         torch.cuda.set_device(self.device)
+
+        logger.debug(f"rank={self.rank}, local_rank={local_rank}")
         
         _init_distributed_environment(self.parallel_config, self.rank, 
                                       self.distributed_init_method)
         
+        set_random_seed(self.pipeline_config.seed)
+    
+    
+    def init_prepare(self) -> None:
+        assert self.is_prepare_worker
+
+        rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
+        local_rank = int(os.getenv("LOCAL_RANK", "0"))
+        logger.debug(f"rank={self.rank}, local_rank={local_rank}")
         set_random_seed(self.pipeline_config.seed)
     
 
@@ -87,11 +106,11 @@ class Worker:
         self.model_runner.load_model()
     
 
-    def add_request(self, req_id: int, wq: WorkerRequest):
-        self.request_pool[req_id] = wq
+    def add_request(self, req_id: int, wr: WorkerRequest):
+        self.request_pool[req_id] = wr
     
     
-    def remove_requests(self, req_ids: Union[int, List[int]]):
+    def remove_requests_by_id(self, req_ids: Union[int, List[int]]):
         if isinstance(req_ids, int):
             req_ids = [req_ids]
         for req_id in req_ids:
@@ -113,19 +132,22 @@ class Worker:
         # 1. Create WorkerRequests to track reqs.
         worker_reqs: "WorkerRequestDictType" = {}
         for sche_req in scheduler_reqs:
-            wq = WorkerRequest(sche_req)
-            self.add_request(sche_req.request_id, wq)
-            res = wq.sampling_params.resolution
+            wr = WorkerRequest(sche_req)
+            # Only register when prepare stage is not overlapped
+            if not self.scheduler_config.overlap_prepare:
+                self.request_pool[wr.request_id] = wr
+            res = wr.sampling_params.resolution
             if res not in worker_reqs:
-                worker_reqs[res] = [wq]
+                worker_reqs[res] = [wr]
             else:
-                worker_reqs[res].append(wq)
+                worker_reqs[res].append(wr)
         
         # 2. Execute
         self.model_runner.exec_prepare_stage(worker_reqs)
 
         # 3. Create return wrapper
-        return WorkerOutput(worker_reqs=worker_reqs, status=RequestStatus.PREPARE)
+        return WorkerOutput(worker_reqs=worker_reqs, status=RequestStatus.PREPARE,
+                            overlap_prepare=self.scheduler_config.overlap_prepare)
         
     
     def exec_denoising_stage(
@@ -134,6 +156,7 @@ class Worker:
         use_mixed_precision: bool,
         is_sliced: bool,
         patch_size: int,
+        prepare_output: WorkerOutput = None,
     ):
         """Execute denoising stage.
 
@@ -143,6 +166,10 @@ class Worker:
         Args:
             req_ids (List[int]): IDs of requests to execute one iteration.
         """
+        # 0. Store prepare results
+        if prepare_output is not None:
+            self._process_prepare_output(prepare_output)
+        
         # 1. Collect requests and wrap as dict
         worker_reqs: "WorkerRequestDictType" = {}
         for req_id in req_ids:
@@ -157,7 +184,6 @@ class Worker:
         self.model_runner.exec_denoising_stage(worker_reqs, is_sliced, patch_size)
 
         # 3. Update reqs states
-        # But maybe unnecessary
         return
     
     
@@ -165,7 +191,12 @@ class Worker:
         self,
         req_ids: List[int],
         use_mixed_precision: bool,
+        prepare_output: WorkerOutput = None,
     ) -> WorkerOutput:
+        # 0. Store prepare results
+        if prepare_output is not None:
+            self._process_prepare_output(prepare_output)
+
         # 1. Collect requests and wrap as dict
         worker_reqs_dict: "WorkerRequestDictType" = {}
         for req_id in req_ids:
@@ -182,9 +213,25 @@ class Worker:
         output = WorkerOutput(worker_reqs=worker_reqs_dict, status=RequestStatus.POSTPROCESSING)
 
         # Remove finished requests
-        self.remove_requests(req_ids)
+        self.remove_requests_by_id(req_ids)
 
         return output
+
+
+    def _process_prepare_output(self, prepare_output: WorkerOutput) -> None:
+        """Process prepare output.
+        
+        Register worker requests from prepare stage.
+
+        Args:
+            prepare_output (WorkerOutput): Output.
+        """
+        worker_reqs = prepare_output.worker_reqs
+        for worker_req_list in worker_reqs.values():
+            for wr in worker_req_list:
+                self.add_request(wr.request_id, wr)
+                # Move tensors to current device
+                wr.to_device(self.device)
 
         
     def warm_up_model(self) -> None:

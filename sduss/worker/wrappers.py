@@ -5,10 +5,10 @@ from typing import List, Dict
 import torch
 
 from sduss.scheduler import RequestStatus, Request
-from sduss.model_executor.sampling_params import BaseSamplingParams
-
-from sduss.model_executor.diffusers.schedulers import BaseSchedulerStates
 from sduss.model_executor.utils import BaseOutput
+from sduss.model_executor.sampling_params import BaseSamplingParams
+from sduss.model_executor.diffusers import BasePipelinePrepareOutput
+from sduss.model_executor.diffusers import BaseSchedulerStates
 
 class InferenceStage(enum.Enum):
     PREPARE = enum.auto()
@@ -31,7 +31,7 @@ class WorkerRequest:
 
         # Filled by inference procedure
         self.scheduler_states: BaseSchedulerStates = None
-        self.prepare_output = None
+        self.prepare_output: BasePipelinePrepareOutput = None
         self.step_output = None
         self.output = None
 
@@ -42,6 +42,16 @@ class WorkerRequest:
             self.sampling_params.latents.to(torch.cuda.current_device())
         
         # TODO(MX): Other tensors are not examined.
+    
+    
+    def to_device(self, device):
+        # Sampling params
+        self.sampling_params.to_device(device)
+        # Scheduler states
+        self.scheduler_states.to_device(device)
+        # prepare_output
+        self.prepare_output.to_device(device)
+        
         
 # resolution -> List[request]
 WorkerRequestDictType = Dict[int, List[WorkerRequest]]
@@ -52,6 +62,7 @@ class WorkerOutput:
         self,
         worker_reqs: WorkerRequestDictType = None,
         status: RequestStatus = None,
+        overlap_prepare: bool = False,
     ) -> None:
         if status == RequestStatus.POSTPROCESSING:
             reqs_dict: Dict[int, BaseOutput] = {}
@@ -63,11 +74,15 @@ class WorkerOutput:
             # pipeline output cls is assured to exist in CPU memory instead of on device
             self.req_output_dict = reqs_dict
         elif status == RequestStatus.PREPARE:
+            # Return all worker requests directly
             # map: req_id -> inference steps
             reqs_dict: Dict[int, int] = {}
             for res in worker_reqs:
                 for wr in worker_reqs[res]:
                     reqs_dict[wr.request_id] = len(wr.scheduler_states.timesteps)
             self.reqs_steps_dict = reqs_dict
+            # If prepare stage is overlapped, we should return all worker_reqs directly
+            if overlap_prepare:
+                self.worker_reqs = worker_reqs
         else:
             raise RuntimeError
