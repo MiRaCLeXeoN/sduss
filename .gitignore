@@ -1,5 +1,6 @@
 # vscode files
 .vscode
+.VSCodeCounter
 
 # python cache files
 __pycache__

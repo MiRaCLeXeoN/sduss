@@ -90,3 +90,6 @@ class FCFS_Mixed(Policy):
             is_sliced=is_sliced,
             patch_size=patch_size,
         )
+    
+    def scheduler_request_overlap_prepare(self, max_num: int) -> SchedulerOutput:
+        pass
