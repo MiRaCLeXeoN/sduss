@@ -1,5 +1,6 @@
 import asyncio
 import time
+import sys
 
 import ray
 
@@ -225,6 +226,7 @@ class RequestTracker:
 
 class _AsyncEngine(Engine):
     
+    # TODO: Since we enforced engine using ray, this is unnecessary.
     async def step_async(self) -> List[RequestOutput]:
         """Performs one decoding iteration and returns newly generated results.
         The workers are ran asynchronously if possible.
@@ -282,14 +284,18 @@ class _AsyncEngine(Engine):
         return output
     
     
-    async def _step_nonblocking(self):
+    async def _step_nonblocking_async(self):
         """Non-blocking step."""
         # 1. Schedule
         scheduler_output, req_ids = self._schedule()
+        
+        if self.engine_config.log_status:
+            self._log_system_states(scheduler_output)
+
         # 2. Wait for result from previous round
         # This must be after step 1 to truly overlap scheduling and execution.
         prepare_output, denoising_output, postprocessing_output = (
-            self.get_prev_handlers_output_async())
+            await self.get_prev_handlers_output_async(get_output_all_workers=False))
 
         # 3. Schedule prepare if prepare reqs available
         if scheduler_output.has_prepare_requests():
@@ -304,10 +310,23 @@ class _AsyncEngine(Engine):
         # 4. Issue tasks to workers
         if scheduler_output.status == RequestStatus.WAITING:
             # Currently, we don't do anything in waiting stage
-            pass
+            if prepare_output is not None:
+                # We don't need to preserve the handlers
+                await self._run_workers_nonblocking_async(
+                    "receive_prepare_output",
+                    self.workers,
+                    prepare_output=prepare_output,
+                )
         elif scheduler_output.status == RequestStatus.PREPARE:
             # Only when there is no denoising or postprocessing reqs running will
             # prepare stage be scheduled.
+            if prepare_output is not None:
+                # We don't need to preserve the handlers
+                await self._run_workers_nonblocking_async(
+                    "receive_prepare_output",
+                    self.workers,
+                    prepare_output=prepare_output,
+                )
             # Requests are derived from normal reqs instead of prepare_reqs in shceduler_output
             self.prev_prepare_handlers = await self._run_workers_nonblocking_async(
                 "exec_prepare_stage",
@@ -338,14 +357,11 @@ class _AsyncEngine(Engine):
             raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
         
         # 5. Process output and update requests status.
-        output = self._process_nonblocking_output(scheduler_outputs=scheduler_output,
+        output = self._process_nonblocking_output(scheduler_output=scheduler_output,
                                                   req_ids=req_ids,
                                                   prepare_output=prepare_output,
                                                   denoising_output=denoising_output,
                                                   postprocessing_output=postprocessing_output,)
-        
-        if self.engine_config.log_status:
-            self._log_system_states(scheduler_output)
         
         return output
 
@@ -353,7 +369,7 @@ class _AsyncEngine(Engine):
     async def _run_workers_blocking_async(
         self,
         method: str,
-        workers: List[RayWorker],
+        workers: List['RayWorker'],
         *args,
         get_all_outputs: bool = False,
         **kwargs,
@@ -388,7 +404,7 @@ class _AsyncEngine(Engine):
     async def _run_workers_nonblocking_async(
         self,
         method: str,
-        workers: List[RayWorker],
+        workers: List['RayWorker'],
         *args,
         get_all_outputs: bool = False,
         **kwargs,
@@ -409,7 +425,17 @@ class _AsyncEngine(Engine):
         return obj_refs
     
     
-    async def get_prev_handlers_output_async(self):
+    async def get_prev_handlers_output_async(
+        self,
+        get_output_all_workers: bool = False,
+    ):
+        """Get output from handlers set by previous round asynchronously.
+
+        Args:
+            get_output_all_workers (bool, optional): If true, outputs from all workers
+                will be returned as a list. Otherwise only the first output will be extracted
+                and returned.
+        """
         prepare_output = denoising_output = postprocessing_output = None
         if self.prev_prepare_handlers:
             prepare_output = await asyncio.gather(*self.prev_prepare_handlers)
@@ -420,6 +446,14 @@ class _AsyncEngine(Engine):
         if self.prev_postprocessing_handlers:
             postprocessing_output = await asyncio.gather(*self.prev_postprocessing_handlers)
             self.prev_postprocessing_handlers = None
+        
+        if get_output_all_workers:
+            return prepare_output, denoising_output, postprocessing_output
+
+        prepare_output = prepare_output[0] if prepare_output else prepare_output
+        denoising_output = denoising_output[0] if denoising_output else denoising_output
+        postprocessing_output = postprocessing_output[0] if postprocessing_output else postprocessing_output
+
         return prepare_output, denoising_output, postprocessing_output
     
     
@@ -460,6 +494,10 @@ class AsyncEngine:
             placement_group,
         )
 
+        if self.engine_config.engine_use_ray:
+            ray.get(self.engine.engine_is_ready.remote())
+            
+
         # Asyncio loop
         # We need to keep a reference to unshielded
         # task as well to prevent it from being garbage collected
@@ -467,6 +505,11 @@ class AsyncEngine:
         self.background_loop: asyncio.Future = None
 
         self._request_tracker = RequestTracker()
+
+        if self.engine_config.log_requests:
+            logger.info("AsyncEngine initialization done. System Ready.")
+            sys.stderr.flush()
+            sys.stdout.flush()
 
 
     def _init_engine(self, *args, **kwargs) -> Union[_AsyncEngine, "ray.ObjectRef"]:
@@ -477,7 +520,7 @@ class AsyncEngine:
             # This doesn't imply that we will not be allocated CPUs to.
             engine_class = ray.remote(num_cpus=0)(self._engine_class).remote
         else:
-            raise RuntimeError(f"Currently, {self._engine_class.__name__} doesn't "
+            raise RuntimeError(f"Currently, {self._engine_class.__name__} doesn't support "
                                f"a combination of {self.engine_use_ray=} and {self.worker_use_ray=}")
         return engine_class(*args, *kwargs)
         
@@ -504,9 +547,9 @@ class AsyncEngine:
         else:
             self.engine.add_request_batch(new_requsts_params)
         
-        # TODO: abort or free?
-        if finished_request_ids:
-            await self._engine_abort_reqs(finished_request_ids)
+        # Finished requests are automatically released. Don't re-abort.
+        # if finished_request_ids:
+        #     await self._engine_abort_reqs(finished_request_ids)
         
         if self.engine_use_ray:
             request_outputs = await self.engine.step.remote()

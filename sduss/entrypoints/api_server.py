@@ -12,8 +12,7 @@ from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.model_executor.diffusers import BasePipeline
 from sduss.utils import random_uuid
 from sduss.model_executor.model_loader import get_pipeline_cls
-
-from .outputs import RequestOutput
+from sduss.entrypoints.outputs import RequestOutput
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 TIMEOUT_TO_PREVENT_DEADLOCK = 1  # seconds.
@@ -70,6 +69,9 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    host = args.__dict__.pop("host")
+    port = args.__dict__.pop("port")
+
     engine_args = AsyncEngineArgs.from_cli_args(args)
     engine = AsyncEngine.from_engine_args(engine_args)
 
@@ -77,7 +79,7 @@ if __name__ == "__main__":
     sampling_param_cls: BaseSamplingParams = pipeline_cls.get_sampling_params_cls()
 
     uvicorn.run(app,
-                host=args.host,
-                port=args.port,
+                host=host,
+                port=port,
                 log_level="debug",
                 timeout_keep_alive=TIMEOUT_KEEP_ALIVE)

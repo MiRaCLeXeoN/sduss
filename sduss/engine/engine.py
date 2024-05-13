@@ -81,6 +81,14 @@ class Engine:
         self.prev_postprocessing_handlers = None
         self.prev_scheduler_output = None
 
+        # Flust outputs so that we can see logs ASAP.
+        if engine_config.log_status:
+            logger.info("Engine initialization done. System ready.")
+            self.engine_ready = True
+    
+    def engine_is_ready(self) -> bool:
+        return self.engine_ready
+
     
     @classmethod
     def from_engine_args(cls, engine_args: EngineArgs) -> "Engine":
@@ -345,7 +353,16 @@ class Engine:
                 use_mixed_precision=self.scheduler_config.use_mixed_precision)
 
         # 4. Issue tasks to workers
-        if scheduler_output.status == RequestStatus.WAITING:
+        if scheduler_output.status ==RequestStatus.EMPTY:
+            # Empty indicates that no reqs to run, we don't need to do anything.
+            if prepare_output is not None:
+                # We don't need to preserve the handlers
+                self._run_workers_nonblocking(
+                    "receive_prepare_output",
+                    self.workers,
+                    prepare_output=prepare_output,
+                )
+        elif scheduler_output.status == RequestStatus.WAITING:
             # Currently, we don't do anything in waiting stage
             if prepare_output is not None:
                 # We don't need to preserve the handlers
@@ -607,7 +624,7 @@ class Engine:
 
     def has_unfinished_requests(self) -> bool:
         """Returns True if there are unfinished requests."""
-        return self.scheduler.has_unfinished_requests()
+        return self.scheduler.has_unfinished_requests(is_nonblocking=self.engine_config.non_blocking_step)
 
     
     def _log_system_states(

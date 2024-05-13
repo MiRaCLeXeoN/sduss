@@ -41,7 +41,7 @@ def in_wsl() -> bool:
     return "microsoft" in " ".join(uname()).lower()
 
 def random_uuid() -> int:
-    return str(uuid.uuid4().int)
+    return uuid.uuid4().int
 
 def get_dtype_size(dtype: torch.dtype) -> int:
     return torch.tensor([], dtype=dtype).element_size()

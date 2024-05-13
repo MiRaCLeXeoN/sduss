@@ -87,6 +87,7 @@ class FCFS_Mixed(Policy):
             is_sliced=is_sliced,
             patch_size=patch_size,
         )
+
     
     def scheduler_request_overlap_prepare(
             self, 
@@ -95,6 +96,11 @@ class FCFS_Mixed(Policy):
         ) -> SchedulerOutput:
         """Schedule requests with overlapped preapre stage."""
         flattened_reqs = self._flatten_all_reqs()
+
+        if len(flattened_reqs) == 0:
+            # This condition will appear at the last round of a request
+            # when using non-blocking paradigm.
+            return SchedulerOutput(scheduled_requests={}, status=RequestStatus.EMPTY)
 
         # Find the oldest request
         now = time.time()

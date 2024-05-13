@@ -105,7 +105,15 @@ class Scheduler:
         return
         
     
-    def has_unfinished_requests(self) -> bool:
+    def has_unfinished_requests(self, is_nonblocking: bool) -> bool:
+        if is_nonblocking:
+            # We must wait all requests freed instead of finished, since
+            # some requests are still executing.
+            for res_queue in self.request_pool.values():
+                if res_queue.get_num_unfreed_reqs() > 0:
+                    return True
+            return False
+            
         for res_queue in self.request_pool.values():
             if res_queue.get_num_unfinished_reqs() > 0:
                 return True
@@ -207,7 +215,9 @@ class Scheduler:
         # 1. Process output from previous round.
         if prev_scheduler_output:
             prev_sche_status = prev_scheduler_output.status
-            if prev_sche_status == RequestStatus.WAITING:
+            if prev_sche_status == RequestStatus.EMPTY:
+                pass
+            elif prev_sche_status == RequestStatus.WAITING:
                 pass
             elif prev_sche_status == RequestStatus.PREPARE:
                 # update remain steps is done at step 0, nothing more to do here.
@@ -227,6 +237,10 @@ class Scheduler:
         # 2. To ensure consistency, reqs in this round must be updated.
         sche_status = scheduler_output.status
         sche_reqs: "SchedulerOutputReqsType" = scheduler_output.scheduled_requests
+        if sche_status == RequestStatus.EMPTY:
+            # Since nothing to do, we return directly.
+            return finished_reqs
+
         next_status = self._get_next_status(sche_status)
         if sche_status == RequestStatus.WAITING:
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
@@ -266,6 +280,7 @@ class Scheduler:
         for req in reqs:
             res = req.sampling_params.resolution
             self.request_pool[res].free_finished_reqs(req)
+            self.req_mapping.pop(req.request_id)
         
         
     def _initialize_resolution_queues(self, res: int) -> None:
