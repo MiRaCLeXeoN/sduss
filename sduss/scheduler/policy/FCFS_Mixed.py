@@ -4,7 +4,7 @@ from typing import List, TYPE_CHECKING, Dict
 
 from .policy import Policy
 from ..wrappers import SchedulerOutput, RequestStatus
-from ..utils import find_gcd
+from ..utils import find_gcd, convert_list_to_res_dict
 
 
 if TYPE_CHECKING:
@@ -82,8 +82,6 @@ class FCFS_Mixed(Policy):
                 is_sliced = False
                 patch_size = list(res_reqs_dict.keys())[0]
         
-        # FIXME: arrange prepare stage
-        
         return SchedulerOutput(
             scheduled_requests=res_reqs_dict,
             status=target_status,
@@ -92,4 +90,54 @@ class FCFS_Mixed(Policy):
         )
     
     def scheduler_request_overlap_prepare(self, max_num: int) -> SchedulerOutput:
-        pass
+        """Schedule requests with overlapped preapre stage."""
+        flattened_reqs = self._flatten_all_reqs()
+
+        # Find the oldest request
+        now = time.time()
+        flattened_reqs.sort(key = lambda req: now - req.arrival_time, reverse=True)
+        target_req = flattened_reqs[0]
+        target_status = target_req.status
+
+        queue = self._get_all_reqs_by_status(target_status)
+        queue.sort(key=lambda req: now - req.arrival_time, reverse=True)
+
+        res_reqs_dict: Dict[int, Dict[int, Request]] = {}
+        
+        # Collect reqs
+        num_to_collect = max_num
+        while num_to_collect > 0 and queue:
+            req = queue.pop(0)
+            res = req.sampling_params.resolution
+            if res not in res_reqs_dict:
+                res_reqs_dict[res] = {req.request_id : req}
+            else:
+                res_reqs_dict[res][req.request_id] = req
+            num_to_collect -= 1
+        
+        # Mixed precision arguments
+        is_sliced = None
+        patch_size = None
+        # Only apply for denoising stage
+        if target_status == RequestStatus.DENOISING:
+            if len(res_reqs_dict) > 1:
+                is_sliced = True
+                patch_size = find_gcd(list(res_reqs_dict))
+            else:
+                is_sliced = False
+                patch_size = list(res_reqs_dict.keys())[0]
+        
+        # Get overlapped prepare requests if current stage is not prepare
+        prepare_requests = None
+        if target_status != RequestStatus.PREPARE:
+            _prepare_reqs = self._get_all_reqs_by_status(RequestStatus.PREPARE)
+            prepare_requests = convert_list_to_res_dict(_prepare_reqs)
+
+        
+        return SchedulerOutput(
+            scheduled_requests=res_reqs_dict,
+            status=target_status,
+            prepare_requests=prepare_requests,
+            is_sliced=is_sliced,
+            patch_size=patch_size,
+        )

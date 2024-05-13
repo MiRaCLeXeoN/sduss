@@ -205,9 +205,11 @@ class SchedulerOutput:
         scheduled_requests: Dict[int, Dict[int, Request]]
             Requests to run in next iteration.
             resolution -> req_id -> req
-        stage: RequestStatus
+        status: RequestStatus
             The inference stage at which the selected requests are. All the
             selected requests must be in the same stage.
+        prepare_requests: Dict[int, Dict[int, Request]]
+            Overlapped prepare-stage requets. If status is prepare, this must be none.
     """
     
     def __init__(
@@ -232,6 +234,9 @@ class SchedulerOutput:
         mixed_precision = len(self.scheduled_requests) > 1
         if mixed_precision and self.status == RequestStatus.DENOISING:
             assert self.is_sliced is not None and self.patch_size is not None
+        # Check prepare_requests. It should not co-exist with RequestStatus.PREPARE
+        if self.status == RequestStatus.PREPARE:
+            assert self.prepare_requests is None
 
     
     def is_empty(self) -> bool:

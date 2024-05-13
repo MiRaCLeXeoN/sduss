@@ -1,4 +1,9 @@
-from typing import Iterable
+from typing import Iterable, Dict, List, TYPE_CHECKING
+
+from .wrappers import Request
+
+if TYPE_CHECKING:
+    from .wrappers import SchedulerOutputReqsType
 
 def find_gcd(resolutions: Iterable[int]):
 
@@ -14,3 +19,14 @@ def find_gcd(resolutions: Iterable[int]):
         else:
             cur_gcd = euclid(cur_gcd, res)
     return cur_gcd
+
+
+def convert_list_to_res_dict(reqs: List[Request]) -> 'SchedulerOutputReqsType':
+    res_dict: 'SchedulerOutputReqsType' = {}
+    for req in reqs:
+        res = req.sampling_params.resolution
+        if res not in res_dict:
+            res_dict[res] = {req.request_id : req}
+        else:
+            res_dict[res][req.request_id] = req
+    return res_dict
