@@ -16,6 +16,10 @@ class BasePipeline:
 class BasePipelinePrepareOutput:
     def to_device(self, device) -> None:
         raise NotImplementedError
+    
+    
+    def to_dtype(self, dtype) -> None:
+        raise NotImplementedError
 
 
 class BasePipelineStepInput:

@@ -95,10 +95,9 @@ class Worker:
     
     def init_prepare(self) -> None:
         assert self.is_prepare_worker
-
-        rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
-        local_rank = int(os.getenv("LOCAL_RANK", "0"))
-        logger.debug(f"rank={self.rank}, local_rank={local_rank}")
+        # rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
+        # local_rank = int(os.getenv("LOCAL_RANK"))
+        # logger.debug(f"rank={self.rank}, local_rank={local_rank}")
         set_random_seed(self.pipeline_config.seed)
     
 
@@ -115,6 +114,11 @@ class Worker:
             req_ids = [req_ids]
         for req_id in req_ids:
             del self.request_pool[req_id]
+    
+    
+    def receive_prepare_output(self, prepare_output: WorkerOutput):
+        """Receive prepare output from engine."""
+        self._process_prepare_output(prepare_output=prepare_output)
         
     
     def exec_prepare_stage(
@@ -136,6 +140,7 @@ class Worker:
             # Only register when prepare stage is not overlapped
             if not self.scheduler_config.overlap_prepare:
                 self.request_pool[wr.request_id] = wr
+            
             res = wr.sampling_params.resolution
             if res not in worker_reqs:
                 worker_reqs[res] = [wr]
@@ -232,6 +237,7 @@ class Worker:
                 self.add_request(wr.request_id, wr)
                 # Move tensors to current device
                 wr.to_device(self.device)
+                wr.to_dtype(self.pipeline_config.kwargs["torch_dtype"])
 
         
     def warm_up_model(self) -> None:

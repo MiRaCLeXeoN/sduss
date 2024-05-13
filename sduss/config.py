@@ -105,12 +105,14 @@ class SchedulerConfig:
         use_mixed_precision: bool, 
         policy: str,
         overlap_prepare: bool,
+        max_overlapped_prepare_reqs: int,
     ) -> None:
 
         self.max_batchsize = max_bathsize
         self.use_mixed_precision = use_mixed_precision
         self.policy = policy
         self.overlap_prepare = overlap_prepare
+        self.max_overlapped_prepare_reqs = max_overlapped_prepare_reqs
         
         self._verify_args()
         
@@ -124,9 +126,13 @@ class EngineConfig:
         self,
         log_status: bool,
         non_blocking_step: bool,
+        engine_use_ray: bool = False,
+        log_requests: bool = False,
     ) -> None:
         self.log_status = log_status
         self.non_blocking_step = non_blocking_step
+        self.engine_use_ray = engine_use_ray
+        self.log_requests = log_requests
     
     
     def verify_with_scheduler_config(self, scheduler_config: SchedulerConfig):

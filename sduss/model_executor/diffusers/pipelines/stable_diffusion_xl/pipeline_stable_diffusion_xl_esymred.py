@@ -18,7 +18,6 @@ from .pipeline_stable_diffusion_xl_esymred_utils import (
     StableDiffusionXLEsymredPipelinePostInput, StableDiffusionXLEsymredPipelineOutput,
     StableDiffusionXLEsymredPipelineSamplingParams)
 
-from sduss.model_executor.modules.unet import PatchUNet
 from sduss.model_executor.modules.resnet import SplitModule
 from sduss.worker import WorkerRequest
 
@@ -33,6 +32,9 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         sub_modules: Dict = kwargs.pop("sub_modules", {})
 
         unet = sub_modules.pop("unet", None)
+
+        # Lazy import to avoid cuda extension building.
+        from sduss.model_executor.modules.unet import PatchUNet
         unet = PatchUNet(unet)
         sub_modules["unet"] = unet
 
@@ -389,7 +391,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             # compute the previous noisy sample x_t -> x_t-1
             # latents[resolution] = self.scheduler.step(res_split_noise, t, latents[resolution], **extra_step_kwargs).prev_sample
 
-            if self.do_classifier_free_guidance and guidance_rescale > 0.0:
+            if do_classifier_free_guidance and guidance_rescale > 0.0:
                 # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
                 res_split_noise = rescale_noise_cfg(res_split_noise, noise_pred_text, guidance_rescale=guidance_rescale)
 

@@ -32,6 +32,7 @@ class Scheduler:
         # Unpack scheduler config's argumnents
         self.max_batchsize = scheduler_config.max_batchsize
         self.use_mixed_precision = scheduler_config.use_mixed_precision
+        self.max_overlapped_prepare_reqs = scheduler_config.max_overlapped_prepare_reqs
         
         # resolution -> queues -> RequestQueue
         self.request_pool: Dict[int, ResolutionRequestQueue] = {}
@@ -56,7 +57,6 @@ class Scheduler:
         scheduler_output = self.policy.schedule_requests(max_num=self.max_batchsize)
         # More wrappers will be added here.
 
-        # FIXME: DEBUG
         self.cycle_counter += 1
         
         return scheduler_output
@@ -64,10 +64,11 @@ class Scheduler:
     
     def schedule_overlap_prepare(self) -> SchedulerOutput:
         """Scheduler requests with overlapped prepare stage."""
-        scheduler_output = self.policy.scheduler_request_overlap_prepare(max_num=self.max_batchsize)
+        scheduler_output = self.policy.scheduler_request_overlap_prepare(
+            max_num=self.max_batchsize,
+            max_overlapped_prepare_reqs=self.max_overlapped_prepare_reqs)
         # More wrappers will be added here.
 
-        # FIXME: DEBUG
         self.cycle_counter += 1
         
         return scheduler_output
@@ -81,7 +82,7 @@ class Scheduler:
         self.req_mapping[req.request_id] = req
         
 
-    def abort_request(self, request_ids: Union[int, Iterable[int]]) -> None:
+    def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> None:
         """Abort a handful of requests.
 
         Args:
@@ -104,7 +105,15 @@ class Scheduler:
         return
         
     
-    def has_unfinished_requests(self) -> bool:
+    def has_unfinished_requests(self, is_nonblocking: bool) -> bool:
+        if is_nonblocking:
+            # We must wait all requests freed instead of finished, since
+            # some requests are still executing.
+            for res_queue in self.request_pool.values():
+                if res_queue.get_num_unfreed_reqs() > 0:
+                    return True
+            return False
+            
         for res_queue in self.request_pool.values():
             if res_queue.get_num_unfinished_reqs() > 0:
                 return True
@@ -177,11 +186,11 @@ class Scheduler:
     
     def update_reqs_status_nonblocking(
         self,
-        scheduler_outputs: SchedulerOutput,
+        scheduler_output: SchedulerOutput,
         req_ids: List[int],
-        prepare_output: WorkerOutput,
+        prepare_output: 'WorkerOutput',
         denoising_output,
-        postprocessing_output: WorkerOutput,
+        postprocessing_output: 'WorkerOutput',
         prev_scheduler_output: SchedulerOutput,
     ) -> List[Request]:
         """Update requests status regarding nonblocking execution paradigm.
@@ -198,32 +207,40 @@ class Scheduler:
             List[Request]: Requests that can be freed.
         """
         # 0. If prepare_output available, use it to update requests
+        # 0.1 Extract output. By default, output is returned as a list
         if prepare_output is not None:
             self._update_remain_steps(reqs_steps_dict=prepare_output.reqs_steps_dict)
 
         finished_reqs: List[Request] = []
         # 1. Process output from previous round.
-        prev_sche_status = prev_scheduler_output.status
-        if prev_sche_status == RequestStatus.WAITING:
-            pass
-        elif prev_sche_status == RequestStatus.PREPARE:
-            # update remain steps is done at step 0, nothing more to do here.
-            pass
-        elif prev_sche_status == RequestStatus.DENOISING:
-            pass
-        elif prev_sche_status == RequestStatus.POSTPROCESSING:
-            assert postprocessing_output is not None
-            # create finish timestamp
-            current_timestamp = time.time()
-            # store output
-            for req_id in req_ids:
-                self.req_mapping[req_id].output = postprocessing_output.req_output_dict[req_id]
-                self.req_mapping[req_id].finish_time = current_timestamp
-                finished_reqs.append(self.req_mapping[req_id])
+        if prev_scheduler_output:
+            prev_sche_status = prev_scheduler_output.status
+            if prev_sche_status == RequestStatus.EMPTY:
+                pass
+            elif prev_sche_status == RequestStatus.WAITING:
+                pass
+            elif prev_sche_status == RequestStatus.PREPARE:
+                # update remain steps is done at step 0, nothing more to do here.
+                pass
+            elif prev_sche_status == RequestStatus.DENOISING:
+                pass
+            elif prev_sche_status == RequestStatus.POSTPROCESSING:
+                assert postprocessing_output is not None
+                # create finish timestamp
+                current_timestamp = time.time()
+                # store output
+                for req_id in prev_scheduler_output.get_req_ids():
+                    self.req_mapping[req_id].output = postprocessing_output.req_output_dict[req_id]
+                    self.req_mapping[req_id].finish_time = current_timestamp
+                    finished_reqs.append(self.req_mapping[req_id])
         
         # 2. To ensure consistency, reqs in this round must be updated.
-        sche_status = scheduler_outputs.status
-        sche_reqs: "SchedulerOutputReqsType" = scheduler_outputs.scheduled_requests
+        sche_status = scheduler_output.status
+        sche_reqs: "SchedulerOutputReqsType" = scheduler_output.scheduled_requests
+        if sche_status == RequestStatus.EMPTY:
+            # Since nothing to do, we return directly.
+            return finished_reqs
+
         next_status = self._get_next_status(sche_status)
         if sche_status == RequestStatus.WAITING:
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
@@ -263,6 +280,7 @@ class Scheduler:
         for req in reqs:
             res = req.sampling_params.resolution
             self.request_pool[res].free_finished_reqs(req)
+            self.req_mapping.pop(req.request_id)
         
         
     def _initialize_resolution_queues(self, res: int) -> None:

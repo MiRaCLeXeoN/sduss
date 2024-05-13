@@ -49,10 +49,11 @@ class Engine:
         distributed_init_method: str,
         placement_group: Optional["PlacementGroup"],
     ) -> None:
-        logger.info(
-            "Initializing an engine with config: "
-            f"model={pipeline_config.pipeline!r}, "
-            f"seed={pipeline_config.seed})") 
+        if engine_config.log_status:
+            logger.info(
+                "Initializing an engine with config:\n"
+                f"model={pipeline_config.pipeline!r}\n"
+                f"seed={pipeline_config.seed}") 
         
         self.pipeline_config = pipeline_config
         self.parallel_config = parallel_config
@@ -80,20 +81,30 @@ class Engine:
         self.prev_postprocessing_handlers = None
         self.prev_scheduler_output = None
 
+        # Flust outputs so that we can see logs ASAP.
+        if engine_config.log_status:
+            logger.info("Engine initialization done. System ready.")
+            self.engine_ready = True
+    
+    def engine_is_ready(self) -> bool:
+        return self.engine_ready
+
     
     @classmethod
     def from_engine_args(cls, engine_args: EngineArgs) -> "Engine":
         """Create an inference engine from arguments"""
         # Create engine configs.
-        model_config, parallel_config, scheduler_config, engine_config= engine_args.create_engine_configs()
+        pipeline_config, parallel_config, scheduler_config, engine_config= engine_args.create_engine_configs()
         # Initialize the cluster
         distributed_init_method, placement_group = initialize_cluster(
             parallel_config, scheduler_config)
         # Create engine instance
-        return cls(model_config, parallel_config, scheduler_config,
+        return cls(pipeline_config, 
+                   parallel_config, 
+                   scheduler_config, 
+                   engine_config,
                    distributed_init_method, 
-                   placement_group,
-                   log_status=not engine_args.disable_log_status)
+                   placement_group)
         
 
     def _verify_args(self):
@@ -137,7 +148,9 @@ class Engine:
         self,
         placement_group: "PlacementGroup",
         **ray_remote_kwargs,
-    ):        
+    ):
+        if self.engine_config.log_status:
+            logger.info("_init_workers_ray called")
         # Disable Ray usage stats collection
         ray_usage = os.environ.get("RAY_USAGE_STATS_ENABLED", "0")
         if ray_usage != "1":
@@ -148,7 +161,7 @@ class Engine:
         # ? Lazy import the worker to avoid importing torch.cuda/xformers
         # ? before CUDA_VISIBLE_DEVICE is set in the worker
         from sduss.worker.worker import Worker
-        
+
         # create workers using ray interface
         # ! This ray API is not thoroughly examined
         self.workers = []
@@ -156,7 +169,8 @@ class Engine:
         for bundle in placement_group.bundle_specs:
             # if not bundle.get("GPU", 0):
             #     continue
-            if bundle.get("GPU", 1):
+            logger.info(f"bundle gpus={bundle.get('GPU')}, cpus={bundle.get('CPU')}")
+            if bundle.get("GPU"):
                 worker = ray.remote(
                     num_cpus=0,
                     num_gpus=1,
@@ -168,7 +182,7 @@ class Engine:
                 self.workers.append(worker)
             elif bundle.get("CPU") == self.parallel_config.num_cpus_extra_worker:
                 worker = ray.remote(
-                    num_cpus=self.parallel_config.num_cpus_extra_worker,
+                    num_cpus=1,
                     num_gpus=0,
                     scheduling_strategy=PlacementGroupSchedulingStrategy(
                         placement_group=placement_group,
@@ -176,7 +190,7 @@ class Engine:
                     **ray_remote_kwargs,
                 )(RayWorker).remote(self.pipeline_config.trust_remote_code)
                 self.prepare_workers.append(worker)
-            
+        
         init_torch_dist_process_group(self.workers, backend="nccl")
         model_config = copy.deepcopy(self.pipeline_config)
         parallel_config = copy.deepcopy(self.parallel_config)
@@ -236,6 +250,16 @@ class Engine:
 
         # Add the request to the scheduler.
         self.scheduler.add_request(req)
+    
+    
+    def add_request_batch(
+        self,
+        new_requests_params: List[Dict],
+    ) -> None:
+        """Add a batch of requests."""
+        for req_param_dict in new_requests_params:
+            req = Request(**req_param_dict)
+            self.scheduler.add_request(req)
 
     
     def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> None:
@@ -244,7 +268,7 @@ class Engine:
         Args:
             request_id: The ID(s) of the request to abort.
         """
-        self.scheduler.abort_request(request_ids)
+        self.scheduler.abort_requests(request_ids)
 
     
     def _schedule(self) -> Tuple[SchedulerOutput, List[int]] :
@@ -295,7 +319,7 @@ class Engine:
         else:
             raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
         
-        output = self._process_output(scheduler_outputs=scheduler_output,
+        output = self._process_output(scheduler_output=scheduler_output,
                                        req_ids=req_ids,
                                        output=output,)
 
@@ -309,10 +333,14 @@ class Engine:
         """Non-blocking step."""
         # 1. Schedule
         scheduler_output, req_ids = self._schedule()
+        
+        if self.engine_config.log_status:
+            self._log_system_states(scheduler_output)
+
         # 2. Wait for result from previous round
         # This must be after step 1 to truly overlap scheduling and execution.
         prepare_output, denoising_output, postprocessing_output = (
-            self.get_prev_handlers_output())
+            self.get_prev_handlers_output(get_output_all_workers=False))
 
         # 3. Schedule prepare if prepare reqs available
         if scheduler_output.has_prepare_requests():
@@ -325,12 +353,34 @@ class Engine:
                 use_mixed_precision=self.scheduler_config.use_mixed_precision)
 
         # 4. Issue tasks to workers
-        if scheduler_output.status == RequestStatus.WAITING:
+        if scheduler_output.status ==RequestStatus.EMPTY:
+            # Empty indicates that no reqs to run, we don't need to do anything.
+            if prepare_output is not None:
+                # We don't need to preserve the handlers
+                self._run_workers_nonblocking(
+                    "receive_prepare_output",
+                    self.workers,
+                    prepare_output=prepare_output,
+                )
+        elif scheduler_output.status == RequestStatus.WAITING:
             # Currently, we don't do anything in waiting stage
-            pass
+            if prepare_output is not None:
+                # We don't need to preserve the handlers
+                self._run_workers_nonblocking(
+                    "receive_prepare_output",
+                    self.workers,
+                    prepare_output=prepare_output,
+                )
         elif scheduler_output.status == RequestStatus.PREPARE:
             # Only when there is no denoising or postprocessing reqs running will
             # prepare stage be scheduled.
+            if prepare_output is not None:
+                # We don't need to preserve the handlers
+                self._run_workers_nonblocking(
+                    "receive_prepare_output",
+                    self.workers,
+                    prepare_output=prepare_output,
+                )
             # Requests are derived from normal reqs instead of prepare_reqs in shceduler_output
             self.prev_prepare_handlers = self._run_workers_nonblocking(
                 "exec_prepare_stage",
@@ -361,14 +411,11 @@ class Engine:
             raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
         
         # 5. Process output and update requests status.
-        output = self._process_nonblocking_output(scheduler_outputs=scheduler_output,
+        output = self._process_nonblocking_output(scheduler_output=scheduler_output,
                                                   req_ids=req_ids,
                                                   prepare_output=prepare_output,
                                                   denoising_output=denoising_output,
                                                   postprocessing_output=postprocessing_output,)
-        
-        if self.engine_config.log_status:
-            self._log_system_states(scheduler_output)
         
         return output
 
@@ -417,14 +464,14 @@ class Engine:
     
     def _process_output(
         self,
-        scheduler_outputs: SchedulerOutput,
+        scheduler_output: SchedulerOutput,
         req_ids: List[int],
         output: Optional[WorkerOutput],
     ) -> List[RequestOutput]:
         """Update requests status and prepare return result if available."""
         
         # Update the scheduled sequence groups with the model outputs
-        self.scheduler.update_reqs_status(scheduler_outputs=scheduler_outputs,
+        self.scheduler.update_reqs_status(scheduler_outputs=scheduler_output,
                                           output=output,
                                           req_ids=req_ids)
         # collect finished reqs
@@ -483,13 +530,12 @@ class Engine:
         Returns:
             List[ray.ObjectRef]: List of object references of ray to get the results later.
         """
+        if self.engine_config.log_status:
+            logger.info(f"_run_workers_nonblocking start method {method}")
+        assert self.parallel_config.worker_use_ray, "Only ray workers supports non blocking calls."
         obj_refs = []
         for worker in workers:
-            if self.parallel_config.worker_use_ray:
-                executor = partial(worker.execute_method.remote, method)
-            else:
-                raise RuntimeError("Only ray workers supports non blocking calls.")
-            obj_ref = executor(*args, **kwargs)
+            obj_ref = worker.execute_method.remote(method, *args, **kwargs)
             obj_refs.append(obj_ref)
         return obj_refs
         
@@ -510,6 +556,8 @@ class Engine:
             get_all_outputs (bool, optional): Get results from all workers. 
                 Defaults to False.
         """
+        if self.engine_config.log_status:
+            logger.info(f"_run_workers_blocking start method {method}")
         all_outputs = []
         if max_concurrent_workers:
             work_groups = [
@@ -533,7 +581,17 @@ class Engine:
             return output
         
         
-    def get_prev_handlers_output(self):
+    def get_prev_handlers_output(
+            self, 
+            get_output_all_workers: bool = False
+        ) -> Union[List[WorkerOutput], WorkerOutput]:
+        """Get output from handlers set by previous round.
+
+        Args:
+            get_output_all_workers (bool, optional): If true, outputs from all workers
+                will be returned as a list. Otherwise only the first output will be extracted
+                and returned.
+        """
         prepare_output = denoising_output = postprocessing_output = None
         if self.prev_prepare_handlers:
             prepare_output = ray.get(self.prev_prepare_handlers)
@@ -544,6 +602,13 @@ class Engine:
         if self.prev_postprocessing_handlers:
             postprocessing_output = ray.get(self.prev_postprocessing_handlers)
             self.prev_postprocessing_handlers = None
+
+        if get_output_all_workers:
+            return prepare_output, denoising_output, postprocessing_output
+
+        prepare_output = prepare_output[0] if prepare_output else prepare_output
+        denoising_output = denoising_output[0] if denoising_output else denoising_output
+        postprocessing_output = postprocessing_output[0] if postprocessing_output else postprocessing_output
         return prepare_output, denoising_output, postprocessing_output
 
     
@@ -559,7 +624,7 @@ class Engine:
 
     def has_unfinished_requests(self) -> bool:
         """Returns True if there are unfinished requests."""
-        return self.scheduler.has_unfinished_requests()
+        return self.scheduler.has_unfinished_requests(is_nonblocking=self.engine_config.non_blocking_step)
 
     
     def _log_system_states(
@@ -577,4 +642,5 @@ class Engine:
         # ) 
 
         self.scheduler.log_status()
+        logger.info(scheduler_output.get_log_string())
         sys.stdout.flush()

@@ -40,8 +40,8 @@ def in_wsl() -> bool:
     # Reference: https://github.com/microsoft/WSL/issues/4071
     return "microsoft" in " ".join(uname()).lower()
 
-def random_uuid() -> str:
-    return str(uuid.uuid4().hex)
+def random_uuid() -> int:
+    return uuid.uuid4().int
 
 def get_dtype_size(dtype: torch.dtype) -> int:
     return torch.tensor([], dtype=dtype).element_size()

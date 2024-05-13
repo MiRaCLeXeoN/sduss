@@ -15,6 +15,12 @@ class FCFS_Single(Policy):
     that can be batched with it (A giant request will be split as many single
     requests at the entrypoint. They can be processed together).
 
+    FCFS features
+        Supports:
+            1. batch reqs of different timesteps
+        Don't supports:
+            2. mixed-precision shceduling
+
     Don't support mixed precision.
     """
     def _flatten_all_reqs(self) -> List['Request']:
@@ -26,12 +32,6 @@ class FCFS_Single(Policy):
     
     def schedule_requests(self, max_num: int) -> SchedulerOutput:
         """Schedule requests for next iteration.
-
-        FCFS features
-            Supports:
-                1. batch reqs of different timesteps
-            Don't supports:
-                2. mixed-precision shceduling
 
         Args:
             max_num (int): _description_

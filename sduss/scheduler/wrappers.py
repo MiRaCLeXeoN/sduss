@@ -90,8 +90,8 @@ class RequestStatus(enum.Enum):
     PREPARE = enum.auto()           # ready for prepare stage
     DENOISING = enum.auto()         # ready for denoising stage
     POSTPROCESSING = enum.auto()    # ready for postprocessing stage
-    # Swapped
-    SWAPPED = enum.auto()
+    # Empty
+    EMPTY = enum.auto()     # Use by the scheduler to indicate no requests to run
     # Finished
     FINISHED_STOPPED = enum.auto()
     FINISHED_ABORTED = enum.auto()
@@ -113,9 +113,6 @@ class RequestStatus(enum.Enum):
             return RequestStatus.POSTPROCESSING
         elif status == RequestStatus.POSTPROCESSING:
             return RequestStatus.FINISHED_STOPPED
-        elif status == RequestStatus.SWAPPED:
-            # We cannot decide here, leave for further processing
-            return None
         else:
             raise RuntimeError("We cannot decide next status.")
 
@@ -142,6 +139,8 @@ class Request:
         self.sampling_params = sampling_params
         if arrival_time is None:
             self.arrival_time = time.time()
+        else:
+            self.arrival_time = arrival_time
 
         self.status = RequestStatus.WAITING
         self.remain_steps = sampling_params.num_inference_steps
@@ -205,9 +204,11 @@ class SchedulerOutput:
         scheduled_requests: Dict[int, Dict[int, Request]]
             Requests to run in next iteration.
             resolution -> req_id -> req
-        stage: RequestStatus
+        status: RequestStatus
             The inference stage at which the selected requests are. All the
             selected requests must be in the same stage.
+        prepare_requests: Dict[int, Dict[int, Request]]
+            Overlapped prepare-stage requets. If status is prepare, this must be none.
     """
     
     def __init__(
@@ -232,6 +233,9 @@ class SchedulerOutput:
         mixed_precision = len(self.scheduled_requests) > 1
         if mixed_precision and self.status == RequestStatus.DENOISING:
             assert self.is_sliced is not None and self.patch_size is not None
+        # Check prepare_requests. It should not co-exist with RequestStatus.PREPARE
+        if self.status == RequestStatus.PREPARE:
+            assert self.prepare_requests is None
 
     
     def is_empty(self) -> bool:
@@ -239,7 +243,7 @@ class SchedulerOutput:
     
     
     def has_prepare_requests(self) -> bool:
-        return self.prepare_requests is not None
+        return self.prepare_requests
     
     
     def get_req_ids(self) -> List[int]:
@@ -264,6 +268,25 @@ class SchedulerOutput:
             for req in self.prepare_requests[res].values():
                 scheduler_reqs.append(req)
         return scheduler_reqs
+    
+    
+    def get_log_string(self) -> str:
+        ret = f"status: {self.status}\n"
+        if self.scheduled_requests:
+            ret += f"scheduled reqs: \n"
+            for res in self.scheduled_requests:
+                ret += f"{res=}  reqs: "
+                for req_id in self.scheduled_requests[res]:
+                    ret += "%d," % req_id
+                ret += "\n"
+        if self.prepare_requests:
+            ret += "overlapped prepare reqs: \n"
+            for res in self.scheduled_requests:
+                ret += f"{res=}  reqs: "
+                for req_id in self.prepare_requests[res]:
+                    ret += "%d," % req_id
+                ret += "\n"
+        return ret
 
 
 class ResolutionRequestQueue:
@@ -365,6 +388,10 @@ class ResolutionRequestQueue:
     
     def get_num_finished_reqs(self) -> int:
         return len(self.finished)
+
+    
+    def get_num_unfreed_reqs(self) -> int:
+        return len(self.reqs_mapping.keys())
     
     
     def get_finished_reqs(self) -> List[Request]:
@@ -376,6 +403,8 @@ class ResolutionRequestQueue:
     
 
     def free_all_finished_reqs(self) -> None:
+        for req_id in self.finished:
+            self.reqs_mapping.pop(req_id)
         self.finished.clear()
     
     
@@ -383,6 +412,7 @@ class ResolutionRequestQueue:
         if isinstance(reqs, Request):
             reqs = [reqs]
         for req in reqs:
+            self.reqs_mapping.pop(req.request_id)
             self.finished.pop(req.request_id)
     
     
@@ -412,7 +442,7 @@ class ResolutionRequestQueue:
             req.status = next_status
         
         # If requests are finished, decrease counting
-        if prev_status == RequestStatus.POSTPROCESSING:
+        if next_status == RequestStatus.FINISHED_STOPPED:
             num = len(reqs_dict)
             self._num_unfinished_reqs -= num
     
