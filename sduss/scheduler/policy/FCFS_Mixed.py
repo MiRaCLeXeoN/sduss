@@ -14,6 +14,11 @@ class FCFS_Mixed(Policy):
     """First Come First Serve.
     
     FCFS always selects the oldest requests.
+    FCFS features
+        Supports:
+            1. batch reqs of different timesteps
+        Doesn't support:
+            1.
 
     Support mixed precision.
     """
@@ -33,12 +38,6 @@ class FCFS_Mixed(Policy):
     
     def schedule_requests(self, max_num: int) -> SchedulerOutput:
         """Schedule requests for next iteration.
-
-        FCFS features
-            Supports:
-                1. batch reqs of different timesteps
-            Don't supports:
-                2. mixed-precision shceduling
 
         Args:
             max_num (int): _description_
@@ -89,7 +88,11 @@ class FCFS_Mixed(Policy):
             patch_size=patch_size,
         )
     
-    def scheduler_request_overlap_prepare(self, max_num: int) -> SchedulerOutput:
+    def scheduler_request_overlap_prepare(
+            self, 
+            max_num: int,
+            max_overlapped_prepare_reqs: int,
+        ) -> SchedulerOutput:
         """Schedule requests with overlapped preapre stage."""
         flattened_reqs = self._flatten_all_reqs()
 
@@ -131,8 +134,7 @@ class FCFS_Mixed(Policy):
         prepare_requests = None
         if target_status != RequestStatus.PREPARE:
             _prepare_reqs = self._get_all_reqs_by_status(RequestStatus.PREPARE)
-            prepare_requests = convert_list_to_res_dict(_prepare_reqs)
-
+            prepare_requests = convert_list_to_res_dict(_prepare_reqs, max_overlapped_prepare_reqs)
         
         return SchedulerOutput(
             scheduled_requests=res_reqs_dict,

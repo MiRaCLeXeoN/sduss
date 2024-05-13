@@ -49,8 +49,13 @@ class EulerDiscreteSchedulerStates(BaseSchedulerStates):
     
     def to_device(self, device) -> None:
         # self.sigmas should be on CPU
-        self.sigmas.to("cpu")
-        self.timesteps.to(device=device)
+        self.sigmas = self.sigmas.to("cpu")
+        self.timesteps = self.timesteps.to(device=device)
+    
+
+    def to_dtype(self, dtype) -> None:
+        # We should not alter any dtype
+        pass
 
 
 class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportScheduler):

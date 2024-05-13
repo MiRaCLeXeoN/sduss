@@ -27,7 +27,7 @@ class BaseSamplingParams():
         if self.latents is not None and self.latents.device != torch.device("cpu"):
             logger.info(f"Forcing input lantents from {self.latents.device} to cpu to make sure "
                         f"it can be properly passed to worker through Ray.")
-            self.latents.to("cpu")
+            self.latents = self.latents.to("cpu")
         
         # Embeds must be None
         assert self.prompt_embeds is None and self.negative_prompt_embeds is None, (
@@ -63,9 +63,15 @@ class BaseSamplingParams():
     
     
     def to_device(self, device) -> None:
-        self.latents.to(device=device)
-        self.prompt_embeds.to(device=device)
-        self.negative_prompt_embeds.to(device=device)
+        self.latents = self.latents.to(device=device)
+        self.prompt_embeds = self.prompt_embeds.to(device=device)
+        self.negative_prompt_embeds = self.negative_prompt_embeds.to(device=device)
+    
+    
+    def to_dtype(self, dtype: torch.dtype) -> None:
+        self.latents = self.latents.to(dtype=dtype)
+        self.prompt_embeds = self.prompt_embeds.to(dtype=dtype)
+        self.negative_prompt_embeds = self.negative_prompt_embeds.to(dtype=dtype)
             
 
     def _check_volatile_params(self):

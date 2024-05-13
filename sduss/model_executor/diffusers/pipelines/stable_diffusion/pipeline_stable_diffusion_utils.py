@@ -73,6 +73,10 @@ class StableDiffusionPipelinePrepareOutput(BasePipelinePrepareOutput):
 
     def to_device(self, device) -> None:
         self.device = device
+    
+    
+    def to_dtype(self, dtype) -> None:
+        pass
 
 
 class StableDiffusionPipelineStepInput(BasePipelineStepInput):
@@ -243,3 +247,7 @@ class StableDiffusionPipelineSamplingParams(BaseSamplingParams):
     
     def to_device(self, device) -> None:
         return super().to_device(device)
+    
+    
+    def to_dtype(self, dtype) -> None:
+        return super().to_dtype(dtype)

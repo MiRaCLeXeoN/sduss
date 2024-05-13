@@ -65,7 +65,11 @@ class PNDMSchedulerStates(BaseSchedulerStates):
         # cur_sample
         # num_inference_steps
         # prk_timesteps: np.ndarray
-        self.timesteps.to(device=device)
+        self.timesteps = self.timesteps.to(device=device)
+    
+    
+    def to_dtype(self, dtype) -> None:
+        pass
 
 
 class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):

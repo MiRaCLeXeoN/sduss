@@ -244,7 +244,7 @@ class SchedulerOutput:
     
     
     def has_prepare_requests(self) -> bool:
-        return self.prepare_requests is not None
+        return self.prepare_requests
     
     
     def get_req_ids(self) -> List[int]:
@@ -269,6 +269,23 @@ class SchedulerOutput:
             for req in self.prepare_requests[res].values():
                 scheduler_reqs.append(req)
         return scheduler_reqs
+    
+    
+    def get_log_string(self) -> str:
+        ret = f"scheduled reqs: {self.status}\n"
+        for res in self.scheduled_requests:
+            ret += f"{res=}  reqs: "
+            for req_id in self.scheduled_requests[res]:
+                ret += "%d," % req_id
+            ret += "\n"
+        if self.prepare_requests:
+            ret += "overlapped prepare reqs: \n"
+            for res in self.scheduled_requests:
+                ret += f"{res=}  reqs: "
+                for req_id in self.prepare_requests[res]:
+                    ret += "%d," % req_id
+                ret += "\n"
+        return ret
 
 
 class ResolutionRequestQueue:

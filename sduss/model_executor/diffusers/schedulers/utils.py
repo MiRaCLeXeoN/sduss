@@ -24,6 +24,10 @@ class BaseSchedulerStates:
         raise NotImplementedError
 
 
+    def to_dtype(self, dtype) -> None:
+        raise NotImplementedError
+
+
 class BatchSupportScheduler:
 
     def batch_set_timesteps(self):

@@ -106,7 +106,7 @@ def initialize_cluster(
             bundles += [{"CPU": parallel_config.num_cpus_extra_worker}] * (parallel_config.num_workers 
                                                                            - parallel_config.world_size)
 
-        current_placement_group = ray.util.placement_group()
+        current_placement_group = ray.util.placement_group(bundles)
         
         # We should wait until PG is ready -- this will block until all 
         # requested resources are available, and will timeout if 

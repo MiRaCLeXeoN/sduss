@@ -79,7 +79,7 @@ def get_pipeline_cls(pipeline_config: PipelineConfig):
     return pipeline_cls
 
 
-def get_pipeline(pipeline_config: PipelineConfig) -> Any:
+def get_pipeline(pipeline_config: PipelineConfig, is_prepare_worker: bool = False) -> Any:
     pipeline_pth = pipeline_config.pipeline
     if not os.path.isdir(pipeline_pth):
         raise RuntimeError("Currently we only support local pipelines (you should "
@@ -101,10 +101,19 @@ def get_pipeline(pipeline_config: PipelineConfig) -> Any:
         global PIPELINE_CLS
         PIPELINE_CLS = pipeline_cls
 
-        sub_modules = load_modules(pipeline_pth, json_file, pipeline_config.kwargs)
-
-        pipeline = pipeline_cls.instantiate_pipeline(pretrained_model_name_or_path=pipeline_pth, 
-                                                     sub_modules=sub_modules,
-                                                     **pipeline_config.kwargs)
+        if is_prepare_worker:
+            # We load the original huggingface pipeline, since prepare workers use only
+            # the original features.
+            # Since CPU device doesn't support float 16, we need to load float32    
+            pipeline_config.kwargs["torch_dtype"] = torch.float32
+            sub_modules = load_modules(pipeline_pth, json_file, pipeline_config.kwargs)
+            pipeline = pipeline_cls.from_pretrained(pretrained_model_name_or_path=pipeline_pth, 
+                                                     **sub_modules,
+                                                     torch_dtype=torch.float32)
+        else:
+            sub_modules = load_modules(pipeline_pth, json_file, pipeline_config.kwargs)
+            pipeline = pipeline_cls.instantiate_pipeline(pretrained_model_name_or_path=pipeline_pth, 
+                                                        sub_modules=sub_modules,
+                                                        **pipeline_config.kwargs)
     
     return pipeline

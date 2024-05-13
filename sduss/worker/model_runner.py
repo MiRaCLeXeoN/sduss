@@ -57,7 +57,7 @@ class ModelRunner:
 
 
     def load_model(self) -> None:
-        self.pipeline: BasePipeline = get_pipeline(self.pipeline_config)
+        self.pipeline: BasePipeline = get_pipeline(self.pipeline_config, self.is_prepare_worker)
         if self.scheduler_config.use_mixed_precision and not self.pipeline.SUPPORT_MIXED_PRECISION:
             raise ValueError("This pipeline doesn't support mixed precision input!")
         
@@ -68,7 +68,7 @@ class ModelRunner:
             logger.debug(f"pipeline to cpu")
             self.pipeline.to("cpu")
         else:
-            logger.debug(f"pipeline to {torch.cuda.current_device()}")
+            logger.debug(f"pipeline to cuda:{torch.cuda.current_device()}")
             self.pipeline.to(torch.cuda.current_device())
         
 
