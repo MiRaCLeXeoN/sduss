@@ -313,7 +313,7 @@ class Engine:
                 use_mixed_precision=self.scheduler_config.use_mixed_precision)
         elif scheduler_output.status == RequestStatus.DENOISING:
             # For denoising stage inference
-            self._run_workers_blocking(
+            output: WorkerOutput = self._run_workers_blocking(
                 "exec_denoising_stage", 
                 self.workers,
                 req_ids=req_ids,

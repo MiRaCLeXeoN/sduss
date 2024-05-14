@@ -9,6 +9,7 @@ dist
 
 # test files
 /local_tests
+/exp
 
 # output files
 /outputs

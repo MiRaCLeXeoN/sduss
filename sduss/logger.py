@@ -46,6 +46,7 @@ def init_logger(
         name: str,
         no_stdout: bool = False,
         handlers: List = None,
+        to_file_name: str = None,
     ):
     global _default_handler
     if _default_handler is None:
@@ -57,6 +58,11 @@ def init_logger(
     if handlers is not None:
         for handler in handlers:
             logger.addHandler(handler)
+    if to_file_name:
+        handler = logging.FileHandler(to_file_name, mode='w')
+        handler.setLevel(_DEFAULT_HANDLER_LEVEL)
+        handler.setFormatter(NewLineFormatter(fmt=_FORMAT, datefmt=_DATE_FORMAT))
+        logger.addHandler(handler)
 
     logger.propagate = False
     return logger

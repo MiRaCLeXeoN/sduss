@@ -74,7 +74,13 @@ class WorkerOutput:
         worker_reqs: WorkerRequestDictType = None,
         status: RequestStatus = None,
         overlap_prepare: bool = False,
+        start_time : float = None,
+        end_time : float = None,
     ) -> None:
+        # Performance recording
+        self.start_time = start_time
+        self.end_time = end_time
+
         if status == RequestStatus.POSTPROCESSING:
             reqs_dict: Dict[int, BaseOutput] = {}
             for res in worker_reqs:
@@ -95,5 +101,5 @@ class WorkerOutput:
             # If prepare stage is overlapped, we should return all worker_reqs directly
             if overlap_prepare:
                 self.worker_reqs = worker_reqs
-        else:
-            raise RuntimeError
+        elif status == RequestStatus.DENOISING:
+            pass

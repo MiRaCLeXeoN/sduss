@@ -1,4 +1,6 @@
 import os
+import time
+
 from typing import Optional, List, Dict, Union, TYPE_CHECKING
 
 import torch
@@ -148,11 +150,18 @@ class Worker:
                 worker_reqs[res].append(wr)
         
         # 2. Execute
+        start_time = time.time()
         self.model_runner.exec_prepare_stage(worker_reqs)
+        end_time = time.time()
 
         # 3. Create return wrapper
-        return WorkerOutput(worker_reqs=worker_reqs, status=RequestStatus.PREPARE,
-                            overlap_prepare=self.scheduler_config.overlap_prepare)
+        return WorkerOutput(
+            worker_reqs=worker_reqs, 
+            status=RequestStatus.PREPARE,
+            overlap_prepare=self.scheduler_config.overlap_prepare,
+            start_time=start_time,
+            end_time=end_time,
+        )
         
     
     def exec_denoising_stage(
@@ -186,10 +195,14 @@ class Worker:
                 worker_reqs[res].append(wq)
 
         # 2. Execute
+        start_time = time.time()
         self.model_runner.exec_denoising_stage(worker_reqs, is_sliced, patch_size)
+        end_time = time.time()
 
-        # 3. Update reqs states
-        return
+        return WorkerOutput(
+            start_time=start_time,
+            end_time=end_time,
+        )
     
     
     def exec_post_stage(
@@ -212,10 +225,17 @@ class Worker:
             else:
                 worker_reqs_dict[res].append(wq)
 
+        start_time = time.time()
         self.model_runner.exec_post_stage(worker_reqs_dict)
+        end_time = time.time()
 
         # Create output
-        output = WorkerOutput(worker_reqs=worker_reqs_dict, status=RequestStatus.POSTPROCESSING)
+        output = WorkerOutput(
+            worker_reqs=worker_reqs_dict, 
+            status=RequestStatus.POSTPROCESSING,
+            start_time=start_time,
+            end_time=end_time,
+        )
 
         # Remove finished requests
         self.remove_requests_by_id(req_ids)
