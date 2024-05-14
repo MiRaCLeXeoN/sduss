@@ -16,11 +16,10 @@ class FCFS_Mixed(Policy):
     FCFS always selects the oldest requests.
     FCFS features
         Supports:
-            1. batch reqs of different timesteps
+            1. Dynamic Batching
+            2. Support mixed precision
         Doesn't support:
             1.
-
-    Support mixed precision.
     """
     def _flatten_all_reqs(self) -> List['Request']:
         reqs = []
@@ -46,6 +45,13 @@ class FCFS_Mixed(Policy):
             List[Request]: _description_
         """
         flattened_reqs = self._flatten_all_reqs()
+
+        if len(flattened_reqs) == 0:
+            # No reqs to schedule
+            return SchedulerOutput(
+                scheduled_requests={},
+                status=RequestStatus.EMPTY,
+            )
 
         # Find the oldest request
         now = time.time()
@@ -100,7 +106,10 @@ class FCFS_Mixed(Policy):
         if len(flattened_reqs) == 0:
             # This condition will appear at the last round of a request
             # when using non-blocking paradigm.
-            return SchedulerOutput(scheduled_requests={}, status=RequestStatus.EMPTY)
+            return SchedulerOutput(
+                scheduled_requests={}, 
+                status=RequestStatus.EMPTY,
+            )
 
         # Find the oldest request
         now = time.time()

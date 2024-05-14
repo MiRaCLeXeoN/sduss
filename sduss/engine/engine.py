@@ -22,7 +22,6 @@ from sduss.worker import WorkerOutput
 from sduss.logger import init_logger
 from sduss.entrypoints.outputs import RequestOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
-from sduss.utils import Counter
 from sduss.config import (PipelineConfig, ParallelConfig, SchedulerConfig, EngineConfig)
 from sduss.engine.arg_utils import EngineArgs
 from sduss.worker.ray_utils import RayWorker, initialize_cluster
@@ -31,6 +30,7 @@ from sduss.engine.metrics import record_metrics
 
 if TYPE_CHECKING:
     from ray.util.placement_group import PlacementGroup
+    from sduss.model_executor.diffusers import BasePipeline
 
 logger = init_logger(__name__)
 
@@ -67,8 +67,6 @@ class Engine:
             self._init_workers_ray(placement_group)
         else:
             self._init_workers(distributed_init_method)
-        
-        self.scheduler = Scheduler(scheduler_config)
             
         # Logging.
         self.last_logging_time = 0.0
@@ -81,13 +79,27 @@ class Engine:
         self.prev_postprocessing_handlers = None
         self.prev_scheduler_output = None
 
+        self.pipeline_cls = None
+        self.sampling_param_cls = None
+        self._set_pipeline_cls()
+        
+        support_resolutions = self.pipeline_cls.SUPPORT_RESOLUTIONS
+        self.scheduler = Scheduler(scheduler_config, engine_config, support_resolutions)
+
+        self.engine_ready = True
         # Flust outputs so that we can see logs ASAP.
         if engine_config.log_status:
             logger.info("Engine initialization done. System ready.")
-            self.engine_ready = True
+
     
     def engine_is_ready(self) -> bool:
         return self.engine_ready
+    
+    
+    def _set_pipeline_cls(self) -> None:
+        from sduss.model_executor.model_loader import get_pipeline_cls
+        self.pipeline_cls: BasePipeline = get_pipeline_cls(self.pipeline_config)
+        self.sampling_param_cls = self.pipeline_cls.get_sampling_params_cls()
 
     
     @classmethod
@@ -317,6 +329,7 @@ class Engine:
                 use_mixed_precision=self.scheduler_config.use_mixed_precision,
             )
         else:
+            # We don't expect EMPTY to be in blocking method
             raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
         
         output = self._process_output(scheduler_output=scheduler_output,
@@ -452,6 +465,10 @@ class Engine:
         # from freeing them and only free those examined by scheduler and returned in step 1.
         self.scheduler.free_finished_requests(finished_reqs)
 
+        # 3. Abort reqs
+        if scheduler_output.abort_req_ids:
+            self.abort_requests(scheduler_output.abort_req_ids)
+
         # Update
         self.prev_scheduler_output = scheduler_output
 
@@ -471,11 +488,15 @@ class Engine:
         """Update requests status and prepare return result if available."""
         
         # Update the scheduled sequence groups with the model outputs
-        self.scheduler.update_reqs_status(scheduler_outputs=scheduler_output,
+        self.scheduler.update_reqs_status(scheduler_output=scheduler_output,
                                           output=output,
                                           req_ids=req_ids)
         # collect finished reqs
         finished_reqs = self.scheduler.get_finished_requests()
+
+        # abort reqs
+        if scheduler_output.abort_req_ids:
+            self.abort_requests(scheduler_output.abort_req_ids)
 
         # Create output wrappers
         ret = []

@@ -3,7 +3,7 @@ import time
 from typing import List, TYPE_CHECKING
 
 from .policy import Policy
-from ..wrappers import SchedulerOutput
+from ..wrappers import SchedulerOutput, RequestStatus
 
 if TYPE_CHECKING:
     from sduss.scheduler import Request
@@ -41,6 +41,12 @@ class FCFS_Single(Policy):
         """
         flattened_reqs = self._flatten_all_reqs()
 
+        if len(flattened_reqs) == 0:
+            return SchedulerOutput(
+                scheduled_requests={},
+                status=RequestStatus.WAITING,
+            )
+
         # Find the oldest request
         now = time.monotonic()
         flattened_reqs.sort(key = lambda req: now - req.arrival_time, reverse=True)
@@ -67,8 +73,6 @@ class FCFS_Single(Policy):
         ret = {}
         ret[target_res] = resolution_req_dict
     
-        # FIXME: Arange prepare stage
-
         return SchedulerOutput(
             scheduled_requests=ret,
             status=target_status,

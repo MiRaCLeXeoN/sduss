@@ -3,6 +3,7 @@ from dataclasses import fields
 
 class BasePipeline:
     SUPPORT_MIXED_PRECISION: bool = False
+    SUPPORT_RESOLUTIONS = None
     
     @classmethod
     def instantiate_pipeline(cls, **kwargs) -> "BasePipeline":

@@ -26,7 +26,7 @@ def convert_list_to_res_dict(
         num: Optional[int] = None,
     ) -> 'SchedulerOutputReqsType':
     if num is None:
-        # TODO: Use a parameter to represent INIFINITY
+        # TODO(MX): Use a parameter to represent INIFINITY
         num = 1e8
 
     res_dict: 'SchedulerOutputReqsType' = {}

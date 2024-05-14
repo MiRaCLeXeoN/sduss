@@ -20,6 +20,7 @@ from .pipeline_stable_diffusion_esymred_utils import (
 
 class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
     SUPPORT_MIXED_PRECISION = True
+    SUPPORT_RESOLUTIONS = [256, 512, 768]
 
     @classmethod
     def instantiate_pipeline(cls, **kwargs):

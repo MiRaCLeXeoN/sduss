@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BasePipeline):
     SUPPORT_MIXED_PRECISION = True
+    SUPPORT_RESOLUTIONS = [512, 768, 1024]
 
     @classmethod
     def instantiate_pipeline(cls, **kwargs):

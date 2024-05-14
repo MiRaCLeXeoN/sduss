@@ -4,7 +4,7 @@ import time
 from typing import List, Optional, Tuple, Dict, Union, Iterable
 from typing import TYPE_CHECKING
 
-from sduss.config import SchedulerConfig
+from sduss.config import SchedulerConfig, EngineConfig
 from sduss.logger import init_logger
 
 from .policy import PolicyFactory
@@ -26,8 +26,12 @@ class Scheduler:
     def __init__(
         self,
         scheduler_config: SchedulerConfig,
+        engine_config: EngineConfig,
+        support_resolutions: List[int],
     ) -> None:
         self.scheduler_config = scheduler_config
+        self.engine_config = engine_config
+        self.support_resolutions = support_resolutions
 
         # Unpack scheduler config's argumnents
         self.max_batchsize = scheduler_config.max_batchsize
@@ -46,7 +50,10 @@ class Scheduler:
         # Scheduler policy
         self.policy = PolicyFactory.get_policy(policy_name=self.scheduler_config.policy,
                                                request_pool=self.request_pool,
-                                               use_mixed_precision=self.use_mixed_precision)
+                                               use_mixed_precision=self.use_mixed_precision,
+                                               non_blocking_step=self.engine_config.non_blocking_step,
+                                               overlap_prepare=self.scheduler_config.overlap_prepare,
+                                               support_resolutions=self.support_resolutions)
         
         # Logs
         self.cycle_counter = 0
@@ -143,19 +150,24 @@ class Scheduler:
     
     def update_reqs_status(
         self,
-        scheduler_outputs: SchedulerOutput,
+        scheduler_output: SchedulerOutput,
         output: "WorkerOutput",
         req_ids: List[int],
     ):
         """Update requests after one iteration."""
-        # Move reqs to next status
-        sche_status = scheduler_outputs.status
-        sche_reqs: "SchedulerOutputReqsType" = scheduler_outputs.scheduled_requests
+        # 0 If forced to update waiting reqs, update them
+        if scheduler_output.update_all_waiting_reqs:
+            self._update_all_waiting_reqs()
+
+        sche_status = scheduler_output.status
+        sche_reqs: "SchedulerOutputReqsType" = scheduler_output.scheduled_requests
 
         next_status = self._get_next_status(sche_status)
         if sche_status == RequestStatus.WAITING:
+            if scheduler_output.update_all_waiting_reqs:
+                # Don't update twice
+                return 
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
-            return 
         elif sche_status == RequestStatus.PREPARE:
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
             # The real remaining step may not be initial parameter
@@ -182,8 +194,8 @@ class Scheduler:
             return 
         else:
             raise RuntimeError(f"Unexpected status {sche_status} to update.")
-    
-    
+        
+
     def update_reqs_status_nonblocking(
         self,
         scheduler_output: SchedulerOutput,
@@ -206,10 +218,12 @@ class Scheduler:
         Returns:
             List[Request]: Requests that can be freed.
         """
-        # 0. If prepare_output available, use it to update requests
-        # 0.1 Extract output. By default, output is returned as a list
+        # 0.1 If prepare_output available, use it to update requests
         if prepare_output is not None:
             self._update_remain_steps(reqs_steps_dict=prepare_output.reqs_steps_dict)
+        # 0.2 If forced to update waiting reqs, update them
+        if scheduler_output.update_all_waiting_reqs:
+            self._update_all_waiting_reqs()
 
         finished_reqs: List[Request] = []
         # 1. Process output from previous round.
@@ -243,7 +257,9 @@ class Scheduler:
 
         next_status = self._get_next_status(sche_status)
         if sche_status == RequestStatus.WAITING:
-            self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
+            if not scheduler_output.update_all_waiting_reqs:
+                # Don't update twice
+                self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
         elif sche_status == RequestStatus.PREPARE:
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
         elif sche_status == RequestStatus.DENOISING:
@@ -302,6 +318,12 @@ class Scheduler:
             self.request_pool[res].update_reqs_status(reqs_dict=reqs_dict, 
                                                       prev_status=prev_status, 
                                                       next_status=next_status)
+
+                                                      
+    def _update_all_waiting_reqs(self) -> None:
+        """This method whill update all waiting reqs to prepare status."""
+        for res_queue in self.request_pool.values():
+            res_queue.update_all_waiting_reqs_to_prepare()
 
 
     def _decrease_one_step(self, reqs: "SchedulerOutputReqsType"

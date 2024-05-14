@@ -1,6 +1,7 @@
 import enum
 import uuid
 import socket
+import os
 
 from platform import uname
 
@@ -50,3 +51,10 @@ def get_open_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return s.getsockname()[1]
+
+
+def get_os_env(name: str, check_none: bool = False):
+    var = os.getenv(name)
+    if check_none:
+        assert var is not None, f"Trying to retrieve {name} from environment variables but got None."
+    return var

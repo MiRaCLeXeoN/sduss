@@ -5,93 +5,24 @@ from typing import Union, Optional, List, TYPE_CHECKING, Dict
 
 from sduss.logger import init_logger
 
+from .esymred_utils import (DISCARD_SLACK, DENOISING_DDL, POSTPROCESSING_DDL, STANDALONE,
+                            Hyper_Parameter)
+
 if TYPE_CHECKING:
     from sduss.model_executor.sampling_params import BaseSamplingParams
 
 logger = init_logger(__name__)
-DISCARD_SLACK = 100
-DENOISING_DDL = {
-    "sd1.5": {
-        "256": (3.1356 + 0.0394) * 5 * 0.95,
-        "512": (3.1788 + 0.06974) * 5 * 0.95,
-        "768": (3.87 + 0.1363) * 5 * 0.95,
-    },
-    "sdxl": {
-        "512": (8.587 + 0.13413) * 5 * 0.95,
-        "768": (8.6663 + 0.24094) * 5 * 0.95,
-        "1024": (8.7663 + 0.434) * 5 * 0.95,
-    }
-}
 
-POSTPROCESSING_DDL = {
-    "sd1.5": {
-        "256": (3.1356 + 0.0394) * 5,
-        "512": (3.1788 + 0.06974) * 5,
-        "768": (3.87 + 0.1363) * 5,
-    },
-    "sdxl": {
-        "512": (8.587 + 0.13413) * 5,
-        "768": (8.6663 + 0.24094) * 5,
-        "1024": (8.7663 + 0.434) * 5,
-    }
-}
-
-STANDALONE = {
-    "sd1.5": {
-        "denoising": {
-            "256": 3.1356,
-            "512": 3.1788,
-            "768": 3.87,
-        },
-        "postprocessing": {
-            "256": 0.0394,
-            "512": 0.06974,
-            "768": 0.1363,
-        }
-    },
-    "sdxl": {
-        "denoising": {
-            "512": 8.587,
-            "768": 8.6663,
-            "1024": 8.7663,
-        },
-        "postprocessing": {
-            "512": 0.13413,
-            "768": 0.24094,
-            "1024": 0.434,
-        }
-    }
-}
-
-Hyper_Parameter = {
-    "sd1.5": {
-        "postprocessing": {
-            "256": 4,
-            "512": 2,
-            "768": 1,
-        }
-    },
-    "sdxl": {
-        "postprocessing": {
-            "512": 4,
-            "768": 2,
-            "1024": 1,
-        }
-    },
-    "get_best_tp_th": 1,
-    "active_queue_timeout_th": 0.1,
-}
-
-class RequestStatus(enum.Enum):
+class RequestStatus(enum.IntEnum):
     """Status of a sequence."""
+    # Empty
+    EMPTY = enum.auto()             # Use by the scheduler to indicate no requests to run
     # Waiting
-    WAITING = enum.auto()  # newly arrived reqs
+    WAITING = enum.auto()           # newly arrived reqs
     # Running
     PREPARE = enum.auto()           # ready for prepare stage
     DENOISING = enum.auto()         # ready for denoising stage
     POSTPROCESSING = enum.auto()    # ready for postprocessing stage
-    # Empty
-    EMPTY = enum.auto()     # Use by the scheduler to indicate no requests to run
     # Finished
     FINISHED_STOPPED = enum.auto()
     FINISHED_ABORTED = enum.auto()
@@ -148,44 +79,62 @@ class Request:
         # Set afterwards
         self.output = None
         self.finish_time = None
+
+        # used by esymred
         self.start_denoising = False
         self.is_discard = False
+        # Predict time indicates the time estimated to run until complete all
+        # Unet iterations, with respect to the current workload.
+        self.predict_time = None
 
 
     def is_finished(self):
         return RequestStatus.is_finished(self.status)
 
+
     def update_predict_time(self, predict_time:float):
         self.predict_time = predict_time
 
-    def get_slack(self, model_name:str, is_running:bool, current_running_time_cost:float):
+
+    def set_slack(
+        self, 
+        model_name : str, 
+        is_running : bool, 
+        current_running_time_cost : float,
+    ):
+        # If discarded, return directly
         if self.is_discard:
             self.slack = DISCARD_SLACK
             return
+
         resolution = self.sampling_params.resolution
-        runtime = STANDALONE[model_name][str(resolution)]
         status = self.status
-        if status == RequestStatus.DENOISING:
+        # Get ddl
+        if status == RequestStatus.WAITING or status == RequestStatus.PREPARE:
+            self.slack = 0
+            return 
+        elif status == RequestStatus.DENOISING:
             stage = "denoising"
             ddl = DENOISING_DDL[model_name][str(resolution)]
         elif status == RequestStatus.POSTPROCESSING:
             stage = "postprocessing"
             ddl = POSTPROCESSING_DDL[model_name][str(resolution)]
-        runtime = STANDALONE[model_name][stage][str(resolution)]
-        if status == RequestStatus.PREPARE:
-            # prepare阶段直接开始在CPU执行
-            self.slack = 0
-        else:
-            if stage == "postprocessing":
-                self.slack = (ddl - runtime - current_running_time_cost - (time.time() - self.arrival_time)) / (runtime * Hyper_Parameter[model_name][str(resolution)])
-            elif stage == "denoising":
-                if is_running:
-                    # 计算中的denoising阶段
-                    self.slack = (ddl - self.predict_time - current_running_time_cost - (time.time() - self.arrival_time)) / runtime
-                else:
-                    # 等待中的denoising阶段
-                    self.slack = (ddl - runtime - current_running_time_cost - (time.time() - self.arrival_time)) / runtime
-            self.remain_time = ddl - current_running_time_cost - (time.time() - self.arrival_time)
+        
+        unit_unet_time = STANDALONE[model_name][stage][str(resolution)]
+        if stage == "postprocessing":
+            self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
+                            ) / (unit_unet_time * Hyper_Parameter[model_name][stage][str(resolution)])
+        elif stage == "denoising":
+            if is_running:
+                # Suppose we have started at least one round
+                self.slack = (ddl - self.predict_time - current_running_time_cost - (time.time() - self.arrival_time)
+                                ) / unit_unet_time
+            else:
+                # Denoising not started yet
+                self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
+                                ) / unit_unet_time
+        self.remain_time = ddl - current_running_time_cost - (time.time() - self.arrival_time)
+
     
     def is_compatible_with(self, req: "Request") -> bool:
         return (self.status == req.status and
@@ -216,11 +165,18 @@ class SchedulerOutput:
         scheduled_requests: SchedulerOutputReqsType = None,
         status: RequestStatus = None,
         prepare_requests: SchedulerOutputReqsType = None,
+        abort_req_ids: List[int] = None,
         **kwargs,
     ) -> None:
         self.scheduled_requests: SchedulerOutputReqsType = scheduled_requests  
         self.prepare_requests: SchedulerOutputReqsType = prepare_requests
+        self.abort_req_ids: List[int] = abort_req_ids
         self.status = status
+
+        # This is a bit hacky, since we jump over the normal procedure
+        # of updating from WAITING to PREPARE
+        # This is an option to fast forward WAITING reqs
+        self.update_all_waiting_reqs: bool = kwargs.pop("update_all_waiting_reqs", False)
 
         self.is_sliced = kwargs.pop("is_sliced", None)
         self.patch_size = kwargs.pop("patch_size", None)
@@ -349,7 +305,8 @@ class ResolutionRequestQueue:
             raise ValueError(f"Unexpected name {name}.")
     
     
-    def get_queue_by_status(self, status: RequestStatus) -> Dict[int, Request]:
+    def _get_queue_by_status(self, status: RequestStatus) -> Dict[int, Request]:
+        """This method should only be invoked by methods of this class."""
         if status == RequestStatus.WAITING:
             return self.waiting
         elif status == RequestStatus.PREPARE:
@@ -362,10 +319,31 @@ class ResolutionRequestQueue:
             return self.finished
         else:
             raise ValueError(f"Unexpected status {status}.")
+
+
+    def get_queue_by_status(self, status: RequestStatus) -> Dict[int, Request]:
+        """This method will return a shallow copy of the queue dict to
+        prevent any possible outside interruption."""
+        if status == RequestStatus.WAITING:
+            return self.waiting.copy()
+        elif status == RequestStatus.PREPARE:
+            return self.prepare.copy()
+        elif status == RequestStatus.DENOISING:
+            return self.denoising.copy()
+        elif status == RequestStatus.POSTPROCESSING:
+            return self.postprocessing.copy()
+        elif status == RequestStatus.FINISHED_STOPPED:
+            return self.finished.copy()
+        else:
+            raise ValueError(f"Unexpected status {status}.")
     
     
     def get_all_reqs_by_status(self, status: RequestStatus) -> List[Request]:
         return list(self.queues[status].values())
+    
+    
+    def get_num_reqs_by_staus(self, status: RequestStatus) -> int:
+        return len(self.queues[status])
 
     
     def get_num_unfinished_reqs(self) -> int:
@@ -433,8 +411,8 @@ class ResolutionRequestQueue:
             prev_status (RequestStatus): Previous status
             next_status (RequestStatus): Next status
         """
-        prev_que = self.get_queue_by_status(prev_status)
-        next_que = self.get_queue_by_status(next_status)
+        prev_que = self._get_queue_by_status(prev_status)
+        next_que = self._get_queue_by_status(next_status)
 
         for req_id in reqs_dict:
             req = prev_que.pop(req_id)
@@ -445,6 +423,13 @@ class ResolutionRequestQueue:
         if next_status == RequestStatus.FINISHED_STOPPED:
             num = len(reqs_dict)
             self._num_unfinished_reqs -= num
+    
+    
+    def update_all_waiting_reqs_to_prepare(self) -> None:
+        """Update all waiting reqs to prepare status."""
+        for req_id in self.waiting:
+            self.prepare[req_id] = self.waiting[req_id]
+        self.waiting.clear()
     
     
     def log_status(self, return_str: bool = False):
