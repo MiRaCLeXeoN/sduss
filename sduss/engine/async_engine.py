@@ -7,6 +7,7 @@ import ray
 from typing import (List, Any, Optional, TYPE_CHECKING, Type, Tuple, Dict,
                     AsyncGenerator, Set, Iterable, Union)
 from functools import partial
+from datetime import datetime
 
 from sduss.logger import init_logger
 from sduss.config import (PipelineConfig, ParallelConfig, 
@@ -712,3 +713,7 @@ class AsyncEngine:
             await self.engine.abort_requests.remote(request_ids)
         else:
             self.engine.abort_requests(request_ids)
+
+    
+    async def clear(self):
+        ray.get(self.engine.clear.remote())

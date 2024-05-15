@@ -32,6 +32,12 @@ class BaseSamplingParams():
         # Embeds must be None
         assert self.prompt_embeds is None and self.negative_prompt_embeds is None, (
             "Currently we don't support customized embeds.")
+
+        # Convert type
+        if isinstance(self.resolution, str):
+            self.resolution = int(self.resolution)
+        if isinstance(self.num_inference_steps, str):
+            self.num_inference_steps = int(self.num_inference_steps)
     
     
     def is_compatible_with(self, sampling_params: "BaseSamplingParams") -> bool:

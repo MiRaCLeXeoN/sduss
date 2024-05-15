@@ -77,3 +77,12 @@ class FCFS_Single(Policy):
             scheduled_requests=ret,
             status=target_status,
         )
+
+
+    def scheduler_request_overlap_prepare(
+            self, 
+            max_num: int,
+            max_overlapped_prepare_reqs: int,
+        ) -> SchedulerOutput:
+        """Schedule requests with overlapped preapre stage."""
+        raise NotImplementedError

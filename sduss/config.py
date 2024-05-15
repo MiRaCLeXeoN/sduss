@@ -50,8 +50,8 @@ class PipelineConfig:
         self,
         scheduler_config: "SchedulerConfig",
     ):
-        if scheduler_config.use_mixed_precision != self.use_esymred:
-            raise ValueError("When using esymred pipelines, scheduler is forced to use mixed_precision.")
+        if scheduler_config.use_mixed_precision:
+            assert self.use_esymred, "When using mixed_precision, scheduler is forced to esymred pipelines."
         
         
 

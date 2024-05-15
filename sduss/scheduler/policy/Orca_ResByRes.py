@@ -82,3 +82,12 @@ class OrcaResByRes(Policy):
             scheduled_requests=convert_list_to_res_dict(scheduled_reqs),
             status=status,
         )
+    
+    
+    def scheduler_request_overlap_prepare(
+            self, 
+            max_num: int,
+            max_overlapped_prepare_reqs: int,
+        ) -> SchedulerOutput:
+        """Schedule requests with overlapped preapre stage."""
+        raise NotImplementedError

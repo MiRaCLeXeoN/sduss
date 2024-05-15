@@ -3,6 +3,7 @@ import time
 
 from typing import List, Optional, Tuple, Dict, Union, Iterable
 from typing import TYPE_CHECKING
+from datetime import datetime
 
 from sduss.config import SchedulerConfig, EngineConfig
 from sduss.logger import init_logger
@@ -171,7 +172,7 @@ class Scheduler:
         elif sche_status == RequestStatus.PREPARE:
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
             # The real remaining step may not be initial parameter
-            self._update_remain_steps(reqs=sche_reqs, reqs_steps_dict=output.reqs_steps_dict)
+            self._update_remain_steps(reqs_steps_dict=output.reqs_steps_dict)
             return 
         elif sche_status == RequestStatus.DENOISING:
             # More steps done

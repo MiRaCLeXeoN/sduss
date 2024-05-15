@@ -8,6 +8,7 @@ import os
 import time
 import datetime
 import sys
+import logging
 
 from typing import Optional, Union, List, Any, Tuple, Dict, TYPE_CHECKING, Iterable
 from functools import partial
@@ -27,6 +28,7 @@ from sduss.engine.arg_utils import EngineArgs
 from sduss.worker.ray_utils import RayWorker, initialize_cluster
 from sduss.engine.metrics import record_metrics
 
+from .utils import SmUtilMonitor
 
 if TYPE_CHECKING:
     from ray.util.placement_group import PlacementGroup
@@ -83,13 +85,19 @@ class Engine:
         self.sampling_param_cls = None
         self._set_pipeline_cls()
         
-        support_resolutions = self.pipeline_cls.SUPPORT_RESOLUTIONS
-        self.scheduler = Scheduler(scheduler_config, engine_config, support_resolutions)
+        self.support_resolutions = self.pipeline_cls.SUPPORT_RESOLUTIONS
+        self.scheduler = Scheduler(scheduler_config, engine_config, self.support_resolutions)
 
+        self._step_counter = 0
         self.engine_ready = True
         # Flust outputs so that we can see logs ASAP.
         if engine_config.log_status:
             logger.info("Engine initialization done. System ready.")
+        
+        # FIXME: For experiment
+        self.collect_data = os.getenv("SDUSS_COLLECT_DATA")
+        if self.collect_data:
+            self._prepare_collect_data()
 
     
     def engine_is_ready(self) -> bool:
@@ -332,14 +340,14 @@ class Engine:
             # We don't expect EMPTY to be in blocking method
             raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
         
-        output = self._process_output(scheduler_output=scheduler_output,
+        finished_req_outputs = self._process_output(scheduler_output=scheduler_output,
                                        req_ids=req_ids,
                                        output=output,)
 
         if self.engine_config.log_status:
             self._log_system_states(scheduler_output)
         
-        return output
+        return finished_req_outputs
     
     
     def _step_nonblocking(self):
@@ -435,6 +443,7 @@ class Engine:
     
     def step(self) -> List[RequestOutput]:
         """One step consists of scheduling and execution of requests."""
+        self._step_counter += 1
         if self.engine_config.non_blocking_step:
             return self._step_nonblocking()
         else:
@@ -469,12 +478,21 @@ class Engine:
         if scheduler_output.abort_req_ids:
             self.abort_requests(scheduler_output.abort_req_ids)
 
-        # Update
-        self.prev_scheduler_output = scheduler_output
-
         ret = []
         for req in finished_reqs:
             ret.append(RequestOutput(req))
+
+        if self.collect_data and self.prev_scheduler_output:
+            if self.prev_scheduler_output.status == RequestStatus.DENOISING:
+                target_worker_output = denoising_output
+            elif self.prev_scheduler_output.status == RequestStatus.POSTPROCESSING:
+                target_worker_output = postprocessing_output
+            else:
+                target_worker_output = prepare_output
+            self._collect_data(self.prev_scheduler_output, ret, target_worker_output)
+
+        # Update
+        self.prev_scheduler_output = scheduler_output
 
         return ret
 
@@ -502,6 +520,9 @@ class Engine:
         ret = []
         for req in finished_reqs:
             ret.append(RequestOutput(req))
+        
+        if self.collect_data:
+            self._collect_data(scheduler_output, ret, output)
         
         # free finished reqs
         self.scheduler.free_all_finished_requests()
@@ -665,3 +686,77 @@ class Engine:
         self.scheduler.log_status()
         logger.info(scheduler_output.get_log_string())
         sys.stdout.flush()
+    
+
+    def clear(self):
+        if self.collect_data:
+            self.sm_monitor.end_monitor()
+            self.sm_monitor.log_result_to_file()
+    
+    
+    def _collect_data(
+        self,
+        scheduler_output: 'SchedulerOutput',
+        req_outputs: List[RequestOutput],
+        worker_output: WorkerOutput,
+    ) -> None:
+        self.sm_monitor.checkpoint()
+        # Request data
+        for ro in req_outputs:
+            self.request_logger.info(
+                f"{ro.request_id},{ro.finished},{ro.start_datetime},{ro.finish_datetime},"
+                f"{ro.time_consumption}"
+            )
+        # Schedule data
+        res_req_num = []
+        total = 0
+        for res in self.support_resolutions:
+            if res in scheduler_output.scheduled_requests:
+                num = len(scheduler_output.scheduled_requests[res])
+            else:
+                num = 0
+            res_req_num.append(num)
+            total += num
+        worker_step_time = (worker_output.end_time - worker_output.start_time) if worker_output is not None else None
+        self.schedule_logger.info(
+            f"{self._step_counter},{str(scheduler_output.status)},{total},"
+            f"{res_req_num[0]},{res_req_num[1]},"
+            f"{res_req_num[2]},{worker_step_time}"
+        )
+    
+    
+    def _prepare_collect_data(self):
+        model = os.getenv("MODEL")
+        distribution = os.getenv("DISTRIBUTION")
+        qps = os.getenv("QPS")
+        slo = os.getenv("SLO")
+        policy = os.getenv("POLICY")
+
+        result_dir_path = f"./results/{model}/{distribution}_{qps}_{slo}_{policy}"
+        os.makedirs(result_dir_path + "/imgs", exist_ok=True)
+
+        sm_util_file_name = result_dir_path + "/sm_util.csv"
+        request_data_file_name = result_dir_path + "/request_data.csv"
+        schedule_data_file_name = result_dir_path + "/schedule.csv"
+
+        # Get loggers
+        def prepare_logger(filename: str):
+            local_logger = logging.getLogger(filename)
+            local_logger.setLevel(logging.DEBUG)
+            handler = logging.FileHandler(filename, mode="w")
+            local_logger.addHandler(handler)
+            local_logger.propagate = False
+            return local_logger
+
+        self.request_logger = prepare_logger(request_data_file_name)
+        self.request_logger.info("request_id,is_finished,start_time,finish_time,time_consumption")
+        self.schedule_logger = prepare_logger(schedule_data_file_name)
+        self.schedule_logger.info(
+            f"step_round,status,num_scheduled_reqs,num_req_of_{self.support_resolutions[0]},"
+            f"num_req_of_{self.support_resolutions[1]},num_req_of_{self.support_resolutions[2]},"
+            f"step_worker_time_consumption"
+        )
+
+        
+        self.sm_monitor = SmUtilMonitor(sm_util_file_name, interval=0.1)
+        self.sm_monitor.start_monitor()

@@ -1,73 +1,41 @@
-DISCARD_SLACK = 100
-DENOISING_DDL = {
-    "sd1.5": {
-        "256": (3.1356 + 0.0394) * 5 * 0.95,
-        "512": (3.1788 + 0.06974) * 5 * 0.95,
-        "768": (3.87 + 0.1363) * 5 * 0.95,
-    },
-    "sdxl": {
-        "512": (8.587 + 0.13413) * 5 * 0.95,
-        "768": (8.6663 + 0.24094) * 5 * 0.95,
-        "1024": (8.7663 + 0.434) * 5 * 0.95,
-    }
-}
+import json
+import os
 
-POSTPROCESSING_DDL = {
-    "sd1.5": {
-        "256": (3.1356 + 0.0394) * 5,
-        "512": (3.1788 + 0.06974) * 5,
-        "768": (3.87 + 0.1363) * 5,
-    },
-    "sdxl": {
-        "512": (8.587 + 0.13413) * 5,
-        "768": (8.6663 + 0.24094) * 5,
-        "1024": (8.7663 + 0.434) * 5,
-    }
-}
+POSTPROCESSING_DDL = None
+DENOISING_DDL = None
+DISCARD_SLACK = None
+STANDALONE = None
+Hyper_Parameter = None
 
-STANDALONE = {
-    "sd1.5": {
-        "denoising": {
-            "256": 3.1356,
-            "512": 3.1788,
-            "768": 3.87,
-        },
-        "postprocessing": {
-            "256": 0.0394,
-            "512": 0.06974,
-            "768": 0.1363,
-        }
-    },
-    "sdxl": {
-        "denoising": {
-            "512": 8.587,
-            "768": 8.6663,
-            "1024": 8.7663,
-        },
-        "postprocessing": {
-            "512": 0.13413,
-            "768": 0.24094,
-            "1024": 0.434,
-        }
-    }
-}
+path = __file__
+path = os.path.dirname(path)
+path += "/configs/esymred.json"
 
-Hyper_Parameter = {
-    "sd1.5": {
-        "postprocessing": {
-            "256": 4,
-            "512": 2,
-            "768": 1,
-        }
-    },
-    "sdxl": {
-        "postprocessing": {
-            "512": 4,
-            "768": 2,
-            "1024": 1,
-        }
-    },
-    "get_best_tp_th": 1,
-    "active_queue_timeout_th": 0.1,
-    "postprocessing_ratio": 0.9,
-}
+with open(path, "r") as f:
+    data = json.load(f)
+    # Read
+    Hyper_Parameter = data["Hyper_Parameter"]
+    STANDALONE = data["STANDALONE"]
+    DISCARD_SLACK = data["DISCARD_SLACK"]
+
+    # Envs
+    SLO = os.getenv("SLO")
+    SLO = int(SLO)
+    assert SLO is not None
+
+    # Calculate ddl
+    POSTPROCESSING_DDL = { }
+    for model_name in STANDALONE:
+        POSTPROCESSING_DDL[model_name] = { }
+        resolutions = list(STANDALONE[model_name]["denoising"].keys())
+        for res in resolutions:
+            POSTPROCESSING_DDL[model_name][res] = (
+                (STANDALONE[model_name]["denoising"][res] +
+                STANDALONE[model_name]["postprocessing"][res]) * SLO
+            )
+
+    DENOISING_DDL = POSTPROCESSING_DDL.copy()
+    for model_name in DENOISING_DDL:
+        for res in DENOISING_DDL[model_name]:
+            # TODO: A fixed Hyperparameter here
+            DENOISING_DDL[model_name][res] *= 0.95

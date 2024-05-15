@@ -55,10 +55,23 @@ async def generate(request: Request) -> Response:
     assert final_output is not None
 
     # Store result in server
-    path = f"./outputs/{request_id}.png"
+    image_name = f"{request_id}.png"
+    path = "./outputs/imgs/" + image_name
     final_output.output.images.save(path)
 
-    return FileResponse(path, media_type="image/png")
+    response =  FileResponse(path, media_type="image/png")
+    response.headers["image_name"] = image_name
+    response.headers["is_finished"] = str(final_output.finished)
+
+    return response
+
+
+@app.post("/clear")
+async def clear(request: Request) -> Response:
+    """Clear data and ready to release."""
+    await engine.clear()
+    return Response(status_code=200)
+
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ import time
 import ctypes
 
 from typing import Tuple
+from datetime import datetime
 
 import torch
 
@@ -48,6 +49,9 @@ class SmUtilMonitor:
             target=SmUtilMonitor._monitor_sm_utilization, 
             kwargs={"metrics": self.metrics, "lock": self.lock, "interval": interval}
         )
+
+        self.file_handler = open(self.file_name, "w")
+        self.file_handler.write(f"timestamp,utilization\n")
     
     
     @staticmethod
@@ -74,7 +78,7 @@ class SmUtilMonitor:
                 lock.release()
                 break
             if metrics.return_value.value:
-                metrics.output_queue.put(metrics.get_avg_util())
+                metrics.output_queue.put_nowait((datetime.now(), metrics.get_avg_util()))
                 metrics.reset()
                 metrics.return_value.value = 0
             sm_utilization = SmUtilMonitor.get_sm_utilization()
@@ -94,6 +98,9 @@ class SmUtilMonitor:
     def checkpoint(self):
         with self.lock:
             self.value.value = 1
+            if not self.output_queue.empty():
+                timestamp, util = self.output_queue.get()
+                self.file_handler.write(f"{timestamp},{util}\n")
     
     
     def end_monitor(self):
@@ -101,6 +108,12 @@ class SmUtilMonitor:
         self.finish_moitor.value = 1
         self.lock.release()
         self.process.join()
+    
+    def log_result_to_file(self):
+        while not self.output_queue.empty():
+            timestamp, util = self.output_queue.get()
+            self.file_handler.write(f"{timestamp},{util}\n")
+        self.file_handler.close()
         
 
 def get_torch_dtype_from_string(dtype_name) -> torch.dtype:
