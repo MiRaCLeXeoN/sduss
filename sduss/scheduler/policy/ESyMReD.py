@@ -74,6 +74,7 @@ class ESyMReD_Scheduler(Policy):
         
         # predict_time indicates the estimated time for next round
         self.predict_time = 0
+        self.finish_all_reqs = False
     
     
     def _get_postprocessing_time(self, dir_pth: str) -> None:
@@ -105,16 +106,26 @@ class ESyMReD_Scheduler(Policy):
         reqs = [req for req in reqs if req.status != status]
         return reqs
     
-    
     def _get_all_reqs_by_status(self, status: "RequestStatus") -> List['Request']:
         reqs = []
         for resolution_queue in self.request_pool.values():
             reqs.extend(resolution_queue.get_all_reqs_by_status(status))
         return reqs
     
+    def _get_all_finished_reqs(self) -> int:
+        total_finished_num = 0
+        for resolution_queue in self.request_pool.values():
+            total_finished_num += resolution_queue.get_num_finished_reqs()
+            total_finished_num += len(resolution_queue.get_queue_by_status(RequestStatus.FINISHED_ABORTED))
+        return total_finished_num
     
     def schedule_requests(self, max_num: int) -> SchedulerOutput:
         """Schedule requests for next iteration."""
+        if self._get_all_finished_reqs() == 100:
+            self.finish_all_reqs = True
+            for resolution_queue in self.request_pool.values():
+                resolution_queue.recover_aborted_requests()
+        
         flattened_reqs = self._flatten_all_reqs_without_status(RequestStatus.WAITING)
 
         # If not reqs to schedule, return EMPTY
@@ -125,6 +136,41 @@ class ESyMReD_Scheduler(Policy):
                 update_all_waiting_reqs=True,
             )
 
+        if self.finish_all_reqs:
+            if len(flattened_reqs) != 0:
+                now = time.time()
+                flattened_reqs.sort(key = lambda req: now - req.arrival_time, reverse=True)
+                target_req = flattened_reqs[0]
+                target_status = target_req.status
+                queue = self._get_all_reqs_by_status(target_status)
+                queue.sort(key=lambda req: now - req.arrival_time, reverse=True)
+                res_reqs_dict: Dict[int, Dict[int, Request]] = {}
+                num_to_collect = max_num
+                best_latency_bs = 40
+                while num_to_collect > 0 and queue and best_latency_bs > 0:
+                    req = queue.pop(0)
+                    res = req.sampling_params.resolution
+                    if res not in res_reqs_dict:
+                        res_reqs_dict[res] = {req.request_id : req}
+                    else:
+                        res_reqs_dict[res][req.request_id] = req
+                    num_to_collect -= 1
+                    best_latency_bs -= (res // 256) ** 2
+                is_sliced = None
+                patch_size = None
+                if target_status == RequestStatus.DENOISING:
+                    if len(res_reqs_dict) > 1:
+                        is_sliced = True
+                        patch_size = find_gcd(list(res_reqs_dict))
+                    else:
+                        is_sliced = False
+                        patch_size = list(res_reqs_dict.keys())[0]
+                return SchedulerOutput(
+                    scheduled_requests=res_reqs_dict,
+                    status=target_status,
+                    is_sliced=is_sliced,
+                    patch_size=patch_size,
+                )
         # Set slack
         for req in flattened_reqs:
             req.set_slack(self.model_name, False, self.predict_time)

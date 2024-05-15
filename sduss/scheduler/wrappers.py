@@ -257,13 +257,14 @@ class ResolutionRequestQueue:
         self.denoising: Dict[int, Request] = {}
         self.postprocessing: Dict[int, Request] = {}
         self.finished: Dict[int, Request] = {}
-
+        self.aborted: Dict[int, Request] = {}
         self.queues = {
             RequestStatus.WAITING : self.waiting,
             RequestStatus.PREPARE : self.prepare,
             RequestStatus.DENOISING : self.denoising,
             RequestStatus.POSTPROCESSING : self.postprocessing,
-            RequestStatus.FINISHED_STOPPED : self.finished
+            RequestStatus.FINISHED_STOPPED : self.finished,
+            RequestStatus.FINISHED_ABORTED: self.aborted
         }
 
         # req_id -> req, for fast referencce
@@ -285,11 +286,17 @@ class ResolutionRequestQueue:
         for req_id in req_ids:
             req = self.reqs_mapping.pop(req_id)
             self.queues[req.status].pop(req_id)
+            self.queues[RequestStatus.FINISHED_ABORTED][req_id] = req
 
             if not RequestStatus.is_finished(req.status):
                 self._num_unfinished_reqs -= 1
 
-    
+    def recover_aborted_requests(self):
+        for req_id, req in self.queues[RequestStatus.FINISHED_ABORTED].items():
+            self.queues[req.status][req_id] = req
+            self.reqs_mapping[req_id] = req
+            self._num_unfinished_reqs += 1
+
     def get_queue_by_name(self, name: str):
         if name == "waiting":
             return self.waiting
@@ -317,6 +324,8 @@ class ResolutionRequestQueue:
             return self.postprocessing
         elif status == RequestStatus.FINISHED_STOPPED:
             return self.finished
+        elif status == RequestStatus.FINISHED_ABORTED:
+            return self.aborted
         else:
             raise ValueError(f"Unexpected status {status}.")
 
@@ -334,6 +343,8 @@ class ResolutionRequestQueue:
             return self.postprocessing.copy()
         elif status == RequestStatus.FINISHED_STOPPED:
             return self.finished.copy()
+        elif status == RequestStatus.FINISHED_ABORTED:
+            return self.aborted.copy()
         else:
             raise ValueError(f"Unexpected status {status}.")
     
@@ -358,7 +369,7 @@ class ResolutionRequestQueue:
         """
         ret = []
         for status, q in self.queues.items():
-            if status == RequestStatus.FINISHED_STOPPED:
+            if status == RequestStatus.FINISHED_STOPPED or status == RequestStatus.FINISHED_ABORTED:
                 continue
             ret.extend(list(q.values()))
         return ret
