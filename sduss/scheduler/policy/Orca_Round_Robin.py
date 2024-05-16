@@ -26,7 +26,7 @@ class OrcaRoundRobin(Policy):
         super().__init__(**kwargs)
 
         # All resolutions
-        self.resolutions = list(self.request_pool.keys()).sort()
+        self.resolutions = sorted(list(self.request_pool.keys()))
 
         # Set afterwards
         self._prev_res = None
@@ -48,7 +48,7 @@ class OrcaRoundRobin(Policy):
 
             # Check next resolution
             res = self.resolutions[idx]
-            if self.request_pool[res].get_num_finished_reqs() > 0:
+            if self.request_pool[res].get_num_unfinished_normal_reqs() > 0:
                 self._prev_res = res
                 return res
             idx = (idx + 1) % len(self.resolutions)

@@ -9,7 +9,7 @@ from sduss.utils import get_os_env
 
 from .policy import Policy
 from ..wrappers import SchedulerOutput, RequestStatus
-from ..utils import find_gcd
+from ..utils import find_gcd, convert_list_to_res_dict
 from ..esymred_utils import Hyper_Parameter
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ class Predictor:
             self.model.C = 1e6
     
     def predict(self, task_distribute: List):
-        return self.model.predict(task_distribute)
+        return self.model.predict(task_distribute) / 1000
     
     def re_load(self):
         self.model = joblib.load(self.model_path)
@@ -52,7 +52,7 @@ class ESyMReD_Scheduler(Policy):
     """
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.resolution_list = kwargs.pop("support_resolutions")
+        self.resolution_list = sorted(list(self.request_pool.keys()))
 
         model_path: str = get_os_env("ESYMRED_PREDICTOR_PATH", check_none=True)
         postprocessing_exec_time_dir: str = get_os_env("ESYMRED_EXEC_TIME_DIR", check_none=True)
@@ -76,10 +76,6 @@ class ESyMReD_Scheduler(Policy):
         self.predict_time = 0
         self.finish_all_reqs = False
 
-        # TODO(MX): This is hacky. Delete after exp
-        # req_id -> whether_it_is_aborted
-        self._process_req_ids: Dict[int, bool]  = {}
-    
     
     def _get_postprocessing_time(self, dir_pth: str) -> None:
         for resolution in self.resolution_list:
@@ -118,20 +114,8 @@ class ESyMReD_Scheduler(Policy):
         return reqs
 
     
-    def _get_all_finished_reqs(self) -> int:
-        total_finished_num = 0
-        for resolution_queue in self.request_pool.values():
-            total_finished_num += resolution_queue.get_num_finished_reqs()
-            total_finished_num += len(resolution_queue.get_queue_by_status(RequestStatus.EXCEPTION_ABORTED))
-        return total_finished_num
-    
-    
     def schedule_requests(self, max_num: int) -> SchedulerOutput:
         """Schedule requests for next iteration."""
-        if self._get_all_finished_reqs() == 100:
-            self.finish_all_reqs = True
-            for resolution_queue in self.request_pool.values():
-                resolution_queue.recover_aborted_requests()
         
         flattened_reqs = self._flatten_all_reqs_without_status(RequestStatus.WAITING)
 
@@ -143,41 +127,6 @@ class ESyMReD_Scheduler(Policy):
                 update_all_waiting_reqs=True,
             )
 
-        if self.finish_all_reqs:
-            if len(flattened_reqs) != 0:
-                now = time.time()
-                flattened_reqs.sort(key = lambda req: now - req.arrival_time, reverse=True)
-                target_req = flattened_reqs[0]
-                target_status = target_req.status
-                queue = self._get_all_reqs_by_status(target_status)
-                queue.sort(key=lambda req: now - req.arrival_time, reverse=True)
-                res_reqs_dict: Dict[int, Dict[int, Request]] = {}
-                num_to_collect = max_num
-                best_latency_bs = 40
-                while num_to_collect > 0 and queue and best_latency_bs > 0:
-                    req = queue.pop(0)
-                    res = req.sampling_params.resolution
-                    if res not in res_reqs_dict:
-                        res_reqs_dict[res] = {req.request_id : req}
-                    else:
-                        res_reqs_dict[res][req.request_id] = req
-                    num_to_collect -= 1
-                    best_latency_bs -= (res // 256) ** 2
-                is_sliced = None
-                patch_size = None
-                if target_status == RequestStatus.DENOISING:
-                    if len(res_reqs_dict) > 1:
-                        is_sliced = True
-                        patch_size = find_gcd(list(res_reqs_dict))
-                    else:
-                        is_sliced = False
-                        patch_size = list(res_reqs_dict.keys())[0]
-                return SchedulerOutput(
-                    scheduled_requests=res_reqs_dict,
-                    status=target_status,
-                    is_sliced=is_sliced,
-                    patch_size=patch_size,
-                )
         # Set slack
         for req in flattened_reqs:
             req.set_slack(self.model_name, False, self.predict_time)
@@ -217,20 +166,16 @@ class ESyMReD_Scheduler(Policy):
                 res = req.sampling_params.resolution
                 if res != target_res:
                     # We add only one resolution for postprocessing stage
-                    # ! FIXME: We can send multiple resolutions, but this may ruin the predict_time,
-                    # ! since dependent data are collected with only single resolution.
                     continue
                 elif res not in res_reqs_dict:
                     res_reqs_dict[res] = {req.request_id : req}
                 else:
                     # We only add reqs that can satisfy SLO
-                    # ! FIXME: `target_req.remain_time` or `req.remain_time` ?
                     if (self.postprocessing_exec_time[self.model_name][str(res)][len(res_reqs_dict[res])] 
                             / target_req.remain_time) < self.postprocessing_ratio:
                         res_reqs_dict[res][req.request_id] = req
                         self.predict_time = self.postprocessing_exec_time[self.model_name][str(res)][len(res_reqs_dict[res])]
                     else:
-                        # ! FIXME: Can we abort remaining unselected reqs?
                         break
                 num_to_collect -= 1
         elif target_status == RequestStatus.DENOISING:
@@ -258,7 +203,7 @@ class ESyMReD_Scheduler(Policy):
                                 res_candidate_dict[res] = 0
 
                         # Choose the resolution that can maximize throughput
-                        # ! This is actually choosing the minimal resolution that has unfinifhsed reqs
+                        # This is actually choosing the minimal resolution that has unfinifhsed reqs
                         best_tp_res = None
                         for res in self.resolution_list:
                             reqs_list = self.request_pool[res].get_all_unfinished_normal_reqs()
@@ -283,6 +228,9 @@ class ESyMReD_Scheduler(Policy):
                                 running_reqs_list=running_reqs_list,
                             ))
 
+                        # print(f"{task_distribute_original=}")
+                        # print(f"{task_distribute_slo=}")
+                        # print(f"{task_distribute_best_tp=}")
                         # Predict time for each distribution
                         predict_time_original = self.predictor.predict(task_distribute_original)
                         predict_time_slo = self.predictor.predict(task_distribute_slo)
@@ -304,10 +252,11 @@ class ESyMReD_Scheduler(Policy):
                         # If we have low slack req, i.e., very urgent one, we don't add more reqs.
                         # TODO: A Hyper parameter here
                         if running_reqs_list[0].slack < 0.1:
+                            print(f"esymred: req {running_reqs_list[0].request_id} has slack {running_reqs_list[0].slack}. Very Urgent. Stop adding more reqs.")
                             break
 
                         if target_req.slack < 0:
-                            target_req.status = RequestStatus.EXCEPTION_ABORTED
+                            print(f"esymred: decide to abort request {target_req.request_id} with slack={target_req.slack}")
                             req_ids_to_abort.append(target_req.request_id)
                         else:
                             # 如果最紧急的请求依然不是特别紧急，则追求最大吞吐量，修改target_req为最小resolution的request
@@ -319,8 +268,12 @@ class ESyMReD_Scheduler(Policy):
                                         and req.status == RequestStatus.DENOISING and not req.start_denoising):
                                         target_req = req
                                         target_res = best_tp_res
+                                        print(f"esymred: req {target_req.request_id} not urgent with slack={target_req.slack}. "
+                                              f"We use best_tp_res={target_res}")
                                         break
                             else:
+                                print(f"esymred: req {target_req.request_id} is urgent with slack={target_req.slack}. "
+                                        f"We use don't try for higher throughput.")
                                 is_get_best_tp = False
                             # If some reqs are urgent, we prioritize satifying SLO.
                             if not is_get_best_tp:
@@ -331,14 +284,13 @@ class ESyMReD_Scheduler(Policy):
                                 target_req.start_denoising = True
                                 num_to_collect -= 1
                                 running_reqs_list.append(target_req)
+                                print(f"esymred: We add req {target_req.request_id} to satisfy SLO.")
                                 self.predict_time = predict_time_slo[0]
                             else:
                                 # Add this req for best throughput is it won't significantly 
                                 # TODO: A Hyper parameter here
-                                # ! FIXEME: Should we multiply the estimated time consumtion of solely running
-                                # ! target_req by its remain_steps in the following `if` statement?
                                 if spend_time_best_tp / (spend_time_original + self.predictor.predict(
-                                    [[1 if res == target_res else 0 for res in self.resolution_list]])[0]) < 0.95:
+                                    [[1 if res == target_res else 0 for res in self.resolution_list]])[0] * target_req.remain_steps) < 0.95:
                                     if target_res not in res_reqs_dict:
                                         res_reqs_dict[target_res] = {target_req.request_id : target_req}
                                     else:
@@ -346,27 +298,38 @@ class ESyMReD_Scheduler(Policy):
                                     target_req.start_denoising = True
                                     running_reqs_list.append(target_req)
                                     num_to_collect -= 1
+                                    print(f"esymred: We add req {target_req.request_id} to get higher throughput.")
                                     self.predict_time = predict_time_best_tp[0]
                                 else:
+                                    print(f"esymred: Adding req {target_req.request_id} cannot get higher throughput. Stop adding more req.")
                                     break
                     # end if len(running_reqs_list) > 0:
                     else:
                         # No currently activated reqs
                         # So add current req directly
-                        task_distribute = list()
+                        # TODO: Why not check the slack value? Unconditionally add?
+                        task_distribute = [[]]
                         for res in self.resolution_list:
                             if res == target_res:
-                                task_distribute.append(1)
+                                task_distribute[0].append(1)
                             else:
-                                task_distribute.append(0)
-                        if target_res not in res_reqs_dict:
-                            res_reqs_dict[target_res] = {target_req.request_id : target_req}
-                        else:
-                            res_reqs_dict[target_res][target_req.request_id] = target_req
-                        target_req.start_denoising = True
-                        running_reqs_list.append(target_req)
-                        num_to_collect -= 1
+                                task_distribute[0].append(0)
                         self.predict_time = self.predictor.predict(task_distribute)
+
+                        target_req.update_predict_time(self.predict_time * target_req.remain_steps)
+                        target_req.set_slack(self.model_name, True, self.predict_time) 
+
+                        if target_req.slack < 0:
+                            print(f"esymred: decide to abort request {target_req.request_id} with slack={target_req.slack}")
+                            req_ids_to_abort.append(target_req.request_id)
+                        else:
+                            if target_res not in res_reqs_dict:
+                                res_reqs_dict[target_res] = {target_req.request_id : target_req}
+                            else:
+                                res_reqs_dict[target_res][target_req.request_id] = target_req
+                            target_req.start_denoising = True
+                            running_reqs_list.append(target_req)
+                            num_to_collect -= 1
                 # end if not target.start_denoising
 
                 index += 1
@@ -388,7 +351,7 @@ class ESyMReD_Scheduler(Policy):
             if len(res_reqs_dict) > 1:
                 is_sliced = True
                 patch_size = find_gcd(list(res_reqs_dict))
-            else:
+            elif len(res_reqs_dict) == 1:
                 is_sliced = False
                 patch_size = list(res_reqs_dict.keys())[0]
             
@@ -400,6 +363,19 @@ class ESyMReD_Scheduler(Policy):
             patch_size=patch_size,
             update_all_waiting_reqs=True,
         )
+
+    
+    def scheduler_request_overlap_prepare(
+        self, 
+        max_num: int, 
+        max_overlapped_prepare_reqs: int
+    ) -> SchedulerOutput:
+        scheduler_output = self.schedule_requests(max_num)
+        if scheduler_output.status != RequestStatus.PREPARE:
+            prepare_reqs = self._get_all_reqs_by_status(RequestStatus.PREPARE)
+            prepare_reqs = prepare_reqs[:max_overlapped_prepare_reqs]
+            scheduler_output.prepare_requests = convert_list_to_res_dict(prepare_reqs)
+        return scheduler_output
     
     
     def _get_distributions(
@@ -446,6 +422,8 @@ class ESyMReD_Scheduler(Policy):
                 res_candidate_dict[res] + 1) for res in self.resolution_list])
             task_distribute_best_tp.append([res_candidate_dict[res] if res != best_tp_res else (
                 res_candidate_dict[res] + 1) for res in self.resolution_list])
+        
+        return task_distribute_original, task_distribute_slo, task_distribute_best_tp
     
     
     def _get_spend_time(
@@ -456,6 +434,11 @@ class ESyMReD_Scheduler(Policy):
         target_req: 'Request',
         running_reqs_list: List['Request'],
     ) -> Tuple[float, float, float, float]:
+        # print(f"{predict_time_original=}")
+        # print(f"{predict_time_slo=}")
+        # print(f"{predict_time_best_tp=}")
+        remain_steps = running_reqs_list[0].remain_steps
+        finish_tasks = 1
         spend_time = predict_time_slo[0] * remain_steps
         # 统计原激活队列与新加最大吞吐量的情况的预测执行时间
         spend_time_original = predict_time_original[0] * remain_steps
@@ -464,8 +447,6 @@ class ESyMReD_Scheduler(Policy):
         # ! FIXME: Is self.predict correct at the first denoising round of first req?
         running_reqs_list[0].set_slack(self.model_name, True, self.predict_time)
         predict_index = 0
-        finish_tasks = 1
-        remain_steps = running_reqs_list[0].remain_steps
         # 统计添加最紧急的任务的情况下，各个任务的预计完成时间
         while finish_tasks < len(running_reqs_list):
             req = running_reqs_list[finish_tasks]
@@ -482,4 +463,8 @@ class ESyMReD_Scheduler(Policy):
         spend_time_best_tp += (target_req.remain_steps - remain_steps) * predict_time_best_tp[-1]
         target_req_pred_time = (target_req.remain_steps - remain_steps) * predict_time_slo[-1] + spend_time
 
+        # print(f"{spend_time=}")
+        # print(f"{spend_time_original=}")
+        # print(f"{spend_time_best_tp=}")
+        # print(f"{target_req_pred_time=}")
         return (spend_time, spend_time_original, spend_time_best_tp, target_req_pred_time)

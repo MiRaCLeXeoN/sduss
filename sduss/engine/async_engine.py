@@ -201,7 +201,7 @@ class RequestTracker:
 
         self._request_streams_mapping[request_id].put(request_output)
         # Abort if finished
-        if request_output.finished:
+        if request_output.is_finished:
             if verbose:
                 logger.info(f"Finished request {request_id}.")
             self.abort_request(request_id)

@@ -53,6 +53,11 @@ async def generate(request: Request) -> Response:
             return Response(status_code=499)
         final_output = request_output
     assert final_output is not None
+    
+    if not final_output.normal_finished:
+        response = Response(status_code=400)
+        # response.headers["is_finished"] = str(final_output.normal_finished)
+        return response
 
     # Store result in server
     image_name = f"{request_id}.png"
@@ -61,7 +66,7 @@ async def generate(request: Request) -> Response:
 
     response =  FileResponse(path, media_type="image/png")
     response.headers["image_name"] = image_name
-    response.headers["is_finished"] = str(final_output.finished)
+    response.headers["is_finished"] = str(final_output.normal_finished)
 
     return response
 

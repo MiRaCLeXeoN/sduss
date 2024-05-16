@@ -92,7 +92,7 @@ class DiffusionPipeline:
         while self.engine.has_unfinished_normal_requests():
             step_outputs = self.engine.step()
             for output in step_outputs:
-                if output.finished:
+                if output.normal_finished:
                     outputs.append(output)
                     if use_tqdm:
                         pbar.update(1)

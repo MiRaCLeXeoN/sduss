@@ -282,13 +282,13 @@ class Engine:
             self.scheduler.add_request(req)
 
     
-    def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> None:
+    def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> List[Request]:
         """Aborts a request(s) with the given ID.
 
         Args:
             request_id: The ID(s) of the request to abort.
         """
-        self.scheduler.abort_requests(request_ids)
+        return self.scheduler.abort_requests(request_ids)
 
     
     def _schedule(self) -> Tuple[SchedulerOutput, List[int]] :
@@ -306,6 +306,9 @@ class Engine:
     def _step_blocking(self) -> List[RequestOutput]:
         """Performs one denoising iteration and returns newly generated results."""
         scheduler_output, req_ids = self._schedule()
+
+        if self.engine_config.log_status:
+            self._log_system_states(scheduler_output)
 
         output = None
         if scheduler_output.status == RequestStatus.WAITING:
@@ -343,9 +346,6 @@ class Engine:
         finished_req_outputs = self._process_output(scheduler_output=scheduler_output,
                                        req_ids=req_ids,
                                        output=output,)
-
-        if self.engine_config.log_status:
-            self._log_system_states(scheduler_output)
         
         return finished_req_outputs
     
@@ -429,7 +429,7 @@ class Engine:
                 prepare_output=prepare_output,
             )
         else:
-            raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
+            raise RuntimeError(f"Unexpected status {str(scheduler_output.status)}.")
         
         # 5. Process output and update requests status.
         output = self._process_nonblocking_output(scheduler_output=scheduler_output,
@@ -476,7 +476,7 @@ class Engine:
 
         # 3. Abort reqs
         if scheduler_output.abort_req_ids:
-            self.abort_requests(scheduler_output.abort_req_ids)
+            finished_reqs.extend(self.abort_requests(scheduler_output.abort_req_ids))
 
         ret = []
         for req in finished_reqs:
@@ -525,7 +525,7 @@ class Engine:
             self._collect_data(scheduler_output, ret, output)
         
         # free finished reqs
-        self.scheduler.free_all_finished_requests()
+        self.scheduler.free_finished_requests(finished_reqs)
         
         return ret
 
@@ -704,7 +704,7 @@ class Engine:
         # Request data
         for ro in req_outputs:
             self.request_logger.info(
-                f"{ro.request_id},{ro.finished},{ro.start_datetime},{ro.finish_datetime},"
+                f"{ro.request_id},{ro.normal_finished},{ro.start_datetime},{ro.finish_datetime},"
                 f"{ro.time_consumption}"
             )
         # Schedule data
@@ -719,7 +719,7 @@ class Engine:
             total += num
         worker_step_time = (worker_output.end_time - worker_output.start_time) if worker_output is not None else None
         self.schedule_logger.info(
-            f"{self._step_counter},{str(scheduler_output.status)},{total},"
+            f"{self._step_counter},{datetime.datetime.now()},{str(scheduler_output.status)},{total},"
             f"{res_req_num[0]},{res_req_num[1]},"
             f"{res_req_num[2]},{worker_step_time}"
         )
@@ -752,7 +752,7 @@ class Engine:
         self.request_logger.info("request_id,is_finished,start_time,finish_time,time_consumption")
         self.schedule_logger = prepare_logger(schedule_data_file_name)
         self.schedule_logger.info(
-            f"step_round,status,num_scheduled_reqs,num_req_of_{self.support_resolutions[0]},"
+            f"step_count,timestamp,status,num_scheduled_reqs,num_req_of_{self.support_resolutions[0]},"
             f"num_req_of_{self.support_resolutions[1]},num_req_of_{self.support_resolutions[2]},"
             f"step_worker_time_consumption"
         )

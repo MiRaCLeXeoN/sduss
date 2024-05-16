@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --export=ALL
 #SBATCH --job-name=sduss_diff_pp_test
-#SBATCH --error=./outputs/sd15-%6j.err
-#SBATCH --output=./outputs/sd15-%6j.out
+#SBATCH --error=./outputs/sduss-%6j.err
+#SBATCH --output=./outputs/sduss-%6j.out
 #SBATCH --gres=gpu:L40:1
 #SBATCH --partition=Compute
 #SBATCH --nodes=1
@@ -10,6 +10,8 @@
 #SBATCH --nodelist=hepnode3
 
 export SDUSS_COLLECT_DATA=true
+export ESYMRED_PREDICTOR_PATH="./exp/$MODEL.pkl"
+export ESYMRED_EXEC_TIME_DIR="./exp/profile"
 
 export TORCH_INCLUDE_PATH="/home/zzp/miniconda3/envs/sduss/lib/python3.9/site-packages/torch/include"
 

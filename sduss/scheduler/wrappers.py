@@ -26,11 +26,20 @@ class RequestStatus(enum.IntEnum):
     POSTPROCESSING = enum.auto()    # ready for postprocessing stage
     # Finished
     FINISHED_STOPPED = enum.auto()
+    FINISHED_ABORTED = enum.auto()
     # Exception
-    EXCEPTION_ABORTED = enum.auto()
+    EXCEPTION_SWAPPED = enum.auto()
 
     @staticmethod
     def is_finished(status: "RequestStatus") -> bool:
+        return status in [
+            RequestStatus.FINISHED_STOPPED,
+            RequestStatus.FINISHED_ABORTED,
+        ]
+    
+    
+    @staticmethod
+    def is_normal_finished(status: "RequestStatus") -> bool:
         return status in [
             RequestStatus.FINISHED_STOPPED,
         ]
@@ -39,7 +48,7 @@ class RequestStatus(enum.IntEnum):
     @staticmethod
     def is_exception(status: "RequestStatus") -> bool:
         return status in [
-            RequestStatus.EXCEPTION_ABORTED,
+            RequestStatus.EXCEPTION_SWAPPED,
         ]
 
 
@@ -60,6 +69,8 @@ class RequestStatus(enum.IntEnum):
     def get_finished_reason(status: "RequestStatus") -> Union[str, None]:
         if status == RequestStatus.FINISHED_STOPPED:
             finish_reason = "stop"
+        elif status == RequestStatus.FINISHED_ABORTED:
+            finish_reason = "abort"
         else:
             finish_reason = None
         return finish_reason
@@ -101,6 +112,11 @@ class Request:
 
     def update_predict_time(self, predict_time:float):
         self.predict_time = predict_time
+    
+    
+    def abort(self):
+        self.status = RequestStatus.FINISHED_ABORTED
+        self.finish_time = time.time()
 
 
     def set_slack(
@@ -110,6 +126,7 @@ class Request:
         current_running_time_cost : float,
     ):
         # If discarded, return directly
+        # TODO: Discard
         if self.is_discard:
             self.slack = DISCARD_SLACK
             return
@@ -132,6 +149,7 @@ class Request:
             self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
                             ) / (unit_unet_time * Hyper_Parameter[model_name][stage][str(resolution)])
         elif stage == "denoising":
+            # print(f"{ddl=},{unit_unet_time=},{self.predict_time},{current_running_time_cost=},{(time.time() - self.arrival_time)}")
             if is_running:
                 # Suppose we have started at least one round
                 self.slack = (ddl - self.predict_time - current_running_time_cost - (time.time() - self.arrival_time)
@@ -190,6 +208,7 @@ class SchedulerOutput:
 
         # Check up
         self._verify_params()
+
     
     def _verify_params(self):
         # mixed precision
@@ -226,15 +245,15 @@ class SchedulerOutput:
     
     
     def get_prepare_reqs_as_list(self) -> List[Request]:
-        scheduler_reqs = []
+        prepare_reqs = []
         for res in self.prepare_requests:
             for req in self.prepare_requests[res].values():
-                scheduler_reqs.append(req)
-        return scheduler_reqs
+                prepare_reqs.append(req)
+        return prepare_reqs
     
     
     def get_log_string(self) -> str:
-        ret = f"status: {self.status}\n"
+        ret = f"status: {str(self.status)}\n"
         if self.scheduled_requests:
             ret += f"scheduled reqs: \n"
             for res in self.scheduled_requests:
@@ -244,7 +263,7 @@ class SchedulerOutput:
                 ret += "\n"
         if self.prepare_requests:
             ret += "overlapped prepare reqs: \n"
-            for res in self.scheduled_requests:
+            for res in self.prepare_requests:
                 ret += f"{res=}  reqs: "
                 for req_id in self.prepare_requests[res]:
                     ret += "%d," % req_id
@@ -264,14 +283,14 @@ class ResolutionRequestQueue:
         self.denoising: Dict[int, Request] = {}
         self.postprocessing: Dict[int, Request] = {}
         self.finished: Dict[int, Request] = {}
-        self.aborted: Dict[int, Request] = {}
+        self.swapped: Dict[int, Request] = {}
         self.queues = {
             RequestStatus.WAITING : self.waiting,
             RequestStatus.PREPARE : self.prepare,
             RequestStatus.DENOISING : self.denoising,
             RequestStatus.POSTPROCESSING : self.postprocessing,
             RequestStatus.FINISHED_STOPPED : self.finished,
-            RequestStatus.EXCEPTION_ABORTED: self.aborted
+            RequestStatus.EXCEPTION_SWAPPED: self.swapped
         }
 
         # req_id -> req, for fast referencce
@@ -287,35 +306,17 @@ class ResolutionRequestQueue:
 
     
     def abort_requests(self, req_ids: Union[int, List[int]]):
-        """This method abort requests.
-        
-        Aborted requests will not be released immediately. They will be
-        marked as aborted and update to FINISHED_ABORTED status, with all
-        belonging data kept. So the aborted requests can be recovered if
-        necessary.
-
-        To really release a request, call `remove_requests` method after 
-        calling this method.
-        """
+        """This method abort requests and untrack them."""
         if isinstance(req_ids, int):
             req_ids = [req_ids]
         
         for req_id in req_ids:
-            # We don't remove reference until "remove_reqs" is called
-            req = self.reqs_mapping[req_id]
+            req = self.reqs_mapping.pop(req_id)
             self.queues[req.status].pop(req_id)
-            self.aborted[req_id] = req
 
             if not RequestStatus.is_finished(req.status):
                 self._num_unfinished_normal_reqs -= 1
-
-
-    def recover_aborted_requests(self):
-        for req_id, req in self.aborted.items():
-            self.queues[req.status][req_id] = req
-            if (not RequestStatus.is_finished(req.status) and
-                not RequestStatus.is_exception(req.status)):
-                self._num_unfinished_normal_reqs += 1
+            req.abort()
 
 
     def get_queue_by_name(self, name: str):
@@ -329,8 +330,8 @@ class ResolutionRequestQueue:
             return self.postprocessing
         elif name == "finished":
             return self.finished
-        elif name == "aborted":
-            return self.aborted
+        elif name == "swapped":
+            return self.swapped
         else:
             raise ValueError(f"Unexpected name {name}.")
     
@@ -347,8 +348,8 @@ class ResolutionRequestQueue:
             return self.postprocessing
         elif status == RequestStatus.FINISHED_STOPPED:
             return self.finished
-        elif status == RequestStatus.EXCEPTION_ABORTED:
-            return self.aborted
+        elif status == RequestStatus.EXCEPTION_SWAPPED:
+            return self.swapped
         else:
             raise ValueError(f"Unexpected status {status}.")
 
@@ -366,10 +367,10 @@ class ResolutionRequestQueue:
             return self.postprocessing.copy()
         elif status == RequestStatus.FINISHED_STOPPED:
             return self.finished.copy()
-        elif status == RequestStatus.EXCEPTION_ABORTED:
-            return self.aborted.copy()
+        elif status == RequestStatus.EXCEPTION_SWAPPED:
+            return self.swapped.copy()
         else:
-            raise ValueError(f"Unexpected status {status}.")
+            raise ValueError(f"Unexpected status {str(status)}.")
     
     
     def get_all_reqs_by_status(self, status: RequestStatus) -> List[Request]:
@@ -484,6 +485,7 @@ class ResolutionRequestQueue:
     def update_all_waiting_reqs_to_prepare(self) -> None:
         """Update all waiting reqs to prepare status."""
         for req_id in self.waiting:
+            self.reqs_mapping[req_id].status = RequestStatus.PREPARE
             self.prepare[req_id] = self.waiting[req_id]
         self.waiting.clear()
     

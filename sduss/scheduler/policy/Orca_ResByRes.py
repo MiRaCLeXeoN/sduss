@@ -26,7 +26,7 @@ class OrcaResByRes(Policy):
         super().__init__(**kwargs)
 
         # All resolutions
-        self.resolutions = list(self.request_pool.keys()).sort()
+        self.resolutions = sorted(list(self.request_pool.keys()))
 
         # Set afterwards
         self._running_res = None

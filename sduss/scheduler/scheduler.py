@@ -44,8 +44,7 @@ class Scheduler:
         # req_id -> req, for fast reference
         self.req_mapping: Dict[int, Request] = {}
         # Lazy import to avoid circular import
-        from sduss.scheduler import SUPPORT_RESOLUTION
-        for res in SUPPORT_RESOLUTION:
+        for res in self.support_resolutions:
             self._initialize_resolution_queues(res)
 
         # Scheduler policy
@@ -53,8 +52,7 @@ class Scheduler:
                                                request_pool=self.request_pool,
                                                use_mixed_precision=self.use_mixed_precision,
                                                non_blocking_step=self.engine_config.non_blocking_step,
-                                               overlap_prepare=self.scheduler_config.overlap_prepare,
-                                               support_resolutions=self.support_resolutions)
+                                               overlap_prepare=self.scheduler_config.overlap_prepare,)
         
         # Logs
         self.cycle_counter = 0
@@ -90,7 +88,7 @@ class Scheduler:
         self.req_mapping[req.request_id] = req
         
 
-    def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> None:
+    def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> List[Request]:
         """Abort a handful of requests.
 
         Args:
@@ -98,10 +96,14 @@ class Scheduler:
         """
         if isinstance(request_ids, int):
             request_ids = [request_ids]
+        
+        aborted_reqs = []
         res_reqid_dict: Dict[int, List[int]] = {}
         for req_id in request_ids:
-            # We do not remove reference when aborting a req
-            req = self.req_mapping[req_id]
+            req = self.req_mapping.pop(req_id)
+
+            aborted_reqs.append(req)
+
             resolution = req.sampling_params.resolution
             if resolution not in res_reqid_dict:
                 res_reqid_dict[resolution] = [req_id]
@@ -111,7 +113,8 @@ class Scheduler:
         # Abort reqs in resolution queues
         for res in res_reqid_dict:
             self.request_pool[res].abort_requests(res_reqid_dict[res])
-        return
+
+        return aborted_reqs
         
     
     def has_unfinished_normal_requests(self, is_nonblocking: bool) -> bool:
@@ -195,7 +198,7 @@ class Scheduler:
                 self.req_mapping[req_id].finish_time = current_timestamp
             return 
         else:
-            raise RuntimeError(f"Unexpected status {sche_status} to update.")
+            raise RuntimeError(f"Unexpected status {str(sche_status)} to update.")
         
 
     def update_reqs_status_nonblocking(
@@ -226,6 +229,10 @@ class Scheduler:
         # 0.2 If forced to update waiting reqs, update them
         if scheduler_output.update_all_waiting_reqs:
             self._update_all_waiting_reqs()
+        # 0.3 If we have overlapped reqs, update their status
+        if scheduler_output.has_prepare_requests():
+            self._update_reqs_to_next_status(prev_status=RequestStatus.PREPARE, next_status=RequestStatus.DENOISING,
+                                             reqs=scheduler_output.prepare_requests)
 
         finished_reqs: List[Request] = []
         # 1. Process output from previous round.
@@ -276,7 +283,7 @@ class Scheduler:
             # finished reqs should be freed by calls to `free_finished_reqs`
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
         else:
-            raise RuntimeError(f"Unexpected status {sche_status} to update.")
+            raise RuntimeError(f"Unexpected status {str(sche_status)} to update.")
         
         return finished_reqs
             
