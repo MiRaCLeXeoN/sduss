@@ -24,7 +24,7 @@ class FCFS_Mixed(Policy):
     def _flatten_all_reqs(self) -> List['Request']:
         reqs = []
         for resolution_queue in self.request_pool.values():
-            reqs.extend(resolution_queue.get_all_unfinished_reqs())
+            reqs.extend(resolution_queue.get_all_unfinished_normal_reqs())
         return reqs
     
     

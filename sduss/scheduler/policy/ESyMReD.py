@@ -75,6 +75,10 @@ class ESyMReD_Scheduler(Policy):
         # predict_time indicates the estimated time for next round
         self.predict_time = 0
         self.finish_all_reqs = False
+
+        # TODO(MX): This is hacky. Delete after exp
+        # req_id -> whether_it_is_aborted
+        self._process_req_ids: Dict[int, bool]  = {}
     
     
     def _get_postprocessing_time(self, dir_pth: str) -> None:
@@ -97,7 +101,7 @@ class ESyMReD_Scheduler(Policy):
     def _flatten_all_reqs(self) -> List['Request']:
         reqs = []
         for resolution_queue in self.request_pool.values():
-            reqs.extend(resolution_queue.get_all_unfinished_reqs())
+            reqs.extend(resolution_queue.get_all_unfinished_normal_reqs())
         return reqs
     
     
@@ -105,19 +109,22 @@ class ESyMReD_Scheduler(Policy):
         reqs = self._flatten_all_reqs()
         reqs = [req for req in reqs if req.status != status]
         return reqs
+
     
     def _get_all_reqs_by_status(self, status: "RequestStatus") -> List['Request']:
         reqs = []
         for resolution_queue in self.request_pool.values():
             reqs.extend(resolution_queue.get_all_reqs_by_status(status))
         return reqs
+
     
     def _get_all_finished_reqs(self) -> int:
         total_finished_num = 0
         for resolution_queue in self.request_pool.values():
             total_finished_num += resolution_queue.get_num_finished_reqs()
-            total_finished_num += len(resolution_queue.get_queue_by_status(RequestStatus.FINISHED_ABORTED))
+            total_finished_num += len(resolution_queue.get_queue_by_status(RequestStatus.EXCEPTION_ABORTED))
         return total_finished_num
+    
     
     def schedule_requests(self, max_num: int) -> SchedulerOutput:
         """Schedule requests for next iteration."""
@@ -254,7 +261,7 @@ class ESyMReD_Scheduler(Policy):
                         # ! This is actually choosing the minimal resolution that has unfinifhsed reqs
                         best_tp_res = None
                         for res in self.resolution_list:
-                            reqs_list = self.request_pool[res].get_all_unfinished_reqs()
+                            reqs_list = self.request_pool[res].get_all_unfinished_normal_reqs()
                             if len(reqs_list) != 0:
                                 find_best_tp_res = False
                                 for req in reqs_list:
@@ -300,7 +307,7 @@ class ESyMReD_Scheduler(Policy):
                             break
 
                         if target_req.slack < 0:
-                            target_req.status = RequestStatus.FINISHED_ABORTED
+                            target_req.status = RequestStatus.EXCEPTION_ABORTED
                             req_ids_to_abort.append(target_req.request_id)
                         else:
                             # 如果最紧急的请求依然不是特别紧急，则追求最大吞吐量，修改target_req为最小resolution的request
