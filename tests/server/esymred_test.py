@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 import requests
+import time
 
 from typing import List
 
@@ -150,7 +151,27 @@ if __name__ == "__main__":
     logger.addHandler(handler)
     logger.info(metric.header)
 
-    api_url = f"http://{args.host}:{args.port}/generate"
+    base_url = f"http://{args.host}:{args.port}/"
+
+    max_retry = 30
+    retry = max_retry
+    while True:
+        try:
+            response = requests.get(url=base_url + "health", timeout=5)
+            if response.status_code == 200:
+                break
+        except Exception as e:
+            print(e)
+            print("Connection time out, retry")
+            time.sleep(5)
+        retry -= 1
+        if retry == 0: 
+            break
+    if not retry:
+        print("Cannot connect to server, exit.")
+        exit(-1)
+
+    api_url = base_url + "generate"
 
     # Load data
     time_csv_path = f"./exp/{args.model}/distri_{args.distribution}/qps_{args.qps}.csv"
@@ -183,5 +204,5 @@ if __name__ == "__main__":
     # logger.info(f"Successful requests: {success_counter} / {args.num}")
 
     print("start server clear")
-    requests.post(url=f"http://{args.host}:{args.port}/clear")
+    requests.post(url=base_url + f"clear")
     print("finish server clear")
