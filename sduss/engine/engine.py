@@ -661,12 +661,12 @@ class Engine:
 
     def get_num_unfinished_requests(self) -> int:
         """Gets the number of unfinished requests."""
-        return self.scheduler.get_num_unfinished_requests()
+        return self.scheduler.get_num_unfinished_normal_reqs()
 
 
-    def has_unfinished_requests(self) -> bool:
+    def has_unfinished_normal_requests(self) -> bool:
         """Returns True if there are unfinished requests."""
-        return self.scheduler.has_unfinished_requests(is_nonblocking=self.engine_config.non_blocking_step)
+        return self.scheduler.has_unfinished_normal_requests(is_nonblocking=self.engine_config.non_blocking_step)
 
     
     def _log_system_states(

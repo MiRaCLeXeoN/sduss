@@ -26,14 +26,22 @@ class RequestStatus(enum.IntEnum):
     POSTPROCESSING = enum.auto()    # ready for postprocessing stage
     # Finished
     FINISHED_STOPPED = enum.auto()
-    FINISHED_ABORTED = enum.auto()
+    # Exception
+    EXCEPTION_ABORTED = enum.auto()
 
     @staticmethod
     def is_finished(status: "RequestStatus") -> bool:
         return status in [
             RequestStatus.FINISHED_STOPPED,
-            RequestStatus.FINISHED_ABORTED,
         ]
+    
+    
+    @staticmethod
+    def is_exception(status: "RequestStatus") -> bool:
+        return status in [
+            RequestStatus.EXCEPTION_ABORTED,
+        ]
+
 
     @staticmethod
     def get_next_status(status: "RequestStatus") -> Optional["RequestStatus"]:
@@ -52,8 +60,6 @@ class RequestStatus(enum.IntEnum):
     def get_finished_reason(status: "RequestStatus") -> Union[str, None]:
         if status == RequestStatus.FINISHED_STOPPED:
             finish_reason = "stop"
-        elif status == RequestStatus.FINISHED_ABORTED:
-            finish_reason = "abort"
         else:
             finish_reason = None
         return finish_reason
@@ -258,39 +264,60 @@ class ResolutionRequestQueue:
         self.denoising: Dict[int, Request] = {}
         self.postprocessing: Dict[int, Request] = {}
         self.finished: Dict[int, Request] = {}
-
+        self.aborted: Dict[int, Request] = {}
         self.queues = {
             RequestStatus.WAITING : self.waiting,
             RequestStatus.PREPARE : self.prepare,
             RequestStatus.DENOISING : self.denoising,
             RequestStatus.POSTPROCESSING : self.postprocessing,
-            RequestStatus.FINISHED_STOPPED : self.finished
+            RequestStatus.FINISHED_STOPPED : self.finished,
+            RequestStatus.EXCEPTION_ABORTED: self.aborted
         }
 
         # req_id -> req, for fast referencce
         self.reqs_mapping: Dict[int, Request] = {}
         
-        self._num_unfinished_reqs = 0
+        self._num_unfinished_normal_reqs = 0
 
     
     def add_request(self, req: Request):
         self.waiting[req.request_id] = req
         self.reqs_mapping[req.request_id] = req
-        self._num_unfinished_reqs += 1
+        self._num_unfinished_normal_reqs += 1
 
     
     def abort_requests(self, req_ids: Union[int, List[int]]):
+        """This method abort requests.
+        
+        Aborted requests will not be released immediately. They will be
+        marked as aborted and update to FINISHED_ABORTED status, with all
+        belonging data kept. So the aborted requests can be recovered if
+        necessary.
+
+        To really release a request, call `remove_requests` method after 
+        calling this method.
+        """
         if isinstance(req_ids, int):
             req_ids = [req_ids]
         
         for req_id in req_ids:
-            req = self.reqs_mapping.pop(req_id)
+            # We don't remove reference until "remove_reqs" is called
+            req = self.reqs_mapping[req_id]
             self.queues[req.status].pop(req_id)
+            self.aborted[req_id] = req
 
             if not RequestStatus.is_finished(req.status):
-                self._num_unfinished_reqs -= 1
+                self._num_unfinished_normal_reqs -= 1
 
-    
+
+    def recover_aborted_requests(self):
+        for req_id, req in self.aborted.items():
+            self.queues[req.status][req_id] = req
+            if (not RequestStatus.is_finished(req.status) and
+                not RequestStatus.is_exception(req.status)):
+                self._num_unfinished_normal_reqs += 1
+
+
     def get_queue_by_name(self, name: str):
         if name == "waiting":
             return self.waiting
@@ -302,6 +329,8 @@ class ResolutionRequestQueue:
             return self.postprocessing
         elif name == "finished":
             return self.finished
+        elif name == "aborted":
+            return self.aborted
         else:
             raise ValueError(f"Unexpected name {name}.")
     
@@ -318,6 +347,8 @@ class ResolutionRequestQueue:
             return self.postprocessing
         elif status == RequestStatus.FINISHED_STOPPED:
             return self.finished
+        elif status == RequestStatus.EXCEPTION_ABORTED:
+            return self.aborted
         else:
             raise ValueError(f"Unexpected status {status}.")
 
@@ -335,6 +366,8 @@ class ResolutionRequestQueue:
             return self.postprocessing.copy()
         elif status == RequestStatus.FINISHED_STOPPED:
             return self.finished.copy()
+        elif status == RequestStatus.EXCEPTION_ABORTED:
+            return self.aborted.copy()
         else:
             raise ValueError(f"Unexpected status {status}.")
     
@@ -347,11 +380,19 @@ class ResolutionRequestQueue:
         return len(self.queues[status])
 
     
-    def get_num_unfinished_reqs(self) -> int:
-        return self._num_unfinished_reqs
+    def get_num_unfinished_normal_reqs(self) -> int:
+        return self._num_unfinished_normal_reqs
 
     
-    def get_all_unfinished_reqs(self) -> List[Request]:
+    def get_num_unfreed_normal_reqs(self) -> int:
+        num = 0
+        for status, q in self.queues.items():
+            if not RequestStatus.is_exception(status):
+                num += len(q)
+        return num
+
+    
+    def get_all_unfinished_normal_reqs(self) -> List[Request]:
         """Get all unfinifhsed reqs.
 
         Returns:
@@ -359,7 +400,8 @@ class ResolutionRequestQueue:
         """
         ret = []
         for status, q in self.queues.items():
-            if status == RequestStatus.FINISHED_STOPPED:
+            if (RequestStatus.is_finished(status) or 
+                RequestStatus.is_exception(status)):
                 continue
             ret.extend(list(q.values()))
         return ret
@@ -387,13 +429,26 @@ class ResolutionRequestQueue:
         self.finished.clear()
     
     
-    def free_finished_reqs(self, reqs: Union[List[Request], Request]) -> None:
-        if isinstance(reqs, Request):
-            reqs = [reqs]
-        for req in reqs:
-            self.reqs_mapping.pop(req.request_id)
-            self.finished.pop(req.request_id)
-    
+    def free_finished_reqs(self, req_ids: Union[List[int], int]) -> None:
+        if isinstance(req_ids, int):
+            req_ids = [req_ids]
+        for req_id in req_ids:
+            self.reqs_mapping.pop(req_id)
+            self.finished.pop(req_id)
+
+
+    def free_reqs(self, req_ids: Union[int, List[int]]):
+        """This method free requests from the scheduler."""
+        if isinstance(req_ids, int):
+            req_ids = [req_ids]
+        
+        for req_id in req_ids:
+            req = self.reqs_mapping[req_id]
+            self.queues[req.status].pop(req_id)
+
+            if not RequestStatus.is_finished(req.status):
+                self._num_unfinished_normal_reqs -= 1
+
     
     def update_reqs_status(
         self, 
@@ -421,9 +476,9 @@ class ResolutionRequestQueue:
             req.status = next_status
         
         # If requests are finished, decrease counting
-        if next_status == RequestStatus.FINISHED_STOPPED:
+        if RequestStatus.is_finished(next_status):
             num = len(reqs_dict)
-            self._num_unfinished_reqs -= num
+            self._num_unfinished_normal_reqs -= num
     
     
     def update_all_waiting_reqs_to_prepare(self) -> None:
@@ -435,7 +490,7 @@ class ResolutionRequestQueue:
     
     def log_status(self, return_str: bool = False):
         format_str = (f"Resolution Queue: resolution={self.resolution} \n"
-                      f"Remaining reqs: {self.get_num_unfinished_reqs()}\n")
+                      f"Remaining reqs: {self.get_num_unfinished_normal_reqs()}\n")
         for status, queue in self.queues.items():
             format_str += f"{status=}, req_ids={queue.keys()}\n"
         if return_str:

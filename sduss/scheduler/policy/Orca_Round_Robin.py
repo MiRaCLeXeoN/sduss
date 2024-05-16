@@ -36,7 +36,7 @@ class OrcaRoundRobin(Policy):
         """If no reqs to schedule, this will return None."""
         if self._prev_res is None:
             for res in self.resolutions:
-                if self.request_pool[res].get_num_unfinished_reqs() > 0:
+                if self.request_pool[res].get_num_unfinished_normal_reqs() > 0:
                     self._prev_res = res
                     return res
             self._prev_res = None
@@ -56,7 +56,7 @@ class OrcaRoundRobin(Policy):
             # Iterate until a resolution is found or we step back to last_idx
             while idx != last_idx:
                 res = self.resolutions[idx]
-                if self.request_pool[res].get_num_unfinished_reqs() > 0:
+                if self.request_pool[res].get_num_unfinished_normal_reqs() > 0:
                     self._prev_res = res
                     return res
                 idx = (idx + 1) % len(self.resolutions)
@@ -68,7 +68,7 @@ class OrcaRoundRobin(Policy):
     def _flatten_all_reqs(self) -> List['Request']:
         reqs = []
         for resolution_queue in self.request_pool.values():
-            reqs.extend(resolution_queue.get_all_unfinished_reqs())
+            reqs.extend(resolution_queue.get_all_unfinished_normal_reqs())
         return reqs
     
 

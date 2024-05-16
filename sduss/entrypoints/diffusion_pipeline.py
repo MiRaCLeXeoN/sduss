@@ -89,7 +89,7 @@ class DiffusionPipeline:
             pbar = tqdm.tqdm(total=num_requests, desc="Processed requests")       
         
         outputs: List[RequestOutput] = []
-        while self.engine.has_unfinished_requests():
+        while self.engine.has_unfinished_normal_requests():
             step_outputs = self.engine.step()
             for output in step_outputs:
                 if output.finished:

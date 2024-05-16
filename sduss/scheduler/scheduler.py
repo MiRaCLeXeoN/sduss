@@ -100,7 +100,8 @@ class Scheduler:
             request_ids = [request_ids]
         res_reqid_dict: Dict[int, List[int]] = {}
         for req_id in request_ids:
-            req = self.req_mapping.pop(req_id)  # pop out mapping
+            # We do not remove reference when aborting a req
+            req = self.req_mapping[req_id]
             resolution = req.sampling_params.resolution
             if resolution not in res_reqid_dict:
                 res_reqid_dict[resolution] = [req_id]
@@ -113,25 +114,25 @@ class Scheduler:
         return
         
     
-    def has_unfinished_requests(self, is_nonblocking: bool) -> bool:
+    def has_unfinished_normal_requests(self, is_nonblocking: bool) -> bool:
         if is_nonblocking:
             # We must wait all requests freed instead of finished, since
             # some requests are still executing.
             for res_queue in self.request_pool.values():
-                if res_queue.get_num_unfreed_reqs() > 0:
+                if res_queue.get_num_unfreed_normal_reqs() > 0:
                     return True
             return False
             
         for res_queue in self.request_pool.values():
-            if res_queue.get_num_unfinished_reqs() > 0:
+            if res_queue.get_num_unfinished_normal_reqs() > 0:
                 return True
         return False
         
 
-    def get_num_unfinished_requests(self) -> int:
+    def get_num_unfinished_normal_reqs(self) -> int:
         total = 0
         for res_queue in self.request_pool.values():
-            total += res_queue.get_num_unfinished_reqs()
+            total += res_queue.get_num_unfinished_normal_reqs()
         return total
     
     
@@ -294,10 +295,18 @@ class Scheduler:
     
     def free_finished_requests(self, reqs: List[Request]) -> None:
         """Untrack input reqs if they are finished."""
+        # Extract request ids
+        res_req_ids = {}
         for req in reqs:
             res = req.sampling_params.resolution
-            self.request_pool[res].free_finished_reqs(req)
+            if res not in res_req_ids:
+                res_req_ids[res] = [req.request_id]
+            else:
+                res_req_ids[res].append(req.request_id)
             self.req_mapping.pop(req.request_id)
+
+        for res in res_req_ids:
+            self.request_pool[res].free_finished_reqs(res_req_ids[res])
         
         
     def _initialize_resolution_queues(self, res: int) -> None:

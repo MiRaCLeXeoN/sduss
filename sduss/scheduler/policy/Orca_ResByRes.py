@@ -34,13 +34,13 @@ class OrcaResByRes(Policy):
 
     def _choose_resolution(self) -> int:
         if (self._running_res is not None 
-            and self.request_pool[self._running_res].get_num_unfinished_reqs() > 0):
+            and self.request_pool[self._running_res].get_num_unfinished_normal_reqs() > 0):
             # We have more reqs of the current resolution
             return self._running_res
 
         sche_res = None
         for res in self.resolutions:
-            if self.request_pool[res].get_num_unfinished_reqs() > 0:
+            if self.request_pool[res].get_num_unfinished_normal_reqs() > 0:
                 sche_res = res
         # If not schedules at all, we will return None
         self._running_res = sche_res

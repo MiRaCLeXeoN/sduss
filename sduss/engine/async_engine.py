@@ -563,9 +563,9 @@ class AsyncEngine:
                 request_output, verbose=self.engine_config.log_requests)
 
         if self.engine_use_ray:
-            has_unfinished_reqs = await self.engine.has_unfinished_requests.remote()
+            has_unfinished_reqs = await self.engine.has_unfinished_normal_requests.remote()
         else:
-            has_unfinished_reqs = self.engine.has_unfinished_requests()
+            has_unfinished_reqs = self.engine.has_unfinished_normal_requests()
         return has_unfinished_reqs
     
 
