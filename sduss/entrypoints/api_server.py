@@ -1,6 +1,9 @@
 import argparse
 import json
+import sys
 from typing import AsyncGenerator, Dict
+
+import ray
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, FileResponse
@@ -75,6 +78,9 @@ async def generate(request: Request) -> Response:
 async def clear(request: Request) -> Response:
     """Clear data and ready to release."""
     await engine.clear()
+    ray.timeline(filename="./outputs/ray.log")
+    sys.stdout.flush()
+    sys.stderr.flush()
     return Response(status_code=200)
 
 

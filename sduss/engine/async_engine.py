@@ -519,7 +519,7 @@ class AsyncEngine:
         elif self.worker_use_ray:
             # We must use num_cpus=0 to allow free actor scheduling in ray.
             # This doesn't imply that we will not be allocated CPUs to.
-            engine_class = ray.remote(num_cpus=0)(self._engine_class).remote
+            engine_class = ray.remote(num_cpus=1)(self._engine_class).remote
         else:
             raise RuntimeError(f"Currently, {self._engine_class.__name__} doesn't support "
                                f"a combination of {self.engine_use_ray=} and {self.worker_use_ray=}")

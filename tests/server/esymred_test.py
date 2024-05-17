@@ -61,7 +61,7 @@ async def get_image_from_session(
     await asyncio.sleep(delay_time / 1000)
     print(f"start request {index}")
     start_time = datetime.datetime.now()
-    async with session.post(url=api_url, headers=headers, json=pload) as response:
+    async with session.post(url=api_url, headers=headers, json=pload, timeout=1800) as response:
         img = await response.read()
         end_time = datetime.datetime.now()
 
@@ -153,7 +153,7 @@ if __name__ == "__main__":
 
     base_url = f"http://{args.host}:{args.port}/"
 
-    max_retry = 30
+    max_retry = 60
     retry = max_retry
     while True:
         try:

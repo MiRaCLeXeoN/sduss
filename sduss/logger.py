@@ -53,6 +53,7 @@ def init_logger(
         _setup_logger()
 
     logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
     if not no_stdout:
         logger.addHandler(_default_handler)
     if handlers is not None:

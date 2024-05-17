@@ -68,6 +68,8 @@ def initialize_cluster(
                               "for distributed inference")
         
         ray.init(address=ray_address,
+                 num_cpus=parallel_config.world_size + 3,
+                 num_gpus=parallel_config.world_size,
                  ignore_reinit_error=True)
     
     if not parallel_config.worker_use_ray:
@@ -100,13 +102,13 @@ def initialize_cluster(
                 "available GPUs in the cluster.")
 
         # Create a new placement group
-        bundles = [{"GPU": 1}] * parallel_config.world_size
+        bundles = [{"GPU": 1, "CPU" : 1}] * parallel_config.world_size
         if scheduler_config.overlap_prepare:
             # We need extra workers
             bundles += [{"CPU": parallel_config.num_cpus_extra_worker}] * (parallel_config.num_workers 
                                                                            - parallel_config.world_size)
 
-        current_placement_group = ray.util.placement_group(bundles)
+        current_placement_group = ray.util.placement_group(bundles, strategy="STRICT_PACK")
         
         # We should wait until PG is ready -- this will block until all 
         # requested resources are available, and will timeout if 

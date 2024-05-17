@@ -186,26 +186,28 @@ class Engine:
         # ! This ray API is not thoroughly examined
         self.workers = []
         self.prepare_workers = []
-        for bundle in placement_group.bundle_specs:
+        for i, bundle in enumerate(placement_group.bundle_specs):
             # if not bundle.get("GPU", 0):
             #     continue
             logger.info(f"bundle gpus={bundle.get('GPU')}, cpus={bundle.get('CPU')}")
             if bundle.get("GPU"):
                 worker = ray.remote(
-                    num_cpus=0,
+                    num_cpus=1,
                     num_gpus=1,
                     scheduling_strategy=PlacementGroupSchedulingStrategy(
                         placement_group=placement_group,
-                        placement_group_capture_child_tasks=True),
+                        placement_group_bundle_index=i,
+                        placement_group_capture_child_tasks=True,),
                     **ray_remote_kwargs,
                 )(RayWorker).remote(self.pipeline_config.trust_remote_code)
                 self.workers.append(worker)
             elif bundle.get("CPU") == self.parallel_config.num_cpus_extra_worker:
                 worker = ray.remote(
-                    num_cpus=1,
+                    num_cpus=self.parallel_config.num_cpus_extra_worker,
                     num_gpus=0,
                     scheduling_strategy=PlacementGroupSchedulingStrategy(
                         placement_group=placement_group,
+                        placement_group_bundle_index=i,
                         placement_group_capture_child_tasks=True),
                     **ray_remote_kwargs,
                 )(RayWorker).remote(self.pipeline_config.trust_remote_code)
@@ -353,7 +355,9 @@ class Engine:
     def _step_nonblocking(self):
         """Non-blocking step."""
         # 1. Schedule
+        start_time = time.time()
         scheduler_output, req_ids = self._schedule()
+        logger.debug(f"{self._step_counter} schedule_time: {time.time() - start_time}")
         
         if self.engine_config.log_status:
             self._log_system_states(scheduler_output)
@@ -692,6 +696,8 @@ class Engine:
         if self.collect_data:
             self.sm_monitor.end_monitor()
             self.sm_monitor.log_result_to_file()
+        sys.stdout.flush()
+        sys.stderr.flush()
     
     
     def _collect_data(

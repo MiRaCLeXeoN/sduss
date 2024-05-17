@@ -135,7 +135,7 @@ class Request:
         status = self.status
         # Get ddl
         if status == RequestStatus.WAITING or status == RequestStatus.PREPARE:
-            self.slack = 0
+            self.slack = 1e5
             return 
         elif status == RequestStatus.DENOISING:
             stage = "denoising"

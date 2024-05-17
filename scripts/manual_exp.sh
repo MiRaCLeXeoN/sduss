@@ -7,10 +7,10 @@
 
 export SLO="5"
 export DISTRIBUTION="equal"
-export NUM=1
-export MODEL="sd1.5"
+export NUM=100
+export MODEL="sdxl"
+export QPS="0.3"
 
-export QPS="0.45"
 # export POLICY="fcfs_single"
 export POLICY="esymred"
 
@@ -34,17 +34,18 @@ sbatch_output=$(sbatch ./scripts/slurm/unit_test.slurm)
 job_num=${sbatch_output:0-4}
 echo "Got job $job_num to run model=$MODEL, qps=$QPS, policy=$POLICY, distribution=$DISTRIBUTION"
 # Wait until server is ready
-sleep 100
+sleep 80
 /home/zzp/miniconda3/envs/sduss/bin/python ./tests/server/esymred_test.py \
     --model ${MODEL} \
     --qps ${QPS} \
     --distribution ${DISTRIBUTION} \
     --SLO ${SLO} \
     --policy ${POLICY} \
-    --host hepnode3 \
+    --host hepnode2 \
     --port 8000 \
     --num $NUM
-sleep 5
+sleep 3
 $(scancel ${job_num})
 echo "cancelled job $job_num"
 cp ./outputs/*$job_num.* ${folder_path}/
+cp ./outputs/ray.log ${folder_path}/

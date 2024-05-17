@@ -50,12 +50,13 @@ for qps in $SD15_QPS; do
             --distribution ${DISTRIBUTION} \
             --SLO ${SLO} \
             --policy ${POLICY} \
-            --host hepnode3 \
+            --host hepnode2 \
             --port 8000 \
             --num $NUM
         $(scancel ${job_num})
         echo "cancelled job $job_num"
         cp ./outputs/*$job_num.* ${folder_path}/
+        cp ./outputs/ray.log ${folder_path}/
     done
 done
 
@@ -90,11 +91,12 @@ for qps in $SDXL_QPS; do
             --distribution ${DISTRIBUTION} \
             --SLO ${SLO} \
             --policy ${POLICY} \
-            --host hepnode3 \
+            --host hepnode2 \
             --port 8000 \
             --num $NUM
         $(scancel ${job_num})
         echo "cancelled job $job_num"
         cp ./outputs/*$job_num.* ${folder_path}/
+        cp ./outputs/ray.log ${folder_path}/
     done
 done

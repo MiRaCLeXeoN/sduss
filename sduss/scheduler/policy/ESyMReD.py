@@ -357,7 +357,7 @@ class ESyMReD_Scheduler(Policy):
             
         return SchedulerOutput(
             scheduled_requests=res_reqs_dict,
-            status=target_status,
+            status=target_status if len(res_reqs_dict) > 0 else RequestStatus.EMPTY,
             abort_req_ids=req_ids_to_abort,
             is_sliced=is_sliced,
             patch_size=patch_size,

@@ -20,8 +20,8 @@ with open(path, "r") as f:
 
     # Envs
     SLO = os.getenv("SLO")
-    SLO = int(SLO)
     assert SLO is not None
+    SLO = int(SLO)
 
     # Calculate ddl
     POSTPROCESSING_DDL = { }
