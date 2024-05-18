@@ -16,7 +16,7 @@ from sduss.config import (PipelineConfig, ParallelConfig,
                           SchedulerConfig, EngineConfig)
 from sduss.entrypoints.outputs import RequestOutput
 from sduss.worker import WorkerOutput
-from sduss.worker.ray_utils import initialize_cluster
+from sduss.executor.ray_executor import initialize_cluster
 from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.scheduler import RequestStatus
 
@@ -27,7 +27,7 @@ from .utils import AsyncEngineDeadError
 if TYPE_CHECKING:
     import ray
     from ray.util.placement_group import PlacementGroup
-    from sduss.worker.ray_utils import RayWorker
+    from sduss.executor.ray_executor import RayExecutor
 
 logger = init_logger(__name__)
 
@@ -372,7 +372,7 @@ class _AsyncEngine(Engine):
     async def _run_workers_blocking_async(
         self,
         method: str,
-        workers: List['RayWorker'],
+        workers: List['RayExecutor'],
         *args,
         get_all_outputs: bool = False,
         **kwargs,
@@ -407,7 +407,7 @@ class _AsyncEngine(Engine):
     async def _run_workers_nonblocking_async(
         self,
         method: str,
-        workers: List['RayWorker'],
+        workers: List['RayExecutor'],
         *args,
         get_all_outputs: bool = False,
         **kwargs,

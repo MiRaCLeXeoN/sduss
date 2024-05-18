@@ -21,7 +21,8 @@ class EngineArgs:
         self.use_esymred = kwargs.pop("use_esymred", False)
         self.use_batch_split = kwargs.pop("use_batch_split", False)
         # Parallel configs
-        self.worker_use_ray = kwargs.pop("worker_use_ray", True)
+        self.worker_use_ray = kwargs.pop("worker_use_ray", False)
+        self.worker_use_mp = kwargs.pop("worker_use_mp", True)
         self.pipeline_parallel_size = kwargs.pop("pipeline_parallel_size", 1)
         self.tensor_parallel_size = kwargs.pop("tensor_parallel_size", 1)
         self.data_parallel_size = kwargs.pop("data_parallel_size", 1)
@@ -80,9 +81,15 @@ class EngineArgs:
         # Parallel configs
         parser.add_argument(
             '--worker_use_ray', 
-            default=True,
+            default=False,
             action='store_true', 
             help="Workers use ray or native codes.", 
+        )
+        parser.add_argument(
+            '--worker_use_mp', 
+            default=True,
+            action='store_true', 
+            help="Workers use multiprocessing.", 
         )
         parser.add_argument(
             '--pipeline_parallel_size', 

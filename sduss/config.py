@@ -64,6 +64,7 @@ class ParallelConfig:
         num_cpus_cpu_worker: int,
         num_cpus_gpu_worker: int,
         worker_use_ray: bool,
+        worker_use_mp: bool,
         max_parallel_loading_workers: Optional[int] = None,
     ) -> None:
         """Configuration for the distributed execution.
@@ -79,6 +80,7 @@ class ParallelConfig:
         self.tensor_parallel_size = tensor_parallel_size
         self.data_parallel_size = data_parallel_size
         self.worker_use_ray = worker_use_ray
+        self.worker_use_mp = worker_use_mp
         self.max_parallel_loading_workers = max_parallel_loading_workers
 
         self.world_size = pipeline_parallel_size * tensor_parallel_size * data_parallel_size
@@ -88,7 +90,7 @@ class ParallelConfig:
         self.num_cpus_gpu_worker = num_cpus_gpu_worker
         
         if self.world_size > 1:
-            self.worker_use_ray = True
+            self.worker_use_mp = True
         self._verify_args()
 
 

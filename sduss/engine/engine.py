@@ -25,7 +25,7 @@ from sduss.entrypoints.outputs import RequestOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.config import (PipelineConfig, ParallelConfig, SchedulerConfig, EngineConfig)
 from sduss.engine.arg_utils import EngineArgs
-from sduss.worker.ray_utils import RayWorker, initialize_cluster
+from sduss.executor.ray_executor import RayExecutor, initialize_cluster
 from sduss.engine.metrics import record_metrics
 
 from .utils import SmUtilMonitor
@@ -115,16 +115,19 @@ class Engine:
         """Create an inference engine from arguments"""
         # Create engine configs.
         pipeline_config, parallel_config, scheduler_config, engine_config= engine_args.create_engine_configs()
-        # Initialize the cluster
-        distributed_init_method, placement_group = initialize_cluster(
-            parallel_config, scheduler_config)
+        # Initialize the cluster if using ray
+        distributed_init_method = 
+        if parallel_config.worker_use_ray or engine_config.engine_use_ray:
+            distributed_init_method, gpu_pg, cpu_pg = initialize_cluster(
+                parallel_config, scheduler_config)
         # Create engine instance
         return cls(pipeline_config, 
                    parallel_config, 
                    scheduler_config, 
                    engine_config,
                    distributed_init_method, 
-                   placement_group)
+                   gpu_pg,
+                   cpu_pg)
         
 
     def _verify_args(self):
@@ -199,7 +202,7 @@ class Engine:
                         placement_group_bundle_index=i,
                         placement_group_capture_child_tasks=True,),
                     **ray_remote_kwargs,
-                )(RayWorker).remote(self.pipeline_config.trust_remote_code)
+                )(RayExecutor).remote(self.pipeline_config.trust_remote_code)
                 self.workers.append(worker)
             elif bundle.get("CPU") == self.parallel_config.num_cpus_extra_worker:
                 worker = ray.remote(
@@ -210,7 +213,7 @@ class Engine:
                         placement_group_bundle_index=i,
                         placement_group_capture_child_tasks=True),
                     **ray_remote_kwargs,
-                )(RayWorker).remote(self.pipeline_config.trust_remote_code)
+                )(RayExecutor).remote(self.pipeline_config.trust_remote_code)
                 self.prepare_workers.append(worker)
         
         init_torch_dist_process_group(self.workers, backend="nccl")
@@ -559,7 +562,7 @@ class Engine:
     def _run_workers_nonblocking(
         self,
         method: str,
-        workers: List[RayWorker],
+        workers: List[RayExecutor],
         *args,
         **kwargs,
     ) -> List[ray.ObjectRef]:
@@ -589,7 +592,7 @@ class Engine:
     def _run_workers_blocking(
         self,
         method: str,
-        workers: List[RayWorker],
+        workers: List[RayExecutor],
         *args,
         get_all_outputs: bool = False,
         max_concurrent_workers: Optional[int] = None,

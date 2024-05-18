@@ -3,8 +3,6 @@ import json
 import sys
 from typing import AsyncGenerator, Dict
 
-import ray
-
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, FileResponse
 import uvicorn
@@ -77,8 +75,7 @@ async def generate(request: Request) -> Response:
 @app.post("/clear")
 async def clear(request: Request) -> Response:
     """Clear data and ready to release."""
-    await engine.clear()
-    ray.timeline(filename="./outputs/ray.log")
+    await engine.cler(
     sys.stdout.flush()
     sys.stderr.flush()
     return Response(status_code=200)

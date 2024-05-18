@@ -11,8 +11,7 @@ try:
     import ray
     from ray.air.util.torch_dist import TorchDistributedWorker
     # ! This API is not thoroughly studied
-    
-    class RayWorker(TorchDistributedWorker):
+    class RayExecutor(TorchDistributedWorker):
         """Ray Wrapper for worker.
         
         Allowing worker to be lazily initialized after ray sets CUDA_VISIBLE_DEVICE.
@@ -40,7 +39,7 @@ except ImportError as e:
                    "`pip install ray pandas pyarrow`.")
     ray = None
     TorchDistributedWorker = None
-    RayWorker = None
+    RayExecutor = None
     
 if TYPE_CHECKING:
     from ray.util.placement_group import PlacementGroup
