@@ -61,7 +61,7 @@ async def get_image_from_session(
     await asyncio.sleep(delay_time / 1000)
     print(f"start request {index}")
     start_time = datetime.datetime.now()
-    async with session.post(url=api_url, headers=headers, json=pload, timeout=1800) as response:
+    async with session.post(url=api_url, headers=headers, json=pload, timeout=3600) as response:
         img = await response.read()
         end_time = datetime.datetime.now()
 

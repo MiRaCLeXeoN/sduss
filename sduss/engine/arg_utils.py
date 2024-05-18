@@ -25,7 +25,8 @@ class EngineArgs:
         self.pipeline_parallel_size = kwargs.pop("pipeline_parallel_size", 1)
         self.tensor_parallel_size = kwargs.pop("tensor_parallel_size", 1)
         self.data_parallel_size = kwargs.pop("data_parallel_size", 1)
-        self.num_cpus_extra_worker = kwargs.pop("num_cpus_extra_worker", 2)
+        self.num_cpus_cpu_worker = kwargs.pop("num_cpus_cpu_worker", 8)
+        self.num_cpus_gpu_worker = kwargs.pop("num_cpus_gpu_worker", 4)
         self.max_parallel_loading_workers = kwargs.pop("max_parallel_loading_workers", None)
         # Scheduler configs
         self.max_batchsize = kwargs.pop("max_batchsize", 32)
@@ -102,11 +103,17 @@ class EngineArgs:
             help="Data parallel size of the whole system.", 
         )
         parser.add_argument(
-            '--num_cpus_extra_worker', 
-            default=2,
+            '--num_cpus_cpu_worker', 
+            default=1,
             type=int,
             help="Number of cpus for each extra workers. Extra workers are those "
                  "CPU workers running other tasks such as overlapped prepare stage.", 
+        )
+        parser.add_argument(
+            '--num_cpus_gpu_worker', 
+            default=1,
+            type=int,
+            help="Number of cpus for each gpu workers."
         )
 
         # Scheduler configs
@@ -193,7 +200,8 @@ class EngineArgs:
             pipeline_parallel_size=self.pipeline_parallel_size,
             tensor_parallel_size=self.tensor_parallel_size,
             data_parallel_size=self.data_parallel_size,
-            num_cpus_extra_worker=self.num_cpus_extra_worker,
+            num_cpus_cpu_worker=self.num_cpus_cpu_worker,
+            num_cpus_gpu_worker=self.num_cpus_gpu_worker,
             worker_use_ray=self.worker_use_ray,
             max_parallel_loading_workers=self.max_parallel_loading_workers
         )
@@ -221,6 +229,8 @@ class EngineArgs:
         parallel_config = self.get_parallel_config()
         scheduler_config = self.get_scheduler_config()
         engine_config = self.get_engine_config()
+        # Update parameters
+        parallel_config.update_params(scheduler_config=scheduler_config)
         return pipeline_config, parallel_config, scheduler_config, engine_config
 
 

@@ -68,7 +68,9 @@ def initialize_cluster(
                               "for distributed inference")
         
         ray.init(address=ray_address,
-                 num_cpus=parallel_config.world_size + 3,
+                 num_cpus=(parallel_config.world_size * parallel_config.num_cpus_gpu_worker
+                            + (parallel_config.num_workers - parallel_config.world_size) * parallel_config.num_cpus_cpu_worker +
+                            + 1 * 1),
                  num_gpus=parallel_config.world_size,
                  ignore_reinit_error=True)
     
@@ -76,7 +78,7 @@ def initialize_cluster(
         # Initialize cluster locally
         port = get_open_port()
         distributed_init_method = f"tcp://localhost:{port}"
-        return distributed_init_method, None
+        return distributed_init_method, None, None
     
     current_placement_group = ray.util.get_current_placement_group()
     if current_placement_group:
@@ -94,6 +96,7 @@ def initialize_cluster(
             raise ValueError(
                 "The number of required GPUs exceeds the total number of available GPUs "
                 "in the cluster.")
+        return (None, current_placement_group, None)
     else:
         num_gpus_in_cluster = ray.cluster_resources().get("GPU", 0)
         if parallel_config.world_size > num_gpus_in_cluster:
@@ -102,19 +105,26 @@ def initialize_cluster(
                 "available GPUs in the cluster.")
 
         # Create a new placement group
-        bundles = [{"GPU": 1, "CPU" : 1}] * parallel_config.world_size
+        # bundles = [{"GPU": 1, "CPU": parallel_config.num_cpus_gpu_worker}] * parallel_config.world_size
+        bundles = [{"GPU": 1, "CPU": parallel_config.num_cpus_gpu_worker}] * parallel_config.world_size
+        gpu_pg = ray.util.placement_group(bundles, strategy="STRICT_PACK")
+
+        cpu_pg = None
         if scheduler_config.overlap_prepare:
             # We need extra workers
-            bundles += [{"CPU": parallel_config.num_cpus_extra_worker}] * (parallel_config.num_workers 
-                                                                           - parallel_config.world_size)
+            # 1 more for the engine
+            bundles = [{"CPU": 1}]
+            bundles += [{"CPU": parallel_config.num_cpus_cpu_worker}] * (parallel_config.num_workers 
+                                        - parallel_config.world_size)
+            cpu_pg = ray.util.placement_group(bundles, strategy="STRICT_PACK")
 
-        current_placement_group = ray.util.placement_group(bundles, strategy="STRICT_PACK")
-        
         # We should wait until PG is ready -- this will block until all 
         # requested resources are available, and will timeout if 
         # they cannot be provisioned
         logger.debug("Start ray placement group allocation.")
-        ray.get(current_placement_group.ready(), timeout=1800)
+        ray.get(gpu_pg.ready(), timeout=1800)
+        if scheduler_config.overlap_prepare:
+            ray.get(cpu_pg.ready(), timeout=1800)
         logger.debug("Ray plamencement group ready.")
+        return (None, gpu_pg, cpu_pg)
     
-    return None, current_placement_group

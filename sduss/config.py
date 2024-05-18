@@ -61,7 +61,8 @@ class ParallelConfig:
         pipeline_parallel_size: int,
         tensor_parallel_size: int,
         data_parallel_size: int,
-        num_cpus_extra_worker: int,
+        num_cpus_cpu_worker: int,
+        num_cpus_gpu_worker: int,
         worker_use_ray: bool,
         max_parallel_loading_workers: Optional[int] = None,
     ) -> None:
@@ -82,8 +83,9 @@ class ParallelConfig:
 
         self.world_size = pipeline_parallel_size * tensor_parallel_size * data_parallel_size
 
-        self.num_workers = self.world_size + 1 # 1 worker for prepare stage
-        self.num_cpus_extra_worker = num_cpus_extra_worker
+        self.num_workers = self.world_size 
+        self.num_cpus_cpu_worker = num_cpus_cpu_worker
+        self.num_cpus_gpu_worker = num_cpus_gpu_worker
         
         if self.world_size > 1:
             self.worker_use_ray = True
@@ -95,6 +97,19 @@ class ParallelConfig:
             or self.data_parallel_size > 1):
             raise NotImplementedError(
                 "Parallelism is not supported yet.")
+    
+    
+    def update_params(self, scheduler_config: 'SchedulerConfig'):
+        if scheduler_config.overlap_prepare:
+            # 1 extra worker for prepare stage
+            self.num_workers += 1
+    
+    
+    def verify_with_scheduler_config(
+        self,
+        scheduler_config: "SchedulerConfig",
+    ):
+        pass
 
 
 class SchedulerConfig:

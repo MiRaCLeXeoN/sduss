@@ -9,6 +9,8 @@ from typing import (List, Any, Optional, TYPE_CHECKING, Type, Tuple, Dict,
 from functools import partial
 from datetime import datetime
 
+from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
+
 from sduss.logger import init_logger
 from sduss.config import (PipelineConfig, ParallelConfig, 
                           SchedulerConfig, EngineConfig)
@@ -469,7 +471,8 @@ class AsyncEngine:
         scheduler_config: SchedulerConfig,
         engine_config: EngineConfig,
         distributed_init_method: str,
-        placement_group: Optional["PlacementGroup"],
+        gpu_pg: Optional["PlacementGroup"],
+        cpu_pg: Optional["PlacementGroup"],
         engine_use_ray: bool,
         worker_use_ray: bool,
         *args,
@@ -485,19 +488,20 @@ class AsyncEngine:
         self.scheduler_config = scheduler_config
         self.engine_config = engine_config
 
+        assert isinstance(engine_config, EngineConfig)
         # Engine
         self.engine = self._init_engine(
-            pipeline_config,
-            parallel_config,
-            scheduler_config,
-            engine_config,
-            distributed_init_method,
-            placement_group,
+            pipeline_config=pipeline_config,
+            parallel_config=parallel_config,
+            scheduler_config=scheduler_config,
+            engine_config=engine_config,
+            distributed_init_method=distributed_init_method,
+            gpu_pg=gpu_pg,
+            cpu_pg=cpu_pg,
         )
 
         if self.engine_config.engine_use_ray:
             ray.get(self.engine.engine_is_ready.remote())
-            
 
         # Asyncio loop
         # We need to keep a reference to unshielded
@@ -514,16 +518,26 @@ class AsyncEngine:
 
 
     def _init_engine(self, *args, **kwargs) -> Union[_AsyncEngine, "ray.ObjectRef"]:
+        cpu_pg = kwargs["cpu_pg"]
+
         if not self.engine_use_ray:
             engine_class = self._engine_class
         elif self.worker_use_ray:
             # We must use num_cpus=0 to allow free actor scheduling in ray.
             # This doesn't imply that we will not be allocated CPUs to.
-            engine_class = ray.remote(num_cpus=1)(self._engine_class).remote
+            engine_class = ray.remote(
+                                num_cpus=1,
+                                num_gpus=0,
+                                scheduling_strategy=PlacementGroupSchedulingStrategy(
+                                    placement_group=cpu_pg,
+                                    placement_group_bundle_index=0,
+                                    placement_group_capture_child_tasks=True,
+                                )
+                            )(self._engine_class).remote
         else:
             raise RuntimeError(f"Currently, {self._engine_class.__name__} doesn't support "
                                f"a combination of {self.engine_use_ray=} and {self.worker_use_ray=}")
-        return engine_class(*args, *kwargs)
+        return engine_class(*args, **kwargs)
         
 
     @property
@@ -659,7 +673,7 @@ class AsyncEngine:
         (pipeline_config, parallel_config, scheduler_config, 
          engine_config) = engine_args.create_engine_configs()
         # Initialize the cluster.
-        distributed_init_method, placement_group = initialize_cluster(
+        distributed_init_method, gpu_pg, cpu_pg = initialize_cluster(
             parallel_config, scheduler_config, engine_config.engine_use_ray)
         # Create the async LLM engine.
         engine = cls(
@@ -668,7 +682,8 @@ class AsyncEngine:
             scheduler_config,
             engine_config,
             distributed_init_method,
-            placement_group,
+            gpu_pg,
+            cpu_pg,
             engine_config.engine_use_ray,
             parallel_config.worker_use_ray,
             start_engine_loop=start_engine_loop,

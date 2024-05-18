@@ -360,13 +360,6 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         #     added_cond_kwargs["image_embeds"] = image_embeds
 
         # TODO: Clean up
-        for res in latent_input_dict:
-            print(f"latent[{res}].shape={latent_input_dict[res].shape}")
-        print(f"{is_sliced=}, {patch_size=}")
-        # print(f"{t.shape=}, {t=}")
-        # print(f"{prompt_embeds.shape=}, {prompt_embeds=}")
-        # for name in added_cond_kwargs:
-        #     print(f"added_cond_kwargs[{name}].shape={added_cond_kwargs[name].shape}, {added_cond_kwargs[name]}")
 
         noise_pred = self.unet(
             latent_input_dict,
@@ -380,10 +373,6 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             patch_size=patch_size,
         )[0]
 
-        # for res in noise_pred:
-        #     print(f"noise_pred[{res}].shape={noise_pred[res].shape}, {noise_pred[res]}")
-
-        # perform guidance
         for res, res_split_noise in noise_pred.items():
             if do_classifier_free_guidance:
                 noise_pred_uncond, noise_pred_text = res_split_noise.chunk(2)
