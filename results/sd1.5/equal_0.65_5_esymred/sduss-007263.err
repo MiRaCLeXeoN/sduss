@@ -1,0 +1,49 @@
+2024-05-19 04:34:56,036	INFO worker.py:1715 -- Started a local Ray instance. View the dashboard at [1m[32m127.0.0.1:8265 [39m[22m
+[36m(_AsyncEngine pid=3970529)[0m Using blocking ray.get inside async actor. This blocks the event loop. Please use `await` on object ref with asyncio.gather if you want to yield execution to the event loop instead.
+[36m(RayWorker pid=3970698)[0m [W Utils.hpp:133] Warning: Environment variable NCCL_ASYNC_ERROR_HANDLING is deprecated; use TORCH_NCCL_ASYNC_ERROR_HANDLING instead (function getCvarInt)
+[36m(RayWorker pid=3970699)[0m Loading pipeline components...:   0%|          | 0/7 [00:00<?, ?it/s]You have passed a non-standard module StableDiffusionSafetyChecker(
+[36m(RayWorker pid=3970699)[0m   (vision_model): CLIPVisionModel(
+[36m(RayWorker pid=3970699)[0m     (vision_model): CLIPVisionTransformer(
+[36m(RayWorker pid=3970699)[0m       (embeddings): CLIPVisionEmbeddings(
+[36m(RayWorker pid=3970699)[0m         (patch_embedding): Conv2d(3, 1024, kernel_size=(14, 14), stride=(14, 14), bias=False)
+[36m(RayWorker pid=3970699)[0m         (position_embedding): Embedding(257, 1024)
+[36m(RayWorker pid=3970699)[0m       )
+[36m(RayWorker pid=3970699)[0m       (pre_layrnorm): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+[36m(RayWorker pid=3970699)[0m       (encoder): CLIPEncoder(
+[36m(RayWorker pid=3970699)[0m         (layers): ModuleList(
+[36m(RayWorker pid=3970699)[0m           (0-23): 24 x CLIPEncoderLayer(
+[36m(RayWorker pid=3970699)[0m             (self_attn): CLIPAttention(
+[36m(RayWorker pid=3970699)[0m               (k_proj): Linear(in_features=1024, out_features=1024, bias=True)
+[36m(RayWorker pid=3970699)[0m               (v_proj): Linear(in_features=1024, out_features=1024, bias=True)
+[36m(RayWorker pid=3970699)[0m               (q_proj): Linear(in_features=1024, out_features=1024, bias=True)
+[36m(RayWorker pid=3970699)[0m               (out_proj): Linear(in_features=1024, out_features=1024, bias=True)
+[36m(RayWorker pid=3970699)[0m             )
+[36m(RayWorker pid=3970699)[0m             (layer_norm1): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+[36m(RayWorker pid=3970699)[0m             (mlp): CLIPMLP(
+[36m(RayWorker pid=3970699)[0m               (activation_fn): QuickGELUActivation()
+[36m(RayWorker pid=3970699)[0m               (fc1): Linear(in_features=1024, out_features=4096, bias=True)
+[36m(RayWorker pid=3970699)[0m               (fc2): Linear(in_features=4096, out_features=1024, bias=True)
+[36m(RayWorker pid=3970699)[0m             )
+[36m(RayWorker pid=3970699)[0m             (layer_norm2): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+[36m(RayWorker pid=3970699)[0m           )
+[36m(RayWorker pid=3970699)[0m         )
+[36m(RayWorker pid=3970699)[0m       )
+[36m(RayWorker pid=3970699)[0m       (post_layernorm): LayerNorm((1024,), eps=1e-05, elementwise_affine=True)
+[36m(RayWorker pid=3970699)[0m     )
+[36m(RayWorker pid=3970699)[0m   )
+[36m(RayWorker pid=3970699)[0m   (visual_projection): Linear(in_features=1024, out_features=768, bias=False)
+[36m(RayWorker pid=3970699)[0m ). We cannot verify whether it has the correct type
+[36m(RayWorker pid=3970699)[0m Loading pipeline components...: 100%|██████████| 7/7 [00:00<00:00, 558.98it/s]
+[36m(RayWorker pid=3970698)[0m Using /data/home/zzp/.cache/torch_extensions/py39_cu121 as PyTorch extensions root...
+[36m(RayWorker pid=3970698)[0m Detected CUDA files, patching ldflags
+[36m(RayWorker pid=3970698)[0m Emitting ninja build file /data/home/zzp/.cache/torch_extensions/py39_cu121/esymred/build.ninja...
+[36m(RayWorker pid=3970698)[0m Building extension module esymred...
+[36m(RayWorker pid=3970698)[0m Allowing ninja to set a default number of workers... (overridable by setting the environment variable MAX_JOBS=N)
+[36m(RayWorker pid=3970698)[0m Loading extension module esymred...
+INFO:     Started server process [3969842]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+[36m(RayWorker pid=3970699)[0m Token indices sequence length is longer than the specified maximum sequence length for this model (79 > 77). Running this sequence through the model will result in indexing errors
+[36m(RayWorker pid=3970699)[0m The following part of your input was truncated because CLIP can only handle sequences up to 77 tokens: ['vray']
+[36m(RayWorker pid=3970699)[0m The following part of your input was truncated because CLIP can only handle sequences up to 77 tokens: ['ick screenshots, ghibli']

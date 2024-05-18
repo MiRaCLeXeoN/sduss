@@ -1,0 +1,20 @@
+2024-05-19 04:57:31,688	INFO worker.py:1715 -- Started a local Ray instance. View the dashboard at [1m[32m127.0.0.1:8265 [39m[22m
+[36m(_AsyncEngine pid=3984026)[0m Using blocking ray.get inside async actor. This blocks the event loop. Please use `await` on object ref with asyncio.gather if you want to yield execution to the event loop instead.
+[36m(RayWorker pid=3984193)[0m [W Utils.hpp:133] Warning: Environment variable NCCL_ASYNC_ERROR_HANDLING is deprecated; use TORCH_NCCL_ASYNC_ERROR_HANDLING instead (function getCvarInt)
+[36m(RayWorker pid=3984194)[0m Loading pipeline components...:   0%|          | 0/7 [00:00<?, ?it/s]Loading pipeline components...: 100%|██████████| 7/7 [00:00<00:00, 586.59it/s]
+[36m(RayWorker pid=3984193)[0m Using /data/home/zzp/.cache/torch_extensions/py39_cu121 as PyTorch extensions root...
+[36m(RayWorker pid=3984193)[0m Detected CUDA files, patching ldflags
+[36m(RayWorker pid=3984193)[0m Emitting ninja build file /data/home/zzp/.cache/torch_extensions/py39_cu121/esymred/build.ninja...
+[36m(RayWorker pid=3984193)[0m Building extension module esymred...
+[36m(RayWorker pid=3984193)[0m Allowing ninja to set a default number of workers... (overridable by setting the environment variable MAX_JOBS=N)
+[36m(RayWorker pid=3984193)[0m Loading extension module esymred...
+INFO:     Started server process [3983338]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+[36m(RayWorker pid=3984194)[0m Token indices sequence length is longer than the specified maximum sequence length for this model (79 > 77). Running this sequence through the model will result in indexing errors
+[36m(RayWorker pid=3984194)[0m The following part of your input was truncated because CLIP can only handle sequences up to 77 tokens: ['vray']
+[36m(RayWorker pid=3984194)[0m Token indices sequence length is longer than the specified maximum sequence length for this model (79 > 77). Running this sequence through the model will result in indexing errors
+[36m(RayWorker pid=3984194)[0m The following part of your input was truncated because CLIP can only handle sequences up to 77 tokens: ['vray']
+[36m(RayWorker pid=3984194)[0m The following part of your input was truncated because CLIP can only handle sequences up to 77 tokens: ['ick screenshots, ghibli']
+[36m(RayWorker pid=3984194)[0m The following part of your input was truncated because CLIP can only handle sequences up to 77 tokens: ['ick screenshots, ghibli']
