@@ -49,8 +49,11 @@ class Engine:
         scheduler_config: SchedulerConfig,
         engine_config: EngineConfig,
         distributed_init_method: str,
-        placement_group: Optional["PlacementGroup"],
+        gpu_pg: Optional["PlacementGroup"],
+        cpu_pg: Optional["PlacementGroup"],
     ) -> None:
+        print(f"{pipeline_config}, {parallel_config}, {scheduler_config}, {engine_config}, {distributed_init_method}, {gpu_pg}, {cpu_pg}")
+        time.sleep(5)
         if engine_config.log_status:
             logger.info(
                 "Initializing an engine with config:\n"
@@ -66,7 +69,7 @@ class Engine:
         
         # Create the parallel GPU workers
         if self.parallel_config.worker_use_ray:
-            self._init_workers_ray(placement_group)
+            self._init_workers_ray(gpu_pg, cpu_pg)
         else:
             self._init_workers(distributed_init_method)
             
@@ -116,7 +119,7 @@ class Engine:
         # Create engine configs.
         pipeline_config, parallel_config, scheduler_config, engine_config= engine_args.create_engine_configs()
         # Initialize the cluster
-        distributed_init_method, placement_group = initialize_cluster(
+        distributed_init_method, gpu_pg, cpu_pg = initialize_cluster(
             parallel_config, scheduler_config)
         # Create engine instance
         return cls(pipeline_config, 
@@ -124,11 +127,13 @@ class Engine:
                    scheduler_config, 
                    engine_config,
                    distributed_init_method, 
-                   placement_group)
+                   gpu_pg,
+                   cpu_pg)
         
 
     def _verify_args(self):
         """Verify args. Now only parallel config requires verification."""
+        self.parallel_config.verify_with_scheduler_config(self.scheduler_config)
         self.pipeline_config.verify_with_scheduler_config(self.scheduler_config)
         self.engine_config.verify_with_scheduler_config(self.scheduler_config)
 
@@ -166,7 +171,8 @@ class Engine:
         
     def _init_workers_ray(
         self,
-        placement_group: "PlacementGroup",
+        gpu_pg: "PlacementGroup",
+        cpu_pg: "PlacementGroup",
         **ray_remote_kwargs,
     ):
         if self.engine_config.log_status:
@@ -185,33 +191,36 @@ class Engine:
         # create workers using ray interface
         # ! This ray API is not thoroughly examined
         self.workers = []
-        self.prepare_workers = []
-        for i, bundle in enumerate(placement_group.bundle_specs):
-            # if not bundle.get("GPU", 0):
-            #     continue
-            logger.info(f"bundle gpus={bundle.get('GPU')}, cpus={bundle.get('CPU')}")
+        for i, bundle in enumerate(gpu_pg.bundle_specs):
             if bundle.get("GPU"):
                 worker = ray.remote(
-                    num_cpus=1,
+                    num_cpus=0,
                     num_gpus=1,
                     scheduling_strategy=PlacementGroupSchedulingStrategy(
-                        placement_group=placement_group,
+                        placement_group=gpu_pg,
                         placement_group_bundle_index=i,
                         placement_group_capture_child_tasks=True,),
                     **ray_remote_kwargs,
                 )(RayWorker).remote(self.pipeline_config.trust_remote_code)
                 self.workers.append(worker)
-            elif bundle.get("CPU") == self.parallel_config.num_cpus_extra_worker:
-                worker = ray.remote(
-                    num_cpus=self.parallel_config.num_cpus_extra_worker,
-                    num_gpus=0,
-                    scheduling_strategy=PlacementGroupSchedulingStrategy(
-                        placement_group=placement_group,
-                        placement_group_bundle_index=i,
-                        placement_group_capture_child_tasks=True),
-                    **ray_remote_kwargs,
-                )(RayWorker).remote(self.pipeline_config.trust_remote_code)
-                self.prepare_workers.append(worker)
+            else:
+                raise RuntimeError("No gpu resources detected in gpu placement group.")
+
+        self.prepare_workers = []
+        for i, bundle in enumerate(cpu_pg.bundle_specs):
+            if i == 0:
+                # Skip 0th bundle, which is dedicated for engine
+                continue
+            worker = ray.remote(
+                num_cpus=0,
+                num_gpus=0,
+                scheduling_strategy=PlacementGroupSchedulingStrategy(
+                    placement_group=cpu_pg,
+                    placement_group_bundle_index=i,
+                    placement_group_capture_child_tasks=True),
+                **ray_remote_kwargs,
+            )(RayWorker).remote(self.pipeline_config.trust_remote_code)
+            self.prepare_workers.append(worker)
         
         init_torch_dist_process_group(self.workers, backend="nccl")
         model_config = copy.deepcopy(self.pipeline_config)

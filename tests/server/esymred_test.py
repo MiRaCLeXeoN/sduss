@@ -61,44 +61,59 @@ async def get_image_from_session(
     await asyncio.sleep(delay_time / 1000)
     print(f"start request {index}")
     start_time = datetime.datetime.now()
-    async with session.post(url=api_url, headers=headers, json=pload, timeout=3600) as response:
-        img = await response.read()
-        end_time = datetime.datetime.now()
+    try:
+        async with session.post(url=api_url, headers=headers, json=pload, timeout=3600) as response:
+            img = await response.read()
+            end_time = datetime.datetime.now()
 
-        if response.status == 200:
-            img_name = response.headers.get("image_name")
-            is_finished = response.headers.get("is_finished")
-            path = result_dir_path +  f"/imgs/client_" + img_name
-            with open(path, "wb") as f:
-                f.write(img)
-            logger.info(metric.get_str(
-                index=index,
-                request_id=os.path.splitext(img_name)[0],
-                resolution=resolution,
-                step=num_inference_steps,
-                delay_time=delay_time,
-                start_time=start_time,
-                end_time=end_time,
-                time_consumption=(end_time - start_time).total_seconds(),
-                prompt=prompt,
-                success=is_finished
-            ))
-            global success_counter
-            success_counter += 1
-        else:
-            logger.info(metric.get_str(
-                index=index,
-                request_id="None",
-                resolution=resolution,
-                step=num_inference_steps,
-                delay_time=delay_time,
-                start_time=start_time,
-                end_time=end_time,
-                time_consumption=(end_time - start_time).total_seconds(),
-                prompt=prompt,
-                success=False
-            ))
-    print(f"finish request {index}")
+            if response.status == 200:
+                img_name = response.headers.get("image_name")
+                is_finished = response.headers.get("is_finished")
+                path = result_dir_path +  f"/imgs/client_" + img_name
+                with open(path, "wb") as f:
+                    f.write(img)
+                logger.info(metric.get_str(
+                    index=index,
+                    request_id=os.path.splitext(img_name)[0],
+                    resolution=resolution,
+                    step=num_inference_steps,
+                    delay_time=delay_time,
+                    start_time=start_time,
+                    end_time=end_time,
+                    time_consumption=(end_time - start_time).total_seconds(),
+                    prompt=prompt,
+                    success=is_finished
+                ))
+                global success_counter
+                success_counter += 1
+            else:
+                logger.info(metric.get_str(
+                    index=index,
+                    request_id="None",
+                    resolution=resolution,
+                    step=num_inference_steps,
+                    delay_time=delay_time,
+                    start_time=start_time,
+                    end_time=end_time,
+                    time_consumption=(end_time - start_time).total_seconds(),
+                    prompt=prompt,
+                    success=False
+                ))
+        print(f"finish request {index}")
+    except Exception as exc:
+        print(exc)
+        logger.info(metric.get_str(
+                    index=index,
+                    request_id="None",
+                    resolution=resolution,
+                    step=num_inference_steps,
+                    delay_time=delay_time,
+                    start_time=start_time,
+                    end_time=datetime.datetime.now(),
+                    time_consumption=None,
+                    prompt=prompt,
+                    success=False,
+                ))
 
 
 if __name__ == "__main__":

@@ -251,7 +251,7 @@ class ESyMReD_Scheduler(Policy):
                         running_reqs_list.sort(key = lambda req: req.slack, reverse=False)
                         # If we have low slack req, i.e., very urgent one, we don't add more reqs.
                         # TODO: A Hyper parameter here
-                        if running_reqs_list[0].slack < 0.1:
+                        if running_reqs_list[0].slack < 0.3:
                             print(f"esymred: req {running_reqs_list[0].request_id} has slack {running_reqs_list[0].slack}. Very Urgent. Stop adding more reqs.")
                             break
 
