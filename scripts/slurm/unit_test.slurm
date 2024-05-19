@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:L40:1
 #SBATCH --partition=Compute
 #SBATCH --nodes=1
-#SBATCH --nodelist=hepnode3
+#SBATCH --nodelist=hepnode2
 
 ulimit -n 4096
 

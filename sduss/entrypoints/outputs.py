@@ -21,6 +21,8 @@ class RequestOutput:
     ) -> None:
         self.request_id = request.request_id
         self.output = request.output
+        self.resolution = request.sampling_params.resolution
+
         self.normal_finished = RequestStatus.is_normal_finished(request.status)
         self.is_finished = RequestStatus.is_finished(request.status)
 

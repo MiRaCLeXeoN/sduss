@@ -39,6 +39,10 @@ class Task:
 
 
 class MainLoop:
+    """
+    If executed method return None, mail loop won't add it
+    to the output queue. So please make sure method's return value.
+    """
     def __init__(
         self,
         task_queue: multiprocessing.Queue,

@@ -35,7 +35,7 @@ class SmUtilMonitor:
     def __init__(
         self,
         to_file_name:str,
-        interval:float = 1,
+        interval:float = 0.01,
     ) -> None:
         self.file_name = to_file_name
     
@@ -71,7 +71,7 @@ class SmUtilMonitor:
     def _monitor_sm_utilization(
         metrics : Metrics, 
         lock,
-        interval : float = 1,
+        interval : float = 0.01,
     ) -> None:
         while True:
             lock.acquire()

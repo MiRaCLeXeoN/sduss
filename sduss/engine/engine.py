@@ -62,7 +62,6 @@ class Engine:
         gpu_pg: Optional["PlacementGroup"],
         cpu_pg: Optional["PlacementGroup"],
     ) -> None:
-        print(f"{pipeline_config}, {parallel_config}, {scheduler_config}, {engine_config}, {distributed_init_method}, {gpu_pg}, {cpu_pg}")
         time.sleep(5)
         if engine_config.log_status:
             logger.info(
@@ -95,6 +94,7 @@ class Engine:
         self.prev_prepare_handlers = None
         self.prev_denoising_handlers = None
         self.prev_postprocessing_handlers = None
+        self.prev_empty_handlers = None
         self.prev_scheduler_output = None
 
         # For overlapped prepare
@@ -261,21 +261,22 @@ class Engine:
             else:
                 raise RuntimeError("No gpu resources detected in gpu placement group.")
 
-        self.prepare_workers = []
-        for i, bundle in enumerate(cpu_pg.bundle_specs):
-            if i == 0:
-                # Skip 0th bundle, which is dedicated for engine
-                continue
-            worker = ray.remote(
-                num_cpus=0,
-                num_gpus=0,
-                scheduling_strategy=PlacementGroupSchedulingStrategy(
-                    placement_group=cpu_pg,
-                    placement_group_bundle_index=i,
-                    placement_group_capture_child_tasks=True),
-                **ray_remote_kwargs,
-            )(RayExecutor).remote(self.pipeline_config.trust_remote_code)
-            self.prepare_workers.append(worker)
+        if self.scheduler_config.overlap_prepare:
+            self.prepare_workers = []
+            for i, bundle in enumerate(cpu_pg.bundle_specs):
+                if i == 0:
+                    # Skip 0th bundle, which is dedicated for engine
+                    continue
+                worker = ray.remote(
+                    num_cpus=0,
+                    num_gpus=0,
+                    scheduling_strategy=PlacementGroupSchedulingStrategy(
+                        placement_group=cpu_pg,
+                        placement_group_bundle_index=i,
+                        placement_group_capture_child_tasks=True),
+                    **ray_remote_kwargs,
+                )(RayExecutor).remote(self.pipeline_config.trust_remote_code)
+                self.prepare_workers.append(worker)
         
         init_torch_dist_process_group(self.workers, backend="nccl")
         model_config = copy.deepcopy(self.pipeline_config)
@@ -451,10 +452,20 @@ class Engine:
         # 4. Issue tasks to workers
         if scheduler_output.status ==RequestStatus.EMPTY:
             # Empty indicates that no reqs to run, we don't need to do anything.
-            pass
+            if overlapped_prepare_output:
+                self.prev_empty_handlers = self._run_workers_nonblocking(
+                    "receive_prepare_output",
+                    self.workers,
+                    prepare_output=overlapped_prepare_output
+                )
         elif scheduler_output.status == RequestStatus.WAITING:
             # Currently, we don't do anything in waiting stage
-            pass
+            if overlapped_prepare_output:
+                self.prev_empty_handlers = self._run_workers_nonblocking(
+                    "receive_prepare_output",
+                    self.workers,
+                    prepare_output=overlapped_prepare_output
+                )
         elif scheduler_output.status == RequestStatus.PREPARE:
             # Requests are derived from normal reqs instead of prepare_reqs in shceduler_output
             self.prev_prepare_handlers = self._run_workers_nonblocking(
@@ -744,10 +755,12 @@ class Engine:
             postprocessing_output = get_result(self.prev_postprocessing_handlers)
             self.prev_postprocessing_handlers = None
         
-        if self.issued_receive_data:
-            # We need to pop one extra output from workers to ensure the relative order
+        if self.prev_empty_handlers:
+            # We need to pop one extra output from workers to ensure the mapping order
             # of req->output
-            get_result(self.workers)
+            # results will be omitted
+            get_result(self.prev_empty_handlers)
+            self.prev_empty_handlers = None
 
         if get_output_all_workers:
             return prepare_output, denoising_output, postprocessing_output
@@ -811,7 +824,7 @@ class Engine:
         for ro in req_outputs:
             self.request_logger.info(
                 f"{ro.request_id},{ro.normal_finished},{ro.start_datetime},{ro.finish_datetime},"
-                f"{ro.time_consumption}"
+                f"{ro.resolution},{ro.time_consumption}"
             )
         # Schedule data
         res_req_num = []
@@ -855,7 +868,7 @@ class Engine:
             return local_logger
 
         self.request_logger = prepare_logger(request_data_file_name)
-        self.request_logger.info("request_id,is_finished,start_time,finish_time,time_consumption")
+        self.request_logger.info("request_id,is_finished,start_time,finish_time,resolution,time_consumption")
         self.schedule_logger = prepare_logger(schedule_data_file_name)
         self.schedule_logger.info(
             f"step_count,timestamp,status,num_scheduled_reqs,num_req_of_{self.support_resolutions[0]},"
@@ -865,5 +878,5 @@ class Engine:
         )
 
         
-        self.sm_monitor = SmUtilMonitor(sm_util_file_name, interval=0.1)
+        self.sm_monitor = SmUtilMonitor(sm_util_file_name, interval=0.01)
         self.sm_monitor.start_monitor()

@@ -158,4 +158,5 @@ class EngineConfig:
         # Currently we only support 2 combinations:
         # 1. blocking + non-overlapped
         # 2. nonblocking + overlapped
-        assert self.non_blocking_step == scheduler_config.overlap_prepare
+        # assert self.non_blocking_step == scheduler_config.overlap_prepare
+        pass
