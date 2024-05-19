@@ -71,6 +71,14 @@ class PNDMSchedulerStates(BaseSchedulerStates):
     def to_dtype(self, dtype) -> None:
         pass
 
+    
+    def to_numpy(self) -> None:
+        self.timesteps = self.timesteps.numpy()
+    
+    
+    def to_tensor(self) -> None:
+        self.timesteps = torch.from_numpy(self.timesteps)
+
 
 class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
     def batch_set_timesteps(

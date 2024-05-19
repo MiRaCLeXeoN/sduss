@@ -33,6 +33,7 @@ class Policy(ABC):
         self, 
         max_num: int, 
         max_overlapped_prepare_reqs: int,
+        accept_overlap_prepare_reqs: bool,
     ) -> 'SchedulerOutput':
         """Scheduler requests for next iteration regarding overlapping prepare
         stage requests.

@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+import multiprocessing as mp
 from typing import AsyncGenerator, Dict
 
 from fastapi import FastAPI, Request
@@ -75,7 +76,7 @@ async def generate(request: Request) -> Response:
 @app.post("/clear")
 async def clear(request: Request) -> Response:
     """Clear data and ready to release."""
-    await engine.cler(
+    await engine.clear()
     sys.stdout.flush()
     sys.stderr.flush()
     return Response(status_code=200)
@@ -92,6 +93,8 @@ if __name__ == "__main__":
 
     host = args.__dict__.pop("host")
     port = args.__dict__.pop("port")
+
+    mp.set_start_method("spawn")
 
     engine_args = AsyncEngineArgs.from_cli_args(args)
     engine = AsyncEngine.from_engine_args(engine_args)

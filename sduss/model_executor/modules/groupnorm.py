@@ -15,7 +15,7 @@ if TORCH_INCLUDE_PATH is None:
 
 
 esymred = load(
-    name="esymred",
+    name="esymred_mp",
     sources=[
         "sduss/model_executor/modules/kernels/norm_silu_concat.cpp",
         "sduss/model_executor/modules/kernels/norm_silu_concat.cu",

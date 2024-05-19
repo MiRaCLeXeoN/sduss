@@ -76,6 +76,20 @@ class StableDiffusionXLEsymredPipelinePrepareOutput(BasePipelinePrepareOutput):
         self.negative_pooled_prompt_embeds = self.negative_pooled_prompt_embeds.to(dtype=dtype)
         self.add_time_ids = self.add_time_ids.to(dtype=dtype)
         self.negative_add_time_ids = self.negative_add_time_ids.to(dtype=dtype)
+    
+    
+    def to_numpy(self) -> None:
+        self.pooled_prompt_embeds = self.pooled_prompt_embeds.numpy()
+        self.negative_pooled_prompt_embeds = self.negative_pooled_prompt_embeds.numpy()
+        self.add_time_ids = self.add_time_ids.numpy()
+        self.negative_add_time_ids = self.negative_add_time_ids.numpy()
+    
+    
+    def to_tensor(self) -> None:
+        self.pooled_prompt_embeds = torch.from_numpy(self.pooled_prompt_embeds)
+        self.negative_pooled_prompt_embeds = torch.from_numpy(self.negative_pooled_prompt_embeds)
+        self.add_time_ids = torch.from_numpy(self.add_time_ids)
+        self.negative_add_time_ids = torch.from_numpy(self.negative_add_time_ids)
 
 
 class StableDiffusionXLEsymredPipelineStepInput(BasePipelineStepInput):
@@ -262,3 +276,11 @@ class StableDiffusionXLEsymredPipelineSamplingParams(BaseSamplingParams):
     
     def to_dtype(self, dtype) -> None:
         return super().to_dtype(dtype)
+    
+    
+    def to_tensor(self) -> None:
+        return super().to_tensor()
+    
+    
+    def to_numpy(self) -> None:
+        return super().to_numpy()

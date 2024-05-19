@@ -210,6 +210,7 @@ class EngineArgs:
             num_cpus_cpu_worker=self.num_cpus_cpu_worker,
             num_cpus_gpu_worker=self.num_cpus_gpu_worker,
             worker_use_ray=self.worker_use_ray,
+            worker_use_mp=self.worker_use_mp,
             max_parallel_loading_workers=self.max_parallel_loading_workers
         )
     
@@ -245,6 +246,7 @@ class AsyncEngineArgs(EngineArgs):
     """Arguments for asynchronous engine, inherited from EngineArgs """
     def __init__(self, **kwargs) -> None:
         self.engine_use_ray = kwargs.pop("engine_use_ray", False)
+        self.engine_use_mp = kwargs.pop("engine_use_mp", True)
         self.disable_log_requests = kwargs.pop("disable_log_requests", False)
         self.max_log_len = kwargs.pop("max_log_len", None)
         super().__init__(**kwargs)
@@ -255,6 +257,7 @@ class AsyncEngineArgs(EngineArgs):
             log_status=not self.disable_log_status,
             non_blocking_step=self.non_blocking_step,
             engine_use_ray=self.engine_use_ray,
+            engine_use_mp=self.engine_use_mp,
             log_requests=not self.disable_log_requests,
         )
     
@@ -268,6 +271,11 @@ class AsyncEngineArgs(EngineArgs):
             action='store_true',
             help='Use Ray to start the Execution engine in a separate process '
                 'as the server process'
+        )
+        parser.add_argument(
+            '--engine_use_mp',
+            action='store_true',
+            help='Disable logging requests\' timeline'
         )
         parser.add_argument(
             '--disable_log_requests',

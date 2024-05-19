@@ -368,10 +368,11 @@ class ESyMReD_Scheduler(Policy):
     def scheduler_request_overlap_prepare(
         self, 
         max_num: int, 
-        max_overlapped_prepare_reqs: int
+        max_overlapped_prepare_reqs: int,
+        accept_overlap_prepare_reqs: bool,
     ) -> SchedulerOutput:
         scheduler_output = self.schedule_requests(max_num)
-        if scheduler_output.status != RequestStatus.PREPARE:
+        if scheduler_output.status != RequestStatus.PREPARE and accept_overlap_prepare_reqs:
             prepare_reqs = self._get_all_reqs_by_status(RequestStatus.PREPARE)
             prepare_reqs = prepare_reqs[:max_overlapped_prepare_reqs]
             scheduler_output.prepare_requests = convert_list_to_res_dict(prepare_reqs)

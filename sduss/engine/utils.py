@@ -24,6 +24,7 @@ class Metrics:
 
     def get_avg_util(self):
         length = len(self.sm_util)
+        length = 1 if length == 0 else length
         total = 0
         for util in self.sm_util:
             total += util

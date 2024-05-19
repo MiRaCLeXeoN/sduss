@@ -80,9 +80,10 @@ class FCFS_Single(Policy):
 
 
     def scheduler_request_overlap_prepare(
-            self, 
-            max_num: int,
-            max_overlapped_prepare_reqs: int,
-        ) -> SchedulerOutput:
+        self, 
+        max_num: int, 
+        max_overlapped_prepare_reqs: int,
+        accept_overlap_prepare_reqs: bool,
+    ) -> SchedulerOutput:
         """Schedule requests with overlapped preapre stage."""
         raise NotImplementedError

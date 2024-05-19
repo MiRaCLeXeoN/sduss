@@ -96,10 +96,11 @@ class FCFS_Mixed(Policy):
 
     
     def scheduler_request_overlap_prepare(
-            self, 
-            max_num: int,
-            max_overlapped_prepare_reqs: int,
-        ) -> SchedulerOutput:
+        self, 
+        max_num: int, 
+        max_overlapped_prepare_reqs: int,
+        accept_overlap_prepare_reqs: bool,
+    ) -> SchedulerOutput:
         """Schedule requests with overlapped preapre stage."""
         flattened_reqs = self._flatten_all_reqs()
 
@@ -147,7 +148,7 @@ class FCFS_Mixed(Policy):
         
         # Get overlapped prepare requests if current stage is not prepare
         prepare_requests = None
-        if target_status != RequestStatus.PREPARE:
+        if target_status != RequestStatus.PREPARE and accept_overlap_prepare_reqs:
             _prepare_reqs = self._get_all_reqs_by_status(RequestStatus.PREPARE)
             prepare_requests = convert_list_to_res_dict(_prepare_reqs, max_overlapped_prepare_reqs)
         

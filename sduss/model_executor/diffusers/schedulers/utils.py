@@ -28,6 +28,14 @@ class BaseSchedulerStates:
         raise NotImplementedError
 
 
+    def to_numpy(self) -> None:
+        raise NotImplementedError
+
+
+    def to_tensor(self) -> None:
+        raise NotImplementedError
+
+
 class BatchSupportScheduler:
 
     def batch_set_timesteps(self):

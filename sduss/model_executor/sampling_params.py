@@ -61,7 +61,7 @@ class BaseSamplingParams():
 
     def __repr__(self) -> str:
         """Literal representation of samling parameters."""
-        raise NotImplementedError
+        return self.prompt
 
 
     def clone(self) -> "BaseSamplingParams":
@@ -78,6 +78,18 @@ class BaseSamplingParams():
         self.latents = self.latents.to(dtype=dtype)
         self.prompt_embeds = self.prompt_embeds.to(dtype=dtype)
         self.negative_prompt_embeds = self.negative_prompt_embeds.to(dtype=dtype)
+    
+    
+    def to_numpy(self) -> None:
+        self.latents = self.latents.numpy()
+        self.prompt_embeds = self.prompt_embeds.numpy()
+        self.negative_prompt_embeds = self.negative_prompt_embeds.numpy()
+    
+    
+    def to_tensor(self) -> None:
+        self.latents = torch.from_numpy(self.latents)
+        self.prompt_embeds = torch.from_numpy(self.prompt_embeds)
+        self.negative_prompt_embeds = torch.from_numpy(self.negative_prompt_embeds)
             
 
     def _check_volatile_params(self):

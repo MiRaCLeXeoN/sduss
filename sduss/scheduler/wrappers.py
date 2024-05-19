@@ -29,6 +29,9 @@ class RequestStatus(enum.IntEnum):
     FINISHED_ABORTED = enum.auto()
     # Exception
     EXCEPTION_SWAPPED = enum.auto()
+    # Executing
+    EXECUTING = enum.auto()
+    EXECUTING_PREPARE = enum.auto()
 
     @staticmethod
     def is_finished(status: "RequestStatus") -> bool:
@@ -50,6 +53,20 @@ class RequestStatus(enum.IntEnum):
         return status in [
             RequestStatus.EXCEPTION_SWAPPED,
         ]
+    
+    
+    @staticmethod
+    def is_executing(status: "RequestStatus") -> bool:
+        return status in [
+            RequestStatus.EXECUTING,
+            RequestStatus.EXECUTING_PREPARE,
+        ]
+    
+    
+    @staticmethod
+    def convert_to_common_type(status: "RequestStatus") -> 'RequestStatus':
+        if RequestStatus.is_executing(status):
+            return RequestStatus.EXECUTING
 
 
     @staticmethod
@@ -62,8 +79,11 @@ class RequestStatus(enum.IntEnum):
             return RequestStatus.POSTPROCESSING
         elif status == RequestStatus.POSTPROCESSING:
             return RequestStatus.FINISHED_STOPPED
+        elif status == RequestStatus.EXECUTING_PREPARE:
+            return RequestStatus.DENOISING
         else:
             raise RuntimeError("We cannot decide next status.")
+
 
     @staticmethod
     def get_finished_reason(status: "RequestStatus") -> Union[str, None]:
@@ -225,7 +245,7 @@ class SchedulerOutput:
     
     
     def has_prepare_requests(self) -> bool:
-        return self.prepare_requests
+        return self.prepare_requests and len(self.prepare_requests) > 0
     
     
     def get_req_ids(self) -> List[int]:
@@ -245,6 +265,8 @@ class SchedulerOutput:
     
     
     def get_prepare_reqs_as_list(self) -> List[Request]:
+        if self.prepare_requests is None:
+            return []
         prepare_reqs = []
         for res in self.prepare_requests:
             for req in self.prepare_requests[res].values():
@@ -284,13 +306,15 @@ class ResolutionRequestQueue:
         self.postprocessing: Dict[int, Request] = {}
         self.finished: Dict[int, Request] = {}
         self.swapped: Dict[int, Request] = {}
+        self.executing: Dict[int, Request] = {}
         self.queues = {
             RequestStatus.WAITING : self.waiting,
             RequestStatus.PREPARE : self.prepare,
             RequestStatus.DENOISING : self.denoising,
             RequestStatus.POSTPROCESSING : self.postprocessing,
             RequestStatus.FINISHED_STOPPED : self.finished,
-            RequestStatus.EXCEPTION_SWAPPED: self.swapped
+            RequestStatus.EXCEPTION_SWAPPED: self.swapped,
+            RequestStatus.EXECUTING : self.executing,
         }
 
         # req_id -> req, for fast referencce
@@ -332,6 +356,8 @@ class ResolutionRequestQueue:
             return self.finished
         elif name == "swapped":
             return self.swapped
+        elif name == "executing":
+            return self.executing
         else:
             raise ValueError(f"Unexpected name {name}.")
     
@@ -350,6 +376,8 @@ class ResolutionRequestQueue:
             return self.finished
         elif status == RequestStatus.EXCEPTION_SWAPPED:
             return self.swapped
+        elif status == RequestStatus.EXECUTING:
+            return self.executing
         else:
             raise ValueError(f"Unexpected status {status}.")
 
@@ -369,6 +397,8 @@ class ResolutionRequestQueue:
             return self.finished.copy()
         elif status == RequestStatus.EXCEPTION_SWAPPED:
             return self.swapped.copy()
+        elif status == RequestStatus.EXECUTING:
+            return self.executing.copy()
         else:
             raise ValueError(f"Unexpected status {str(status)}.")
     
@@ -401,7 +431,8 @@ class ResolutionRequestQueue:
         """
         ret = []
         for status, q in self.queues.items():
-            if (RequestStatus.is_finished(status) or 
+            if (RequestStatus.is_executing(status) or
+                RequestStatus.is_finished(status) or 
                 RequestStatus.is_exception(status)):
                 continue
             ret.extend(list(q.values()))

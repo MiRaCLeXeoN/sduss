@@ -1,5 +1,6 @@
 import enum
 import time
+import sys
 
 from typing import List, Optional, Tuple, Dict, Union, Iterable
 from typing import TYPE_CHECKING
@@ -60,22 +61,26 @@ class Scheduler:
 
     def schedule(self) -> SchedulerOutput:
         """Schedule requests for next iteration."""
+        self.cycle_counter += 1
         scheduler_output = self.policy.schedule_requests(max_num=self.max_batchsize)
         # More wrappers will be added here.
 
-        self.cycle_counter += 1
         
         return scheduler_output
     
     
-    def schedule_overlap_prepare(self) -> SchedulerOutput:
+    def schedule_overlap_prepare(
+            self,
+            accept_overlap_prepare_reqs: bool
+        ) -> SchedulerOutput:
         """Scheduler requests with overlapped prepare stage."""
+        self.cycle_counter += 1
         scheduler_output = self.policy.scheduler_request_overlap_prepare(
             max_num=self.max_batchsize,
-            max_overlapped_prepare_reqs=self.max_overlapped_prepare_reqs)
+            max_overlapped_prepare_reqs=self.max_overlapped_prepare_reqs,
+            accept_overlap_prepare_reqs=accept_overlap_prepare_reqs)
         # More wrappers will be added here.
 
-        self.cycle_counter += 1
         
         return scheduler_output
         
@@ -208,7 +213,9 @@ class Scheduler:
         prepare_output: 'WorkerOutput',
         denoising_output,
         postprocessing_output: 'WorkerOutput',
+        overlapped_prepare_output: 'WorkerOutput',
         prev_scheduler_output: SchedulerOutput,
+        overlapped_prepare_sche_opt: SchedulerOutput,
     ) -> List[Request]:
         """Update requests status regarding nonblocking execution paradigm.
 
@@ -231,12 +238,18 @@ class Scheduler:
             self._update_all_waiting_reqs()
         # 0.3 If we have overlapped reqs, update their status
         if scheduler_output.has_prepare_requests():
-            self._update_reqs_to_next_status(prev_status=RequestStatus.PREPARE, next_status=RequestStatus.DENOISING,
+            self._update_reqs_to_next_status(prev_status=RequestStatus.PREPARE, 
+                                             next_status=RequestStatus.EXECUTING,
                                              reqs=scheduler_output.prepare_requests)
+        if overlapped_prepare_output is not None:
+            self._update_reqs_to_next_status(prev_status=RequestStatus.EXECUTING,
+                                            next_status=RequestStatus.DENOISING,
+                                            reqs=overlapped_prepare_sche_opt.prepare_requests)
+            self._update_remain_steps(reqs_steps_dict=overlapped_prepare_output.reqs_steps_dict)
 
         finished_reqs: List[Request] = []
         # 1. Process output from previous round.
-        if prev_scheduler_output:
+        if prev_scheduler_output is not None:
             prev_sche_status = prev_scheduler_output.status
             if prev_sche_status == RequestStatus.EMPTY:
                 pass
@@ -253,6 +266,7 @@ class Scheduler:
                 current_timestamp = time.time()
                 # store output
                 for req_id in prev_scheduler_output.get_req_ids():
+                    print(req_id)
                     self.req_mapping[req_id].output = postprocessing_output.req_output_dict[req_id]
                     self.req_mapping[req_id].finish_time = current_timestamp
                     finished_reqs.append(self.req_mapping[req_id])

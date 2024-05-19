@@ -144,11 +144,13 @@ class EngineConfig:
         log_status: bool,
         non_blocking_step: bool,
         engine_use_ray: bool = False,
+        engine_use_mp: bool = False,
         log_requests: bool = False,
     ) -> None:
         self.log_status = log_status
         self.non_blocking_step = non_blocking_step
         self.engine_use_ray = engine_use_ray
+        self.engine_use_mp = engine_use_mp
         self.log_requests = log_requests
     
     

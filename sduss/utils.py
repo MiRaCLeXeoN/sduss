@@ -2,6 +2,7 @@ import enum
 import uuid
 import socket
 import os
+import multiprocessing
 
 from platform import uname
 
@@ -24,6 +25,45 @@ class Counter:
     
     def reset(self) -> None:
         self.counter = 0
+
+class Task:
+    def __init__(
+        self,
+        method_name: str,
+        *args,
+        **kwargs,
+    ):
+        self.method = method_name
+        self.args = args
+        self.kwargs = kwargs
+
+
+class MainLoop:
+    def __init__(
+        self,
+        task_queue: multiprocessing.Queue,
+        output_queue: multiprocessing.Queue,
+        worker_init_fn,
+    ):
+        self.task_queue = task_queue
+        self.output_queue = output_queue
+
+        self.worker = worker_init_fn()
+
+        self._main_loop()
+    
+    
+    def _main_loop(self):
+        while True:
+            task: Task = self.task_queue.get()
+            method_name = task.method
+
+            if method_name == "shutdown":
+                break
+
+            handler = getattr(self.worker, method_name)
+            output = handler(*task.args, **task.kwargs)
+            self.output_queue.put(output)
 
 
 def is_hip() -> bool:

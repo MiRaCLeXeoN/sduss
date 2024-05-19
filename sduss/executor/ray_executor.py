@@ -72,8 +72,7 @@ def initialize_cluster(
                             + 1 * 1),
                  num_gpus=parallel_config.world_size,
                  ignore_reinit_error=True)
-    
-    if not parallel_config.worker_use_ray:
+    else:
         # Initialize cluster locally
         port = get_open_port()
         distributed_init_method = f"tcp://localhost:{port}"

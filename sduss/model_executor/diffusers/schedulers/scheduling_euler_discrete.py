@@ -57,6 +57,16 @@ class EulerDiscreteSchedulerStates(BaseSchedulerStates):
         # We should not alter any dtype
         pass
 
+    
+    def to_numpy(self) -> None:
+        self.sigmas = self.sigmas.numpy()
+        self.timesteps = self.timesteps.numpy()
+    
+    
+    def to_tensor(self) -> None:
+        self.sigmas = torch.from_numpy(self.sigmas)
+        self.timesteps = torch.from_numpy(self.timesteps)
+
 
 class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportScheduler):
     def batch_set_timesteps(

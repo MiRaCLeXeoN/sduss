@@ -62,6 +62,25 @@ class WorkerRequest:
         self.scheduler_states.to_dtype(dtype)
         # prepare_output
         self.prepare_output.to_dtype(dtype)
+    
+    
+    def to_numpy(self):
+        # Sampling params
+        self.sampling_params.to_numpy()
+        # Scheduler states
+        self.scheduler_states.to_numpy()
+        # prepare_output
+        self.prepare_output.to_numpy()
+    
+    
+    def to_tensor(self):
+        # Sampling params
+        self.sampling_params.to_tensor()
+        # Scheduler states
+        self.scheduler_states.to_tensor()
+        # prepare_output
+        self.prepare_output.to_tensor()
+
         
         
 # resolution -> List[request]
@@ -73,13 +92,15 @@ class WorkerOutput:
         self,
         worker_reqs: WorkerRequestDictType = None,
         status: RequestStatus = None,
-        overlap_prepare: bool = False,
         start_time : float = None,
         end_time : float = None,
+        is_from_prepare_worker : bool = False,
     ) -> None:
         # Performance recording
         self.start_time = start_time
         self.end_time = end_time
+
+        self.is_from_prepare_worker = is_from_prepare_worker
 
         if status == RequestStatus.POSTPROCESSING:
             reqs_dict: Dict[int, BaseOutput] = {}
@@ -99,7 +120,17 @@ class WorkerOutput:
                     reqs_dict[wr.request_id] = len(wr.scheduler_states.timesteps)
             self.reqs_steps_dict = reqs_dict
             # If prepare stage is overlapped, we should return all worker_reqs directly
-            if overlap_prepare:
+            if is_from_prepare_worker:
+                for req_list in worker_reqs.values():
+                    for wr in req_list:
+                        wr.to_numpy()
                 self.worker_reqs = worker_reqs
         elif status == RequestStatus.DENOISING:
             pass
+    
+    
+    def __eq__(self, value: object) -> bool:
+        if isinstance(value, WorkerOutput):
+            return True
+        else:
+            return False

@@ -1,6 +1,7 @@
 import asyncio
 import time
 import sys
+import multiprocessing
 
 import ray
 
@@ -23,6 +24,7 @@ from sduss.scheduler import RequestStatus
 from .engine import Engine
 from .arg_utils import AsyncEngineArgs
 from .utils import AsyncEngineDeadError
+from .async_engine_wrappers import _AsyncEngine, _MpAsyncEngine
 
 if TYPE_CHECKING:
     import ray
@@ -227,239 +229,6 @@ class RequestTracker:
         await self.new_requests_event.wait()
 
 
-class _AsyncEngine(Engine):
-    
-    # TODO: Since we enforced engine using ray, this is unnecessary.
-    async def step_async(self) -> List[RequestOutput]:
-        """Performs one decoding iteration and returns newly generated results.
-        The workers are ran asynchronously if possible.
-        """
-        # TODO: Incorrect
-        if self.engine_config.non_blocking_step:
-            return await self._step_nonblocking_async()
-        else:
-            return await self._step_blocking_async()
-    
-    
-    async def _step_blocking_async(self) -> List[RequestOutput]:
-        """Performs one denoising iteration and returns newly generated results."""
-        scheduler_output, req_ids = self._schedule()
-
-        output = None
-        if scheduler_output.status == RequestStatus.WAITING:
-            # Currently, we don't do anything in waiting stage
-            pass
-        elif scheduler_output.status == RequestStatus.PREPARE:
-            # For prepare stage inference
-            # TODO(MX): We may pass schduler output directly
-            output: WorkerOutput = await self._run_workers_blocking_async(
-                "exec_prepare_stage", 
-                self.workers,
-                scheduler_reqs=scheduler_output.get_reqs_as_list(),
-                use_mixed_precision=self.scheduler_config.use_mixed_precision)
-        elif scheduler_output.status == RequestStatus.DENOISING:
-            # For denoising stage inference
-            await self._run_workers_blocking_async(
-                "exec_denoising_stage", 
-                self.workers,
-                req_ids=req_ids,
-                use_mixed_precision=self.scheduler_config.use_mixed_precision,
-                is_sliced=scheduler_output.is_sliced,
-                patch_size=scheduler_output.patch_size)
-        elif (scheduler_output.status == RequestStatus.POSTPROCESSING):
-            # For post stage inference
-            output: WorkerOutput = await self._run_workers_blocking_async(
-                "exec_post_stage",
-                self.workers,
-                req_ids=req_ids,
-                use_mixed_precision=self.scheduler_config.use_mixed_precision,
-            )
-        else:
-            raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
-        
-        output = self._process_output(scheduler_output=scheduler_output,
-                                       req_ids=req_ids,
-                                       output=output,)
-
-        if self.engine_config.log_status:
-            self._log_system_states(scheduler_output)
-        
-        return output
-    
-    
-    async def _step_nonblocking_async(self):
-        """Non-blocking step."""
-        # 1. Schedule
-        scheduler_output, req_ids = self._schedule()
-        
-        if self.engine_config.log_status:
-            self._log_system_states(scheduler_output)
-
-        # 2. Wait for result from previous round
-        # This must be after step 1 to truly overlap scheduling and execution.
-        prepare_output, denoising_output, postprocessing_output = (
-            await self.get_prev_handlers_output_async(get_output_all_workers=False))
-
-        # 3. Schedule prepare if prepare reqs available
-        if scheduler_output.has_prepare_requests():
-            # We don't expect prepare stage if we have overlapped prepare-requests to process
-            assert scheduler_output.status != RequestStatus.PREPARE
-            self.prev_prepare_handlers = await self._run_workers_nonblocking_async(
-                "exec_prepare_stage", 
-                self.prepare_workers,
-                scheduler_reqs=scheduler_output.get_prepare_reqs_as_list(),
-                use_mixed_precision=self.scheduler_config.use_mixed_precision)
-
-        # 4. Issue tasks to workers
-        if scheduler_output.status == RequestStatus.WAITING:
-            # Currently, we don't do anything in waiting stage
-            if prepare_output is not None:
-                # We don't need to preserve the handlers
-                await self._run_workers_nonblocking_async(
-                    "receive_prepare_output",
-                    self.workers,
-                    prepare_output=prepare_output,
-                )
-        elif scheduler_output.status == RequestStatus.PREPARE:
-            # Only when there is no denoising or postprocessing reqs running will
-            # prepare stage be scheduled.
-            if prepare_output is not None:
-                # We don't need to preserve the handlers
-                await self._run_workers_nonblocking_async(
-                    "receive_prepare_output",
-                    self.workers,
-                    prepare_output=prepare_output,
-                )
-            # Requests are derived from normal reqs instead of prepare_reqs in shceduler_output
-            self.prev_prepare_handlers = await self._run_workers_nonblocking_async(
-                "exec_prepare_stage",
-                self.prepare_workers,
-                scheduler_reqs=scheduler_output.get_reqs_as_list(),
-                use_mixed_precision=self.scheduler_config.use_mixed_precision)
-        elif scheduler_output.status == RequestStatus.DENOISING:
-            # For denoising stage inference
-            # transfer prepare result from previous round to worker
-            self.prev_denoising_handlers = await self._run_workers_nonblocking_async(
-                "exec_denoising_stage", 
-                self.workers,
-                req_ids=req_ids,
-                use_mixed_precision=self.scheduler_config.use_mixed_precision,
-                is_sliced=scheduler_output.is_sliced,
-                patch_size=scheduler_output.patch_size,
-                prepare_output=prepare_output,)
-        elif scheduler_output.status == RequestStatus.POSTPROCESSING:
-            # For post stage inference
-            self.prev_postprocessing_handlers = await self._run_workers_nonblocking_async(
-                "exec_post_stage",
-                self.workers,
-                req_ids=req_ids,
-                use_mixed_precision=self.scheduler_config.use_mixed_precision,
-                prepare_output=prepare_output,
-            )
-        else:
-            raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
-        
-        # 5. Process output and update requests status.
-        output = self._process_nonblocking_output(scheduler_output=scheduler_output,
-                                                  req_ids=req_ids,
-                                                  prepare_output=prepare_output,
-                                                  denoising_output=denoising_output,
-                                                  postprocessing_output=postprocessing_output,)
-        
-        return output
-
-    
-    async def _run_workers_blocking_async(
-        self,
-        method: str,
-        workers: List['RayExecutor'],
-        *args,
-        get_all_outputs: bool = False,
-        **kwargs,
-    ) -> Any:
-        """Runs the given method asynchrously on all workers.
-        Blocking means: for current coroutine, execution will be blocked here.
-        Async means: for the whole process, this function is executed async.
-        """
-        coroutines = []
-        for worker in self.workers:
-            if self.parallel_config.worker_use_ray:
-                coroutines.append(worker.execute_method.remote(method, *args, **kwargs))
-            else:
-                executor = getattr(worker, method)
-                coroutines.append(asyncio.get_event_loop().run_in_executor(
-                    None, partial(executor, *args, **kwargs)))
-        
-        # We must use asyncio's `await` to enable coroutine's switching.
-        # If we use ray.get, event loop will get blocked here.
-        all_outputs = await asyncio.gather(*coroutines)
-
-        if get_all_outputs:
-            return all_outputs
-
-        # Make sure all workers have the same results.
-        output = all_outputs[0]
-        for other_output in all_outputs[1:]:
-            assert output == other_output
-        return output
-    
-    
-    async def _run_workers_nonblocking_async(
-        self,
-        method: str,
-        workers: List['RayExecutor'],
-        *args,
-        get_all_outputs: bool = False,
-        **kwargs,
-    ) -> Any:
-        """Runs the given method asynchrously on all workers.
-        Non-blocking means: for current coroutine, execution won't be blocked inside.
-        Async means: for the whole process, this function is executed async.
-
-        Essentially, this does the same as the synchronous version.
-        """
-        # TODO: We may reuse `_run_workers_nonblocking`
-        assert self.parallel_config.worker_use_ray, "Only ray workers supports non blocking calls."
-        obj_refs = []
-        for worker in workers:
-            executor = partial(worker.execute_method.remote, method)
-            obj_ref = executor(*args, **kwargs)
-            obj_refs.append(obj_ref)
-        return obj_refs
-    
-    
-    async def get_prev_handlers_output_async(
-        self,
-        get_output_all_workers: bool = False,
-    ):
-        """Get output from handlers set by previous round asynchronously.
-
-        Args:
-            get_output_all_workers (bool, optional): If true, outputs from all workers
-                will be returned as a list. Otherwise only the first output will be extracted
-                and returned.
-        """
-        prepare_output = denoising_output = postprocessing_output = None
-        if self.prev_prepare_handlers:
-            prepare_output = await asyncio.gather(*self.prev_prepare_handlers)
-            self.prev_prepare_handlers = None
-        if self.prev_denoising_handlers:
-            denoising_output = await asyncio.gather(*self.prev_denoising_handlers)
-            self.prev_denoising_handlers = None
-        if self.prev_postprocessing_handlers:
-            postprocessing_output = await asyncio.gather(*self.prev_postprocessing_handlers)
-            self.prev_postprocessing_handlers = None
-        
-        if get_output_all_workers:
-            return prepare_output, denoising_output, postprocessing_output
-
-        prepare_output = prepare_output[0] if prepare_output else prepare_output
-        denoising_output = denoising_output[0] if denoising_output else denoising_output
-        postprocessing_output = postprocessing_output[0] if postprocessing_output else postprocessing_output
-
-        return prepare_output, denoising_output, postprocessing_output
-    
-    
 class AsyncEngine:
 
     _engine_class: Type[_AsyncEngine] = _AsyncEngine
@@ -473,15 +242,11 @@ class AsyncEngine:
         distributed_init_method: str,
         gpu_pg: Optional["PlacementGroup"],
         cpu_pg: Optional["PlacementGroup"],
-        engine_use_ray: bool,
-        worker_use_ray: bool,
         *args,
         start_engine_loop: bool = True,
         **kwargs,
     ) -> None:
         # Params
-        self.engine_use_ray = engine_use_ray
-        self.worker_use_ray = worker_use_ray
         self.start_engine_loop = start_engine_loop
         self.pipeline_config = pipeline_config
         self.parallel_config = parallel_config
@@ -502,6 +267,8 @@ class AsyncEngine:
 
         if self.engine_config.engine_use_ray:
             ray.get(self.engine.engine_is_ready.remote())
+        elif self.engine_config.engine_use_mp:
+            self.engine.get_result("engine_is_ready")
 
         # Asyncio loop
         # We need to keep a reference to unshielded
@@ -518,13 +285,13 @@ class AsyncEngine:
 
 
     def _init_engine(self, *args, **kwargs) -> Union[_AsyncEngine, "ray.ObjectRef"]:
-        cpu_pg = kwargs["cpu_pg"]
 
-        if not self.engine_use_ray:
-            engine_class = self._engine_class
-        elif self.worker_use_ray:
+        if self.engine_config.engine_use_mp:
+            engine_class = _MpAsyncEngine
+        elif self.engine_config.engine_use_ray:
             # We must use num_cpus=0 to allow free actor scheduling in ray.
             # This doesn't imply that we will not be allocated CPUs to.
+            cpu_pg = kwargs["cpu_pg"]
             engine_class = ray.remote(
                                 num_cpus=1,
                                 num_gpus=0,
@@ -535,8 +302,7 @@ class AsyncEngine:
                                 )
                             )(self._engine_class).remote
         else:
-            raise RuntimeError(f"Currently, {self._engine_class.__name__} doesn't support "
-                               f"a combination of {self.engine_use_ray=} and {self.worker_use_ray=}")
+            engine_class = self._engine_class
         return engine_class(*args, **kwargs)
         
 
@@ -559,6 +325,8 @@ class AsyncEngine:
         
         if self.engine_config.engine_use_ray:
             await self.engine.add_request_batch.remote(new_requsts_params)
+        elif self.engine_config.engine_use_mp:
+            await self.engine.execute_method("add_request_batch", new_requsts_params)
         else:
             self.engine.add_request_batch(new_requsts_params)
         
@@ -566,8 +334,10 @@ class AsyncEngine:
         # if finished_request_ids:
         #     await self._engine_abort_reqs(finished_request_ids)
         
-        if self.engine_use_ray:
+        if self.engine_config.engine_use_ray:
             request_outputs = await self.engine.step.remote()
+        elif self.engine_config.engine_use_mp:
+            request_outputs = await self.engine.execute_method("step")
         else:
             request_outputs = await self.engine.step_async()
 
@@ -576,8 +346,10 @@ class AsyncEngine:
             self._request_tracker.process_request_output(
                 request_output, verbose=self.engine_config.log_requests)
 
-        if self.engine_use_ray:
+        if self.engine_config.engine_use_ray:
             has_unfinished_reqs = await self.engine.has_unfinished_normal_requests.remote()
+        elif self.engine_config.engine_use_mp:
+            has_unfinished_reqs = await self.engine.execute_method("has_unfinished_normal_requests")
         else:
             has_unfinished_reqs = self.engine.has_unfinished_normal_requests()
         return has_unfinished_reqs
@@ -684,8 +456,6 @@ class AsyncEngine:
             distributed_init_method,
             gpu_pg,
             cpu_pg,
-            engine_config.engine_use_ray,
-            parallel_config.worker_use_ray,
             start_engine_loop=start_engine_loop,
         )
         return engine
@@ -724,11 +494,18 @@ class AsyncEngine:
         
     
     async def _engine_abort_reqs(self, request_ids: Iterable[int]):
-        if self.engine_use_ray:
+        if self.engine_config.engine_use_ray:
             await self.engine.abort_requests.remote(request_ids)
+        elif self.engine_config.engine_use_mp:
+            await self.engine.execute_method("abort_requests", request_ids)
         else:
             self.engine.abort_requests(request_ids)
 
     
     async def clear(self):
-        ray.get(self.engine.clear.remote())
+        if self.engine_config.engine_use_ray:
+            await self.engine.clear.remote()
+        elif self.engine_config.engine_use_mp:
+            await self.engine.execute_method("clear")
+        else:
+            self.engine.clear()

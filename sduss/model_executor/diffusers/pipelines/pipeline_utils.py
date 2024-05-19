@@ -23,6 +23,13 @@ class BasePipelinePrepareOutput:
         raise NotImplementedError
 
 
+    def to_numpy(self) -> None:
+        raise NotImplementedError
+
+
+    def to_tensor(self) -> None:
+        raise NotImplementedError
+
 class BasePipelineStepInput:
     pass
     

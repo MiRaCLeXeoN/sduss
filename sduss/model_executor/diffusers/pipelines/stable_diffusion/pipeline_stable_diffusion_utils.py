@@ -78,6 +78,14 @@ class StableDiffusionPipelinePrepareOutput(BasePipelinePrepareOutput):
     def to_dtype(self, dtype) -> None:
         pass
 
+    
+    def to_tensor(self) -> None:
+        pass
+
+    
+    def to_numpy(self) -> None:
+        pass
+
 
 class StableDiffusionPipelineStepInput(BasePipelineStepInput):
     @staticmethod
