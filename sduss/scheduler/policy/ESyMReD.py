@@ -276,6 +276,7 @@ class ESyMReD_Scheduler(Policy):
                                         f"We use don't try for higher throughput.")
                                 is_get_best_tp = False
                             # If some reqs are urgent, we prioritize satifying SLO.
+                            '''
                             if not is_get_best_tp:
                                 if target_res not in res_reqs_dict:
                                     res_reqs_dict[target_res] = {target_req.request_id : target_req}
@@ -287,20 +288,28 @@ class ESyMReD_Scheduler(Policy):
                                 print(f"esymred: We add req {target_req.request_id} to satisfy SLO.")
                                 self.predict_time = predict_time_slo[0]
                             else:
-                                # Add this req for best throughput is it won't significantly 
-                                # TODO: A Hyper parameter here
-                                if spend_time_best_tp / (spend_time_original + self.predictor.predict(
-                                    [[1 if res == target_res else 0 for res in self.resolution_list]])[0] * target_req.remain_steps) < 0.95:
-                                    if target_res not in res_reqs_dict:
-                                        res_reqs_dict[target_res] = {target_req.request_id : target_req}
-                                    else:
-                                        res_reqs_dict[target_res][target_req.request_id] = target_req
-                                    target_req.start_denoising = True
-                                    running_reqs_list.append(target_req)
-                                    num_to_collect -= 1
-                                    print(f"esymred: We add req {target_req.request_id} to get higher throughput.")
-                                    self.predict_time = predict_time_best_tp[0]
+                            '''
+                            # Add this req for best throughput is it won't significantly 
+                            # TODO: A Hyper parameter here
+                            if is_get_best_tp:
+                                spend_time = spend_time_best_tp
+                                predict_time = predict_time_slo[0]
+                            else:
+                                spend_time = target_req_pred_time
+                                predict_time = predict_time_best_tp[0]
+                            if spend_time / (spend_time_original + self.predictor.predict(
+                                [[1 if res == target_res else 0 for res in self.resolution_list]])[0] * target_req.remain_steps) < 0.95:
+                                if target_res not in res_reqs_dict:
+                                    res_reqs_dict[target_res] = {target_req.request_id : target_req}
                                 else:
+                                    res_reqs_dict[target_res][target_req.request_id] = target_req
+                                target_req.start_denoising = True
+                                running_reqs_list.append(target_req)
+                                num_to_collect -= 1
+                                print(f"esymred: We add req {target_req.request_id} to get higher throughput.")
+                                self.predict_time = predict_time[0]
+                            else:
+                                if is_get_best_tp:
                                     print(f"esymred: Adding req {target_req.request_id} cannot get higher throughput. Stop adding more req.")
                                     break
                     # end if len(running_reqs_list) > 0:
