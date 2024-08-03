@@ -322,7 +322,7 @@ class PatchUpsample2D(BaseModule):
             hidden_states = self.module.norm(hidden_states.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
         if self.module.use_conv_transpose:
-            return self.module.conv(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+            return self.module.conv(F.pad(hidden_states, (1, 1, 1, 1), mode='replicate'), is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
 
         # Cast to float32 to as 'upsample_nearest2d_out_frame' op does not support bfloat16
         # TODO(Suraj): Remove this cast once the issue is fixed in PyTorch
@@ -349,7 +349,7 @@ class PatchUpsample2D(BaseModule):
         # TODO(Suraj, Patrick) - clean up after weight dicts are correctly renamed
         if self.module.use_conv:
             if self.module.name == "conv":
-                hidden_states = self.module.conv(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+                hidden_states = self.module.conv(F.pad(hidden_states, (1, 1, 1, 1), mode='replicate'), is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
             else:
                 hidden_states = self.Conv2d_0(hidden_states)
 
@@ -371,7 +371,7 @@ class PatchDownsample2D(BaseModule):
             hidden_states = F.pad(hidden_states, pad, mode="constant", value=0)
 
         assert hidden_states.shape[1] == self.module.channels
-        hidden_states = self.module.conv(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+        hidden_states = self.module.conv(F.pad(hidden_states, (1, 1, 1, 1), mode='replicate'), is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
 
         return hidden_states
 
