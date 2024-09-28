@@ -6,7 +6,7 @@ from typing import List, TYPE_CHECKING, Dict, Tuple
 
 from sduss.scheduler.wrappers import ResolutionRequestQueue
 from sduss.utils import get_os_env
-
+import numpy as np
 from .policy import Policy
 from ..wrappers import SchedulerOutput, RequestStatus
 from ..utils import find_gcd, convert_list_to_res_dict
@@ -19,28 +19,34 @@ class Predictor:
     def __init__(self, model_path: str):
         self.model = joblib.load(model_path)
         self.model_path = model_path
-        if "sd1.5" in model_path:
-            self.model.gamma = 5*1e-4
-            self.model.C = 2 * 1e5
-        else:
-            self.model.gamma = 2*1e-4
-            self.model.C = 1e6
+        # if "sd1.5" in model_path:
+        #     self.model.gamma = 5*1e-4
+        #     self.model.C = 2 * 1e5
+        # else:
+        #     self.model.gamma = 2*1e-4
+        #     self.model.C = 1e6
     
     def predict(self, task_distribute: List):
-        return self.model.predict(task_distribute) / 1000
-    
-    def re_load(self):
-        self.model = joblib.load(self.model_path)
+        task_distribute = np.array(task_distribute)
         if "sd1.5" in self.model_path:
-            self.model.gamma = 5*1e-4
-            self.model.C = 2 * 1e5
+            data = task_distribute[:, :1] + task_distribute[:, 1:2] * 4 + task_distribute[:, 2:3] * 9
         else:
-            self.model.gamma = 2*1e-4
-            self.model.C = 1e6
+            data = task_distribute[:, :1] + task_distribute[:, 1:2] * 4 + task_distribute[:, 2:3] * 9
+        data = np.concatenate((data, np.expand_dims(np.count_nonzero(task_distribute, axis=1), axis=0).T), axis=1)
+        return self.model.predict(data) / 1000
+    
+    # def re_load(self):
+    #     self.model = joblib.load(self.model_path)
+    #     if "sd1.5" in self.model_path:
+    #         self.model.gamma = 5*1e-4
+    #         self.model.C = 2 * 1e5
+    #     else:
+    #         self.model.gamma = 2*1e-4
+    #         self.model.C = 1e6
 
-    def re_train(self, task_dataset: List, label_dataset: List):
-        self.model.fit(task_dataset[-150:], label_dataset[-150:])
-        joblib.dump(self.model, self.model_path)
+    # def re_train(self, task_dataset: List, label_dataset: List):
+    #     self.model.fit(task_dataset[-150:], label_dataset[-150:])
+    #     joblib.dump(self.model, self.model_path)
 
 
 class ESyMReD_Scheduler(Policy):

@@ -154,7 +154,7 @@ if __name__ == "__main__":
     policy = args.policy
 
     # Create result dir
-    result_dir_path = f"./results/{model}/{distribution}_{qps}_{slo}_{policy}"
+    result_dir_path = f"./results/{model}/uniform/{distribution}_{qps}_{slo}_{policy}"
     os.makedirs(result_dir_path + "/imgs", exist_ok=True)
 
     metric = Metrics()
@@ -189,7 +189,7 @@ if __name__ == "__main__":
     api_url = base_url + "generate"
 
     # Load data
-    time_csv_path = f"./exp/{args.model}/distri_{args.distribution}/qps_{args.qps}.csv"
+    time_csv_path = f"./exp/{args.model}/uniform/distri_{args.distribution}/qps_{args.qps}.csv"
     prompt_csv_path = f"./exp/0000.csv"
     time_csv = pandas.read_csv(time_csv_path)
     prompt_csv = pandas.read_csv(prompt_csv_path)

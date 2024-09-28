@@ -37,6 +37,8 @@ class PatchUNetMidBlock2DCrossAttn(BaseModule):
                 cross_attention_kwargs=cross_attention_kwargs,
                 is_sliced=is_sliced,
                 latent_offset=latent_offset,
+                patch_map=patch_map,
+                padding_idx=padding_idx,
                 resolution_offset=resolution_offset,
             ).sample
             hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, patch_map=patch_map, latent_offset=latent_offset, padding_idx=padding_idx)
@@ -94,6 +96,8 @@ class PatchCrossAttnDownBlock2D(BaseModule):
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     is_sliced=is_sliced,
+                    patch_map=patch_map,
+                    padding_idx=padding_idx,
                     latent_offset=latent_offset,
                     resolution_offset=resolution_offset,
                 ).sample
@@ -218,6 +222,8 @@ class PatchCrossAttnUpBlock2D(BaseModule):
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     is_sliced=is_sliced,
+                    patch_map=patch_map,
+                    padding_idx=padding_idx,
                     latent_offset=latent_offset,
                     resolution_offset=resolution_offset,
                 ).sample

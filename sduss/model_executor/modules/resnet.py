@@ -11,6 +11,7 @@ from torch.nn import functional as F
 from diffusers.models.resnet import ResnetBlock2D
 from diffusers.models.downsampling import Downsample2D
 from diffusers.models.upsampling import Upsample2D
+from models.groupnorm import get_adjacency
 
 from .base_module import BaseModule
 
@@ -349,7 +350,7 @@ class PatchUpsample2D(BaseModule):
         # TODO(Suraj, Patrick) - clean up after weight dicts are correctly renamed
         if self.module.use_conv:
             if self.module.name == "conv":
-                hidden_states = self.module.conv(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+                hidden_states = self.module.conv(get_adjacency(hidden_states, padding_idx["cuda"]), is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
             else:
                 hidden_states = self.Conv2d_0(hidden_states)
 
@@ -371,7 +372,7 @@ class PatchDownsample2D(BaseModule):
             hidden_states = F.pad(hidden_states, pad, mode="constant", value=0)
 
         assert hidden_states.shape[1] == self.module.channels
-        hidden_states = self.module.conv(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+        hidden_states = self.module.conv(get_adjacency(hidden_states, padding_idx["cuda"]), is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
 
         return hidden_states
 

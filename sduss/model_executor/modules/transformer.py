@@ -36,6 +36,7 @@ class PatchTransformer2DModel(BaseModule):
         encoder_hidden_states=None,
         timestep=None,
         class_labels=None,
+        patch_map: dict = None,
         cross_attention_kwargs=None,
         return_dict: bool = True,
         latent_offset: dict = None,
@@ -48,7 +49,7 @@ class PatchTransformer2DModel(BaseModule):
             batch, _, height, width = hidden_states.shape
             residual = hidden_states
 
-            hidden_states = self.module.norm(hidden_states, is_sliced=is_sliced, is_fused=False)
+            hidden_states = self.module.norm(hidden_states, is_sliced=is_sliced, is_fused=False, resolution_offset=resolution_offset["cpu"], latent_offset=latent_offset["cpu"], padding_idx=padding_idx["cuda"], patch_map=patch_map["cuda"])
             if not self.module.use_linear_projection:
                 hidden_states = self.module.proj_in(hidden_states, is_sliced=is_sliced)
                 inner_dim = hidden_states.shape[1]
@@ -62,10 +63,10 @@ class PatchTransformer2DModel(BaseModule):
         elif self.module.is_input_patches:
             hidden_states = self.module.pos_embed(hidden_states)
 
-        if self.module.caption_projection is not None:
-            batch_size = hidden_states.shape[0]
-            encoder_hidden_states = self.module.caption_projection(encoder_hidden_states)
-            encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
+        # if self.module.caption_projection is not None:
+        #     batch_size = hidden_states.shape[0]
+        #     encoder_hidden_states = self.module.caption_projection(encoder_hidden_states)
+        #     encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
 
         # 2. Blocks
         for block in self.module.transformer_blocks:
