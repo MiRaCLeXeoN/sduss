@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+import os
 import multiprocessing as mp
 from typing import AsyncGenerator, Dict
 
@@ -23,6 +24,7 @@ engine = None
 pipeline_cls = None
 sampling_param_cls = None
 
+image_paths = []
 
 @app.get("/health")
 async def health() -> Response:
@@ -65,6 +67,7 @@ async def generate(request: Request) -> Response:
     image_name = f"{request_id}.png"
     path = "./outputs/imgs/" + image_name
     final_output.output.images.save(path)
+    image_paths.append(path)
 
     response =  FileResponse(path, media_type="image/png")
     response.headers["image_name"] = image_name
@@ -77,10 +80,17 @@ async def generate(request: Request) -> Response:
 async def clear(request: Request) -> Response:
     """Clear data and ready to release."""
     await engine.clear()
+    
+    for p in image_paths:
+        if os.path.exists(p):
+            os.remove(p)
+        else:
+            print(f"{p} doesn't exist!")
+    image_paths.clear()
+        
     sys.stdout.flush()
     sys.stderr.flush()
     return Response(status_code=200)
-
 
 
 if __name__ == "__main__":
