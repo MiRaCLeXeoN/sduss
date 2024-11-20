@@ -1,11 +1,8 @@
-from typing import Optional, List, Tuple, Union, Dict, Any
-
-import torch
-import torch.nn as nn
-
 from diffusers.models.unets.unet_2d_blocks import UNetMidBlock2DCrossAttn, CrossAttnDownBlock2D, DownBlock2D, CrossAttnUpBlock2D, UpBlock2D
 from diffusers.utils.torch_utils import apply_freeu
-
+import torch
+import torch.nn as nn
+from typing import Optional, List, Tuple, Union, Dict, Any
 from .base_module import BaseModule
 
 class PatchUNetMidBlock2DCrossAttn(BaseModule):
@@ -28,6 +25,11 @@ class PatchUNetMidBlock2DCrossAttn(BaseModule):
         is_sliced:bool = False,
         patch_map:dict = None,
         resolution_offset: dict = None,
+        left_batch_idx: torch.FloatTensor or None = None,
+        right_batch_idx: torch.FloatTensor or None = None,
+        patch_num_list: torch.FloatTensor or None = None,
+        right_idx: torch.FloatTensor or None = None,
+        past_batch: torch.FloatTensor or None = None,
     ):
         hidden_states = self.module.resnets[0](hidden_states, temb, is_sliced=is_sliced, patch_map=patch_map, latent_offset=latent_offset, padding_idx=padding_idx)
         for attn, resnet in zip(self.module.attentions, self.module.resnets[1:]):
@@ -38,6 +40,11 @@ class PatchUNetMidBlock2DCrossAttn(BaseModule):
                 is_sliced=is_sliced,
                 latent_offset=latent_offset,
                 resolution_offset=resolution_offset,
+                left_batch_idx=left_batch_idx,
+                right_batch_idx=right_batch_idx,
+                right_idx=right_idx,
+                past_batch=past_batch,
+                patch_num_list=patch_num_list,
             ).sample
             hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, patch_map=patch_map, latent_offset=latent_offset, padding_idx=padding_idx)
 
@@ -64,6 +71,11 @@ class PatchCrossAttnDownBlock2D(BaseModule):
         is_sliced:bool = False,
         patch_map: dict = None,
         resolution_offset: dict = None,
+        left_batch_idx: torch.FloatTensor or None = None,
+        right_batch_idx: torch.FloatTensor or None = None,
+        patch_num_list: torch.FloatTensor or None = None,
+        right_idx: torch.FloatTensor or None = None,
+        past_batch: torch.FloatTensor or None = None,
     ):
         # TODO(Patrick, William) - attention mask is not used
         output_states = ()
@@ -96,6 +108,11 @@ class PatchCrossAttnDownBlock2D(BaseModule):
                     is_sliced=is_sliced,
                     latent_offset=latent_offset,
                     resolution_offset=resolution_offset,
+                    left_batch_idx=left_batch_idx,
+                    right_batch_idx=right_batch_idx,
+                    right_idx=right_idx,
+                    past_batch=past_batch,
+                    patch_num_list=patch_num_list,
                 ).sample
 
             output_states += (hidden_states,)
@@ -121,6 +138,7 @@ class PatchDownBlock2D(BaseModule):
                 patch_map: dict = None,
                 is_sliced:bool = False):
         output_states = ()
+        dim_2 = False
 
         for resnet in self.module.resnets:
             if self.module.training and self.module.gradient_checkpointing:
@@ -133,9 +151,12 @@ class PatchDownBlock2D(BaseModule):
 
                 hidden_states = torch.utils.checkpoint.checkpoint(create_custom_forward(resnet), hidden_states, temb)
             else:
-                hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, patch_map=patch_map, latent_offset=latent_offset,padding_idx=padding_idx)
+                hidden_states = resnet(hidden_states, temb, is_sliced=is_sliced, dim_2=dim_2 and resnet == self.module.resnets[-1], patch_map=patch_map, latent_offset=latent_offset,padding_idx=padding_idx)
 
-            output_states += (hidden_states,)
+            if dim_2:
+                output_states += (hidden_states[:][:][1:-1][1:-1],)
+            else:
+                output_states += (hidden_states, )
 
         if self.module.downsamplers is not None:
             for downsampler in self.module.downsamplers:
@@ -167,6 +188,11 @@ class PatchCrossAttnUpBlock2D(BaseModule):
         padding_idx: dict = None,
         is_sliced:bool = False,
         patch_map: dict = None,
+        left_batch_idx: torch.FloatTensor or None = None,
+        right_batch_idx: torch.FloatTensor or None = None,
+        patch_num_list: torch.FloatTensor or None = None,
+        right_idx: torch.FloatTensor or None = None,
+        past_batch: torch.FloatTensor or None = None,
         resolution_offset: dict = None,
     ):
         is_freeu_enabled = (
@@ -191,7 +217,6 @@ class PatchCrossAttnUpBlock2D(BaseModule):
                     b1=self.module.b1,
                     b2=self.module.b2,
                 )
-
             hidden_states = torch.cat([hidden_states, res_hidden_states], dim=1)
             if self.module.training and self.module.gradient_checkpointing:
 
@@ -220,6 +245,11 @@ class PatchCrossAttnUpBlock2D(BaseModule):
                     is_sliced=is_sliced,
                     latent_offset=latent_offset,
                     resolution_offset=resolution_offset,
+                    left_batch_idx=left_batch_idx,
+                    right_batch_idx=right_batch_idx,
+                    right_idx=right_idx,
+                    past_batch=past_batch,
+                    patch_num_list=patch_num_list,
                 ).sample
 
         if self.module.upsamplers is not None:
@@ -242,7 +272,6 @@ class PatchUpBlock2D(BaseModule):
                 padding_idx: dict = None,
                 patch_map: dict = None,
                 is_sliced:bool = False):
-        
         is_freeu_enabled = (
             getattr(self.module, "s1", None)
             and getattr(self.module, "s2", None)
@@ -283,3 +312,5 @@ class PatchUpBlock2D(BaseModule):
                 hidden_states = upsampler(hidden_states, upsample_size, is_sliced=is_sliced, padding_idx=padding_idx)
 
         return hidden_states
+
+

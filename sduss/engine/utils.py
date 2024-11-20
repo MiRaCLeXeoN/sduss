@@ -59,9 +59,10 @@ class SmUtilMonitor:
     def get_sm_utilization():
         try:
             # Get nvidia-smi output
-            result = subprocess.check_output(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"])
-            sm_utilization = [float(util.strip()) for util in result.decode().split("\n") if util]
-            return sm_utilization
+            # result = subprocess.check_output(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"])
+            # sm_utilization = [float(util.strip()) for util in result.decode().split("\n") if util]
+            # return sm_utilization
+            return None
         except Exception as e:
             print(f"Error fetching SM utilization: {e}")
             return None

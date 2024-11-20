@@ -9,6 +9,7 @@ import time
 import datetime
 import sys
 import logging
+import traceback
 
 from typing import Optional, Union, List, Any, Tuple, Dict, TYPE_CHECKING, Iterable
 from functools import partial
@@ -511,10 +512,14 @@ class Engine:
     def step(self) -> List[RequestOutput]:
         """One step consists of scheduling and execution of requests."""
         self._step_counter += 1
-        if self.engine_config.non_blocking_step:
-            return self._step_nonblocking()
-        else:
-            return self._step_blocking()
+        try:
+            if self.engine_config.non_blocking_step:
+                return self._step_nonblocking()
+            else:
+                return self._step_blocking()
+        except Exception as e:
+            print(e)
+            traceback.print_exc()
     
     
     def _process_nonblocking_output(
@@ -850,8 +855,8 @@ class Engine:
         qps = os.getenv("QPS")
         slo = os.getenv("SLO")
         policy = os.getenv("POLICY")
-
-        result_dir_path = f"./results/{model}/{distribution}_{qps}_{slo}_{policy}"
+        arrival_distri = os.getenv("ARRIVAL_DISTRI")
+        result_dir_path = f"./results/{model}/{arrival_distri}/{distribution}_{qps}_{slo}_{policy}"
         os.makedirs(result_dir_path + "/imgs", exist_ok=True)
 
         sm_util_file_name = result_dir_path + "/sm_util.csv"

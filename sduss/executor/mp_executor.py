@@ -16,8 +16,8 @@ class MpExecutor:
         self.name = name
         self.is_prepare_worker = is_prepare_worker
 
-        self.task_queue: multiprocessing.Queue[Task] = multiprocessing.Queue(100)
-        self.output_queue: 'multiprocessing.Queue[WorkerOutput]' = multiprocessing.Queue(100)
+        self.task_queue: multiprocessing.Queue[Task] = multiprocessing.Queue(500)
+        self.output_queue: 'multiprocessing.Queue[WorkerOutput]' = multiprocessing.Queue(500)
 
         # Set afterwards    
         self.worker = None

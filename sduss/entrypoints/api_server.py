@@ -66,7 +66,7 @@ async def generate(request: Request) -> Response:
     # Store result in server
     image_name = f"{request_id}.png"
     path = "./outputs/imgs/" + image_name
-    final_output.output.images.save(path)
+    # final_output.output.images.save(path)
     image_paths.append(path)
 
     response =  FileResponse(path, media_type="image/png")
