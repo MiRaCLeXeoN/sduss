@@ -1,18 +1,16 @@
-import os
-import time
-
-from typing import Optional, List, Tuple, Union
-
 import torch
-from torch import Tensor
 from torch import distributed as dist
 from torch import nn
 from torch.nn import functional as F
-from diffusers.models.resnet import ResnetBlock2D
+import os
+from diffusers.models.resnet import  ResnetBlock2D
 from diffusers.models.downsampling import Downsample2D
 from diffusers.models.upsampling import Upsample2D
-
 from .base_module import BaseModule
+from typing import Optional, List, Tuple, Union
+from torch import Tensor
+import time
+
 
 class SplitModule():
     def __init__(self):
@@ -349,7 +347,13 @@ class PatchUpsample2D(BaseModule):
         # TODO(Suraj, Patrick) - clean up after weight dicts are correctly renamed
         if self.module.use_conv:
             if self.module.name == "conv":
-                hidden_states = self.module.conv(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+                if is_sliced:
+                    hidden_states = self.module.conv(hidden_states,  is_padding=False, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+                else:
+                    hidden_states = self.module.conv(hidden_states,  is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+                # hidden_states = self.module.conv(F.pad(hidden_states, padding, mode="replicate"), is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
+                if is_sliced:
+                    hidden_states = F.pad(hidden_states, (1, 1, 1, 1), mode="replicate")
             else:
                 hidden_states = self.Conv2d_0(hidden_states)
 
@@ -366,13 +370,20 @@ class PatchDownsample2D(BaseModule):
         assert hidden_states.shape[1] == self.module.channels
         if self.module.norm is not None:
             hidden_states = self.module.norm(hidden_states.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        '''
         if self.module.use_conv and self.module.padding == 0:
             pad = (0, 1, 0, 1)
             hidden_states = F.pad(hidden_states, pad, mode="constant", value=0)
+        '''
 
         assert hidden_states.shape[1] == self.module.channels
-        hidden_states = self.module.conv(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
-
+        if is_sliced:
+            hidden_states = self.module.conv(hidden_states,  is_padding=False, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+        else:
+            hidden_states = self.module.conv(hidden_states,  is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+        # hidden_states = self.module.conv(F.pad(hidden_states, padding, mode="replicate"), is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
+        if is_sliced:
+            hidden_states = F.pad(hidden_states, (1, 1, 1, 1), mode="replicate")
         return hidden_states
 
 class PatchResnetBlock2D(BaseModule):
@@ -381,8 +392,10 @@ class PatchResnetBlock2D(BaseModule):
         module: ResnetBlock2D
     ):
         super().__init__(module)
+        self.pad = torch.nn.ReflectionPad2d(1)
     
     def forward(self, input_tensor, temb, 
+                dim_2: bool = False,
                 latent_offset: dict = None,
                 padding_idx: dict = None,
                 patch_map: dict = None,
@@ -414,7 +427,7 @@ class PatchResnetBlock2D(BaseModule):
                 hidden_states = hidden_states + temb
 
             # hidden_states = self.module.norm2(hidden_states, is_sliced=is_sliced, latent_offset=latent_offset)
-            hidden_states = self.module.norm2(hidden_states, is_sliced=is_sliced, latent_offset=latent_offset["cuda"], patch_map=patch_map["cuda"], padding_idx=padding_idx["cuda"])
+            hidden_states = self.module.norm2(hidden_states, is_sliced=is_sliced, dim_2=dim_2, latent_offset=latent_offset["cuda"], patch_map=patch_map["cuda"], padding_idx=padding_idx["cuda"])
 
         elif self.module.time_embedding_norm == "scale_shift":
             if temb is None:
@@ -439,6 +452,9 @@ class PatchResnetBlock2D(BaseModule):
         if self.module.conv_shortcut is not None:
             input_tensor = self.module.conv_shortcut(input_tensor, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
 
+        if dim_2:
+            input_tensor = self.pad(input_tensor)
         output_tensor = (input_tensor + hidden_states) / self.module.output_scale_factor
 
         return output_tensor
+

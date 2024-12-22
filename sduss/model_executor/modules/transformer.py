@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
-from typing import Optional, List, Tuple, Union, Dict, Any
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
 from torch import nn
-
 from .base_module import BaseModule
-
 from diffusers.models.transformers.transformer_2d import Transformer2DModel, Transformer2DModelOutput
 from diffusers.models.attention import BasicTransformerBlock
+from typing import Optional, List, Tuple, Union, Dict, Any
 
 class PatchTransformer2DModel(BaseModule):
     def __init__(
@@ -41,6 +40,11 @@ class PatchTransformer2DModel(BaseModule):
         latent_offset: dict = None,
         padding_idx: dict = None,
         is_sliced:bool = False,
+        left_batch_idx: torch.FloatTensor or None = None,
+        right_batch_idx: torch.FloatTensor or None = None,
+        patch_num_list: torch.FloatTensor or None = None,
+        right_idx: torch.FloatTensor or None = None,
+        past_batch: torch.FloatTensor or None = None,
         resolution_offset: dict = None,
     ):
         # 1. Input
@@ -62,10 +66,10 @@ class PatchTransformer2DModel(BaseModule):
         elif self.module.is_input_patches:
             hidden_states = self.module.pos_embed(hidden_states)
 
-        if self.module.caption_projection is not None:
-            batch_size = hidden_states.shape[0]
-            encoder_hidden_states = self.module.caption_projection(encoder_hidden_states)
-            encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
+        # if self.module.caption_projection is not None:
+        #     batch_size = hidden_states.shape[0]
+        #     encoder_hidden_states = self.module.caption_projection(encoder_hidden_states)
+        #     encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
 
         # 2. Blocks
         for block in self.module.transformer_blocks:
@@ -79,6 +83,11 @@ class PatchTransformer2DModel(BaseModule):
                 latent_offset=latent_offset,
                 is_sliced=is_sliced,
                 resolution_offset=resolution_offset,
+                left_batch_idx=left_batch_idx,
+                right_batch_idx=right_batch_idx,
+                right_idx=right_idx,
+                past_batch=past_batch,
+                patch_num_list=patch_num_list,
             )            
 
         # 3. Output
@@ -172,6 +181,11 @@ class PatchBasicTransformerBlock(BaseModule):
         added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
         latent_offset: dict = None,
         is_sliced: bool = False,
+        left_batch_idx: torch.FloatTensor or None = None,
+        right_batch_idx: torch.FloatTensor or None = None,
+        patch_num_list: torch.FloatTensor or None = None,
+        right_idx: torch.FloatTensor or None = None,
+        past_batch: torch.FloatTensor or None = None,
         resolution_offset: dict = None,
     ):
         batch = hidden_states.shape[0]
@@ -210,6 +224,11 @@ class PatchBasicTransformerBlock(BaseModule):
             latent_offset=latent_offset["cpu"],
             is_sliced=is_sliced,
             resolution_offset=resolution_offset["cpu"],
+            left_batch_idx=left_batch_idx,
+            right_batch_idx=right_batch_idx,
+            right_idx=right_idx,
+            past_batch=past_batch,
+            patch_num_list=patch_num_list,
             **cross_attention_kwargs,
         )
         # hidden_states = hidden_states.reshape(batch, height * width, -1)
@@ -278,3 +297,4 @@ class PatchBasicTransformerBlock(BaseModule):
             hidden_states = hidden_states.squeeze(1)
 
         return hidden_states
+

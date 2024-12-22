@@ -10,7 +10,6 @@ from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import (
 
 from ..pipeline_utils import BasePipeline
 from ...image_processor import PipelineImageInput
-from sduss.model_executor.modules.unet import PatchUNet
 from sduss.model_executor.modules.resnet import SplitModule
 from sduss.worker import WorkerRequest, WorkerRequestDictType
 from .pipeline_stable_diffusion_esymred_utils import (
@@ -21,12 +20,16 @@ from .pipeline_stable_diffusion_esymred_utils import (
 
 class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
     SUPPORT_MIXED_PRECISION = True
+    SUPPORT_RESOLUTIONS = [256, 512, 768]
 
     @classmethod
     def instantiate_pipeline(cls, **kwargs):
         sub_modules: Dict = kwargs.pop("sub_modules", {})
 
         unet = sub_modules.pop("unet", None)
+
+        # Lazy import to avoid cuda extension building
+        from sduss.model_executor.modules.unet import PatchUNet
         unet = PatchUNet(unet)
         sub_modules["unet"] = unet
 

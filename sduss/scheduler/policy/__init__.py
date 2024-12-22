@@ -1,5 +1,7 @@
 from .FCFS_Single import FCFS_Single
 from .FCFS_Mixed import FCFS_Mixed
+from .Orca_ResByRes import OrcaResByRes
+from .Orca_Round_Robin import OrcaRoundRobin
 from .ESyMReD import ESyMReD_Scheduler
 
 from .policy import Policy
@@ -9,7 +11,10 @@ class PolicyFactory:
     # map: name -> (cls, support_mixed_precision)
     _POLICY_REGISTRY = {
         'fcfs_single': (FCFS_Single, False),
+        'fcfs_nirvana': (FCFS_Single, False),
         'fcfs_mixed' : (FCFS_Mixed, True),
+        'orca_resbyres' : (OrcaResByRes, False),
+        'orca_round_robin' : (OrcaRoundRobin, False),
         'esymred' : (ESyMReD_Scheduler, True),
     }
     

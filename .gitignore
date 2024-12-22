@@ -1,5 +1,6 @@
 # vscode files
 .vscode
+.VSCodeCounter
 
 # python cache files
 __pycache__
@@ -8,6 +9,13 @@ dist
 
 # test files
 /local_tests
+/exp
+/results
+imgs/
+
 
 # output files
 /outputs
+
+# log files
+*.log

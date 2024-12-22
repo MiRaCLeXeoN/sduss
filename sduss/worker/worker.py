@@ -1,4 +1,6 @@
 import os
+import time
+
 from typing import Optional, List, Dict, Union, TYPE_CHECKING
 
 import torch
@@ -59,6 +61,12 @@ class Worker:
         self.request_pool: Dict[int, WorkerRequest] = {} 
 
         self.model_runner = ModelRunner(pipeline_config, parallel_config, scheduler_config, is_prepare_worker)
+
+        # global logger
+        # if self.is_prepare_worker:
+        #     logger = init_logger(__name__, to_file_name="./outputs/prepare_worker")
+        # else:
+        #     logger = init_logger(__name__, to_file_name="./outputs/gpu_worker")
         
     
     def init_dis_env(self) -> None:
@@ -95,10 +103,9 @@ class Worker:
     
     def init_prepare(self) -> None:
         assert self.is_prepare_worker
-
-        rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
-        local_rank = int(os.getenv("LOCAL_RANK", "0"))
-        logger.debug(f"rank={self.rank}, local_rank={local_rank}")
+        # rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
+        # local_rank = int(os.getenv("LOCAL_RANK"))
+        # logger.debug(f"rank={self.rank}, local_rank={local_rank}")
         set_random_seed(self.pipeline_config.seed)
     
 
@@ -107,6 +114,7 @@ class Worker:
     
 
     def add_request(self, req_id: int, wr: WorkerRequest):
+        assert req_id not in self.request_pool
         self.request_pool[req_id] = wr
     
     
@@ -115,12 +123,24 @@ class Worker:
             req_ids = [req_ids]
         for req_id in req_ids:
             del self.request_pool[req_id]
+    
+    
+    def receive_prepare_output(self, prepare_output: WorkerOutput):
+        """Receive prepare output from engine."""
+        start_time = time.time()
+        self._process_prepare_output(prepare_output=prepare_output)
+        end_time = time.time()
+        return WorkerOutput(
+            start_time=start_time,
+            end_time=end_time
+        )
         
     
     def exec_prepare_stage(
         self,
         scheduler_reqs: List[Request],
         use_mixed_precision: bool,
+        prepare_output: WorkerOutput = None,
     ) -> None:
         """Execute prepare stage inference.
         
@@ -129,13 +149,18 @@ class Worker:
         Args:
             scheduler_reqs (List[Request]): _description_
         """
+        # 0. Store prepare results
+        if prepare_output is not None:
+            self._process_prepare_output(prepare_output)
+
         # 1. Create WorkerRequests to track reqs.
         worker_reqs: "WorkerRequestDictType" = {}
         for sche_req in scheduler_reqs:
             wr = WorkerRequest(sche_req)
             # Only register when prepare stage is not overlapped
-            if not self.scheduler_config.overlap_prepare:
+            if not self.is_prepare_worker:
                 self.request_pool[wr.request_id] = wr
+            
             res = wr.sampling_params.resolution
             if res not in worker_reqs:
                 worker_reqs[res] = [wr]
@@ -143,11 +168,18 @@ class Worker:
                 worker_reqs[res].append(wr)
         
         # 2. Execute
+        start_time = time.time()
         self.model_runner.exec_prepare_stage(worker_reqs)
+        end_time = time.time()
 
         # 3. Create return wrapper
-        return WorkerOutput(worker_reqs=worker_reqs, status=RequestStatus.PREPARE,
-                            overlap_prepare=self.scheduler_config.overlap_prepare)
+        return WorkerOutput(
+            worker_reqs=worker_reqs, 
+            status=RequestStatus.PREPARE,
+            start_time=start_time,
+            end_time=end_time,
+            is_from_prepare_worker=self.is_prepare_worker,
+        )
         
     
     def exec_denoising_stage(
@@ -181,10 +213,14 @@ class Worker:
                 worker_reqs[res].append(wq)
 
         # 2. Execute
+        start_time = time.time()
         self.model_runner.exec_denoising_stage(worker_reqs, is_sliced, patch_size)
+        end_time = time.time()
 
-        # 3. Update reqs states
-        return
+        return WorkerOutput(
+            start_time=start_time,
+            end_time=end_time,
+        )
     
     
     def exec_post_stage(
@@ -207,10 +243,17 @@ class Worker:
             else:
                 worker_reqs_dict[res].append(wq)
 
+        start_time = time.time()
         self.model_runner.exec_post_stage(worker_reqs_dict)
+        end_time = time.time()
 
         # Create output
-        output = WorkerOutput(worker_reqs=worker_reqs_dict, status=RequestStatus.POSTPROCESSING)
+        output = WorkerOutput(
+            worker_reqs=worker_reqs_dict, 
+            status=RequestStatus.POSTPROCESSING,
+            start_time=start_time,
+            end_time=end_time,
+        )
 
         # Remove finished requests
         self.remove_requests_by_id(req_ids)
@@ -226,12 +269,16 @@ class Worker:
         Args:
             prepare_output (WorkerOutput): Output.
         """
+        # now = time.time()
         worker_reqs = prepare_output.worker_reqs
         for worker_req_list in worker_reqs.values():
             for wr in worker_req_list:
                 self.add_request(wr.request_id, wr)
+                wr.to_tensor()
                 # Move tensors to current device
                 wr.to_device(self.device)
+                wr.to_dtype(self.pipeline_config.kwargs["torch_dtype"])
+        # logger.info(f"Unpack overlapped prepare output: {time.time() - now}")
 
         
     def warm_up_model(self) -> None:

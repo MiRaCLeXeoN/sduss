@@ -1,14 +1,16 @@
 import enum
 
-from typing import List, Dict
+from typing import List, Dict, TYPE_CHECKING
 
 import torch
 
 from sduss.scheduler import RequestStatus, Request
 from sduss.model_executor.utils import BaseOutput
-from sduss.model_executor.sampling_params import BaseSamplingParams
-from sduss.model_executor.diffusers import BasePipelinePrepareOutput
-from sduss.model_executor.diffusers import BaseSchedulerStates
+
+if TYPE_CHECKING:
+    from sduss.model_executor.sampling_params import BaseSamplingParams
+    from sduss.model_executor.diffusers import BasePipelinePrepareOutput
+    from sduss.model_executor.diffusers import BaseSchedulerStates
 
 class InferenceStage(enum.Enum):
     PREPARE = enum.auto()
@@ -26,12 +28,12 @@ class WorkerRequest:
         # Status from new requests should be `waiting`
         # self.status = scheduler_req.status
         # assert self.status == RequestStatus.WAITING
-        self.sampling_params: BaseSamplingParams = scheduler_req.sampling_params
+        self.sampling_params: "BaseSamplingParams" = scheduler_req.sampling_params
         # self.remain_steps: int = scheduler_req.remain_steps
 
         # Filled by inference procedure
-        self.scheduler_states: BaseSchedulerStates = None
-        self.prepare_output: BasePipelinePrepareOutput = None
+        self.scheduler_states: "BaseSchedulerStates" = None
+        self.prepare_output: "BasePipelinePrepareOutput" = None
         self.step_output = None
         self.output = None
 
@@ -39,7 +41,7 @@ class WorkerRequest:
     
     def _initialize_sampling_params(self) -> None:
         if self.sampling_params.latents is not None:
-            self.sampling_params.latents.to(torch.cuda.current_device())
+            self.sampling_params.latents = self.sampling_params.latents.to(torch.cuda.current_device())
         
         # TODO(MX): Other tensors are not examined.
     
@@ -51,6 +53,34 @@ class WorkerRequest:
         self.scheduler_states.to_device(device)
         # prepare_output
         self.prepare_output.to_device(device)
+    
+    
+    def to_dtype(self, dtype: torch.dtype):
+        # Sampling params
+        self.sampling_params.to_dtype(dtype)
+        # Scheduler states
+        self.scheduler_states.to_dtype(dtype)
+        # prepare_output
+        self.prepare_output.to_dtype(dtype)
+    
+    
+    def to_numpy(self):
+        # Sampling params
+        self.sampling_params.to_numpy()
+        # Scheduler states
+        self.scheduler_states.to_numpy()
+        # prepare_output
+        self.prepare_output.to_numpy()
+    
+    
+    def to_tensor(self):
+        # Sampling params
+        self.sampling_params.to_tensor()
+        # Scheduler states
+        self.scheduler_states.to_tensor()
+        # prepare_output
+        self.prepare_output.to_tensor()
+
         
         
 # resolution -> List[request]
@@ -62,8 +92,16 @@ class WorkerOutput:
         self,
         worker_reqs: WorkerRequestDictType = None,
         status: RequestStatus = None,
-        overlap_prepare: bool = False,
+        start_time : float = None,
+        end_time : float = None,
+        is_from_prepare_worker : bool = False,
     ) -> None:
+        # Performance recording
+        self.start_time = start_time
+        self.end_time = end_time
+
+        self.is_from_prepare_worker = is_from_prepare_worker
+
         if status == RequestStatus.POSTPROCESSING:
             reqs_dict: Dict[int, BaseOutput] = {}
             for res in worker_reqs:
@@ -82,7 +120,17 @@ class WorkerOutput:
                     reqs_dict[wr.request_id] = len(wr.scheduler_states.timesteps)
             self.reqs_steps_dict = reqs_dict
             # If prepare stage is overlapped, we should return all worker_reqs directly
-            if overlap_prepare:
+            if is_from_prepare_worker:
+                for req_list in worker_reqs.values():
+                    for wr in req_list:
+                        wr.to_numpy()
                 self.worker_reqs = worker_reqs
+        elif status == RequestStatus.DENOISING:
+            pass
+    
+    
+    def __eq__(self, value: object) -> bool:
+        if isinstance(value, WorkerOutput):
+            return True
         else:
-            raise RuntimeError
+            return False

@@ -3,7 +3,7 @@ import time
 from typing import List, TYPE_CHECKING
 
 from .policy import Policy
-from ..wrappers import SchedulerOutput
+from ..wrappers import SchedulerOutput, RequestStatus
 
 if TYPE_CHECKING:
     from sduss.scheduler import Request
@@ -15,23 +15,23 @@ class FCFS_Single(Policy):
     that can be batched with it (A giant request will be split as many single
     requests at the entrypoint. They can be processed together).
 
+    FCFS features
+        Supports:
+            1. batch reqs of different timesteps
+        Don't supports:
+            2. mixed-precision shceduling
+
     Don't support mixed precision.
     """
     def _flatten_all_reqs(self) -> List['Request']:
         reqs = []
         for resolution_queue in self.request_pool.values():
-            reqs.extend(resolution_queue.get_all_unfinished_reqs())
+            reqs.extend(resolution_queue.get_all_unfinished_normal_reqs())
         return reqs
     
     
     def schedule_requests(self, max_num: int) -> SchedulerOutput:
         """Schedule requests for next iteration.
-
-        FCFS features
-            Supports:
-                1. batch reqs of different timesteps
-            Don't supports:
-                2. mixed-precision shceduling
 
         Args:
             max_num (int): _description_
@@ -40,6 +40,12 @@ class FCFS_Single(Policy):
             List[Request]: _description_
         """
         flattened_reqs = self._flatten_all_reqs()
+
+        if len(flattened_reqs) == 0:
+            return SchedulerOutput(
+                scheduled_requests={},
+                status=RequestStatus.WAITING,
+            )
 
         # Find the oldest request
         now = time.monotonic()
@@ -67,9 +73,17 @@ class FCFS_Single(Policy):
         ret = {}
         ret[target_res] = resolution_req_dict
     
-        # FIXME: Arange prepare stage
-
         return SchedulerOutput(
             scheduled_requests=ret,
             status=target_status,
         )
+
+
+    def scheduler_request_overlap_prepare(
+        self, 
+        max_num: int, 
+        max_overlapped_prepare_reqs: int,
+        accept_overlap_prepare_reqs: bool,
+    ) -> SchedulerOutput:
+        """Schedule requests with overlapped preapre stage."""
+        raise NotImplementedError

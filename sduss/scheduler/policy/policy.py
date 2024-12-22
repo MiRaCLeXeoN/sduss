@@ -6,9 +6,11 @@ if TYPE_CHECKING:
 
 class Policy(ABC):
 
-    def __init__(self, request_pool: Dict[int, 'ResolutionRequestQueue']) -> None:
+    def __init__(self, **kwargs) -> None:
         # Reference scheduler's request pool
-        self.request_pool = request_pool
+        self.request_pool : Dict[int, 'ResolutionRequestQueue'] = kwargs.pop("request_pool")
+        self.non_blocking_step: bool = kwargs.pop("non_blocking_step")
+        self.overlap_prepare: bool = kwargs.pop("overlap_prepare")
 
     
     @abstractmethod
@@ -27,12 +29,19 @@ class Policy(ABC):
     
     
     @abstractmethod
-    def scheduler_request_overlap_prepare(self, max_num: int) -> 'SchedulerOutput':
+    def scheduler_request_overlap_prepare(
+        self, 
+        max_num: int, 
+        max_overlapped_prepare_reqs: int,
+        accept_overlap_prepare_reqs: bool,
+    ) -> 'SchedulerOutput':
         """Scheduler requests for next iteration regarding overlapping prepare
         stage requests.
 
         Args:
             max_num (int): Maximum number of requests to scheduler within each round.
+            max_overlapped_prepare_reqs (int): Maximum number of requests to scheduler within
+                each round.
 
         Returns:
             SchedulerOutput: Output.

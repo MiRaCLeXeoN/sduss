@@ -71,6 +71,18 @@ class StableDiffusionEsymredPipelinePrepareOutput(BasePipelinePrepareOutput):
 
     def to_device(self, device) -> None:
         self.device = device
+    
+    
+    def to_dtype(self, dtype) -> None:
+        pass
+
+    
+    def to_numpy(self) -> None:
+        pass
+
+    
+    def to_tensor(self) -> None:
+        pass
 
 
 class StableDiffusionEsymredPipelineStepInput(BasePipelineStepInput):
@@ -238,3 +250,15 @@ class StableDiffusionEsymredPipelineSamplingParams(BaseSamplingParams):
     
     def to_device(self, device) -> None:
         return super().to_device(device)
+    
+    
+    def to_dtype(self, dtype) -> None:
+        return super().to_dtype(dtype=dtype)
+    
+    
+    def to_numpy(self) -> None:
+        return super().to_numpy()
+    
+    
+    def to_tensor(self) -> None:
+        return super().to_tensor()

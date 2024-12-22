@@ -27,11 +27,17 @@ class BaseSamplingParams():
         if self.latents is not None and self.latents.device != torch.device("cpu"):
             logger.info(f"Forcing input lantents from {self.latents.device} to cpu to make sure "
                         f"it can be properly passed to worker through Ray.")
-            self.latents.to("cpu")
+            self.latents = self.latents.to("cpu")
         
         # Embeds must be None
         assert self.prompt_embeds is None and self.negative_prompt_embeds is None, (
             "Currently we don't support customized embeds.")
+
+        # Convert type
+        if isinstance(self.resolution, str):
+            self.resolution = int(self.resolution)
+        if isinstance(self.num_inference_steps, str):
+            self.num_inference_steps = int(self.num_inference_steps)
     
     
     def is_compatible_with(self, sampling_params: "BaseSamplingParams") -> bool:
@@ -55,7 +61,7 @@ class BaseSamplingParams():
 
     def __repr__(self) -> str:
         """Literal representation of samling parameters."""
-        raise NotImplementedError
+        return self.prompt
 
 
     def clone(self) -> "BaseSamplingParams":
@@ -63,9 +69,27 @@ class BaseSamplingParams():
     
     
     def to_device(self, device) -> None:
-        self.latents.to(device=device)
-        self.prompt_embeds.to(device=device)
-        self.negative_prompt_embeds.to(device=device)
+        self.latents = self.latents.to(device=device)
+        self.prompt_embeds = self.prompt_embeds.to(device=device)
+        self.negative_prompt_embeds = self.negative_prompt_embeds.to(device=device)
+    
+    
+    def to_dtype(self, dtype: torch.dtype) -> None:
+        self.latents = self.latents.to(dtype=dtype)
+        self.prompt_embeds = self.prompt_embeds.to(dtype=dtype)
+        self.negative_prompt_embeds = self.negative_prompt_embeds.to(dtype=dtype)
+    
+    
+    def to_numpy(self) -> None:
+        self.latents = self.latents.numpy()
+        self.prompt_embeds = self.prompt_embeds.numpy()
+        self.negative_prompt_embeds = self.negative_prompt_embeds.numpy()
+    
+    
+    def to_tensor(self) -> None:
+        self.latents = torch.from_numpy(self.latents)
+        self.prompt_embeds = torch.from_numpy(self.prompt_embeds)
+        self.negative_prompt_embeds = torch.from_numpy(self.negative_prompt_embeds)
             
 
     def _check_volatile_params(self):

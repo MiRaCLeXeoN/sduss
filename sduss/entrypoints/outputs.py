@@ -21,7 +21,10 @@ class RequestOutput:
     ) -> None:
         self.request_id = request.request_id
         self.output = request.output
-        self.finished = request.status == RequestStatus.FINISHED_STOPPED
+        self.resolution = request.sampling_params.resolution
+
+        self.normal_finished = RequestStatus.is_normal_finished(request.status)
+        self.is_finished = RequestStatus.is_finished(request.status)
 
         self.start_datetime = datetime.datetime.fromtimestamp(request.arrival_time)
         self.finish_datetime = datetime.datetime.fromtimestamp(request.finish_time)

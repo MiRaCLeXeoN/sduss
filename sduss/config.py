@@ -50,8 +50,8 @@ class PipelineConfig:
         self,
         scheduler_config: "SchedulerConfig",
     ):
-        if scheduler_config.use_mixed_precision != self.use_esymred:
-            raise ValueError("When using esymred pipelines, scheduler is forced to use mixed_precision.")
+        if scheduler_config.use_mixed_precision:
+            assert self.use_esymred, "When using mixed_precision, scheduler is forced to esymred pipelines."
         
         
 
@@ -61,8 +61,10 @@ class ParallelConfig:
         pipeline_parallel_size: int,
         tensor_parallel_size: int,
         data_parallel_size: int,
-        num_cpus_extra_worker: int,
+        num_cpus_cpu_worker: int,
+        num_cpus_gpu_worker: int,
         worker_use_ray: bool,
+        worker_use_mp: bool,
         max_parallel_loading_workers: Optional[int] = None,
     ) -> None:
         """Configuration for the distributed execution.
@@ -78,15 +80,17 @@ class ParallelConfig:
         self.tensor_parallel_size = tensor_parallel_size
         self.data_parallel_size = data_parallel_size
         self.worker_use_ray = worker_use_ray
+        self.worker_use_mp = worker_use_mp
         self.max_parallel_loading_workers = max_parallel_loading_workers
 
         self.world_size = pipeline_parallel_size * tensor_parallel_size * data_parallel_size
 
-        self.num_workers = self.world_size + 1 # 1 worker for prepare stage
-        self.num_cpus_extra_worker = num_cpus_extra_worker
+        self.num_workers = self.world_size 
+        self.num_cpus_cpu_worker = num_cpus_cpu_worker
+        self.num_cpus_gpu_worker = num_cpus_gpu_worker
         
         if self.world_size > 1:
-            self.worker_use_ray = True
+            self.worker_use_mp = True
         self._verify_args()
 
 
@@ -95,6 +99,19 @@ class ParallelConfig:
             or self.data_parallel_size > 1):
             raise NotImplementedError(
                 "Parallelism is not supported yet.")
+    
+    
+    def update_params(self, scheduler_config: 'SchedulerConfig'):
+        if scheduler_config.overlap_prepare:
+            # 1 extra worker for prepare stage
+            self.num_workers += 1
+    
+    
+    def verify_with_scheduler_config(
+        self,
+        scheduler_config: "SchedulerConfig",
+    ):
+        pass
 
 
 class SchedulerConfig:
@@ -105,12 +122,14 @@ class SchedulerConfig:
         use_mixed_precision: bool, 
         policy: str,
         overlap_prepare: bool,
+        max_overlapped_prepare_reqs: int,
     ) -> None:
 
         self.max_batchsize = max_bathsize
         self.use_mixed_precision = use_mixed_precision
         self.policy = policy
         self.overlap_prepare = overlap_prepare
+        self.max_overlapped_prepare_reqs = max_overlapped_prepare_reqs
         
         self._verify_args()
         
@@ -124,13 +143,20 @@ class EngineConfig:
         self,
         log_status: bool,
         non_blocking_step: bool,
+        engine_use_ray: bool = False,
+        engine_use_mp: bool = False,
+        log_requests: bool = False,
     ) -> None:
         self.log_status = log_status
         self.non_blocking_step = non_blocking_step
+        self.engine_use_ray = engine_use_ray
+        self.engine_use_mp = engine_use_mp
+        self.log_requests = log_requests
     
     
     def verify_with_scheduler_config(self, scheduler_config: SchedulerConfig):
         # Currently we only support 2 combinations:
         # 1. blocking + non-overlapped
         # 2. nonblocking + overlapped
-        assert self.non_blocking_step == scheduler_config.overlap_prepare
+        # assert self.non_blocking_step == scheduler_config.overlap_prepare
+        pass

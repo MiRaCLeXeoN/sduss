@@ -19,6 +19,7 @@ from sduss.worker import WorkerRequest
 
 class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
     SUPPORT_MIXED_PRECISION = False
+    SUPPORT_RESOLUTIONS = [256, 512, 768]
 
     @classmethod
     def instantiate_pipeline(cls, **kwargs):

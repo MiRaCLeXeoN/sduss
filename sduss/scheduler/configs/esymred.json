@@ -1,0 +1,48 @@
+{
+    "Hyper_Parameter" : {
+        "sd1.5": {
+            "postprocessing": {
+                "256": 4,
+                "512": 2,
+                "768": 1
+            }
+        },
+        "sdxl": {
+            "postprocessing": {
+                "512": 4,
+                "768": 2,
+                "1024": 1
+            }
+        },
+        "get_best_tp_th": 1,
+        "active_queue_timeout_th": 0.1,
+        "postprocessing_ratio": 0.9
+    },
+    "STANDALONE" : {
+        "sd1.5": {
+            "denoising": {
+                "256": 2.15,
+                "512": 2.35,
+                "768": 2.85
+            },
+            "postprocessing": {
+                "256": 0.05,
+                "512": 0.08,
+                "768": 0.1
+            }
+        },
+        "sdxl": {
+            "denoising": {
+                "512": 5.25,
+                "768": 5.55,
+                "1024": 6.05
+            },
+            "postprocessing": {
+                "512": 0.07,
+                "768": 0.1,
+                "1024": 0.16
+            }
+        }
+    },
+    "DISCARD_SLACK" : 500
+}

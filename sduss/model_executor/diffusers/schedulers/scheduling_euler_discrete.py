@@ -49,8 +49,23 @@ class EulerDiscreteSchedulerStates(BaseSchedulerStates):
     
     def to_device(self, device) -> None:
         # self.sigmas should be on CPU
-        self.sigmas.to("cpu")
-        self.timesteps.to(device=device)
+        self.sigmas = self.sigmas.to("cpu")
+        self.timesteps = self.timesteps.to(device=device)
+    
+
+    def to_dtype(self, dtype) -> None:
+        # We should not alter any dtype
+        pass
+
+    
+    def to_numpy(self) -> None:
+        self.sigmas = self.sigmas.numpy()
+        self.timesteps = self.timesteps.numpy()
+    
+    
+    def to_tensor(self) -> None:
+        self.sigmas = torch.from_numpy(self.sigmas)
+        self.timesteps = torch.from_numpy(self.timesteps)
 
 
 class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportScheduler):

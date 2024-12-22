@@ -18,7 +18,6 @@ from .pipeline_stable_diffusion_xl_esymred_utils import (
     StableDiffusionXLEsymredPipelinePostInput, StableDiffusionXLEsymredPipelineOutput,
     StableDiffusionXLEsymredPipelineSamplingParams)
 
-from sduss.model_executor.modules.unet import PatchUNet
 from sduss.model_executor.modules.resnet import SplitModule
 from sduss.worker import WorkerRequest
 
@@ -27,12 +26,16 @@ if TYPE_CHECKING:
 
 class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BasePipeline):
     SUPPORT_MIXED_PRECISION = True
+    SUPPORT_RESOLUTIONS = [512, 768, 1024]
 
     @classmethod
     def instantiate_pipeline(cls, **kwargs):
         sub_modules: Dict = kwargs.pop("sub_modules", {})
 
         unet = sub_modules.pop("unet", None)
+
+        # Lazy import to avoid cuda extension building.
+        from sduss.model_executor.modules.unet import PatchUNet
         unet = PatchUNet(unet)
         sub_modules["unet"] = unet
 
@@ -357,13 +360,6 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         #     added_cond_kwargs["image_embeds"] = image_embeds
 
         # TODO: Clean up
-        for res in latent_input_dict:
-            print(f"latent[{res}].shape={latent_input_dict[res].shape}")
-        print(f"{is_sliced=}, {patch_size=}")
-        # print(f"{t.shape=}, {t=}")
-        # print(f"{prompt_embeds.shape=}, {prompt_embeds=}")
-        # for name in added_cond_kwargs:
-        #     print(f"added_cond_kwargs[{name}].shape={added_cond_kwargs[name].shape}, {added_cond_kwargs[name]}")
 
         noise_pred = self.unet(
             latent_input_dict,
@@ -377,10 +373,6 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             patch_size=patch_size,
         )[0]
 
-        # for res in noise_pred:
-        #     print(f"noise_pred[{res}].shape={noise_pred[res].shape}, {noise_pred[res]}")
-
-        # perform guidance
         for res, res_split_noise in noise_pred.items():
             if do_classifier_free_guidance:
                 noise_pred_uncond, noise_pred_text = res_split_noise.chunk(2)
@@ -389,7 +381,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             # compute the previous noisy sample x_t -> x_t-1
             # latents[resolution] = self.scheduler.step(res_split_noise, t, latents[resolution], **extra_step_kwargs).prev_sample
 
-            if self.do_classifier_free_guidance and guidance_rescale > 0.0:
+            if do_classifier_free_guidance and guidance_rescale > 0.0:
                 # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
                 res_split_noise = rescale_noise_cfg(res_split_noise, noise_pred_text, guidance_rescale=guidance_rescale)
 

@@ -15,7 +15,7 @@ if TORCH_INCLUDE_PATH is None:
 
 
 esymred = load(
-    name="esymred",
+    name="esymred_mp",
     sources=[
         "sduss/model_executor/modules/kernels/norm_silu_concat.cpp",
         "sduss/model_executor/modules/kernels/norm_silu_concat.cu",
@@ -26,6 +26,8 @@ esymred = load(
     extra_cuda_cflags = [" --ptxas-options=-v --extended-lambda"],
     extra_include_paths = [TORCH_INCLUDE_PATH])
 
+
+
 class PatchGroupNorm(BaseModule):
     def __init__(self, module: nn.GroupNorm):
         assert isinstance(module, nn.GroupNorm)
@@ -33,12 +35,18 @@ class PatchGroupNorm(BaseModule):
         self.groupnorm_time = 0
 
    
-    def forward(self, input: torch.Tensor, is_sliced: bool = False, latent_offset: torch.Tensor=None, patch_map: torch.Tensor = None, padding_idx: torch.Tensor = None, is_fused: bool = True) -> torch.Tensor:
+    def forward(self, input: torch.Tensor, is_sliced: bool = False, dim_2: bool = False, latent_offset: torch.Tensor=None, patch_map: torch.Tensor = None, padding_idx: torch.Tensor = None, is_fused: bool = True) -> torch.Tensor:
         assert input.ndim == 4
         if not is_sliced or not is_fused:
             result = self.module(input)
             return result
         else:
             N, C, H, W = input.shape
+            torch.cuda.synchronize()
+            start = time.time()
+            #result = self.module(input)
+            #result = F.pad(result, (1, 1, 1, 1), mode="constant", value=0)
+            #torch.cuda.synchronize()
             result = esymred.groupnorm(input, self.module.weight, self.module.bias, N, C, H, W, int(C / self.module.num_groups), self.module.eps, latent_offset, patch_map, padding_idx)
+            self.groupnorm_time += (time.time() - start)
             return result
