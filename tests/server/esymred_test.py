@@ -206,7 +206,13 @@ if __name__ == "__main__":
                 delay_time = time_csv.iloc[i, 0]
                 resoluition = time_csv.iloc[i, 1]
                 prompt = prompt_csv.iloc[i, 1]
-                steps = time_csv.iloc[i, 2] if policy == "orca_resbyres" else 50
+                # steps = time_csv.iloc[i, 2] if policy == "orca_resbyres" else 50
+                if policy == "orca_resbyres":
+                    steps = time_csv.iloc[i, 2]
+                elif policy == "fcfs_nirvana":
+                    steps = 40
+                else:
+                    steps = 50
                 coros.append(get_image_from_session(
                     session=session,
                     index=i,

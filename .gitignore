@@ -16,3 +16,6 @@ imgs/
 
 # output files
 /outputs
+
+# log files
+*.log

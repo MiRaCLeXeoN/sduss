@@ -20,7 +20,7 @@ python ./sduss/entrypoints/api_server.py \
     ${OVERLAP_PREPARE} \
     ${NON_BLOCKING_STEP} \
     --use_esymred \
-    --max_batchsize 16 \
+    --max_batchsize 12 \
     --torch_dtype "float16" \
     --engine_use_mp \
     --worker_use_mp
