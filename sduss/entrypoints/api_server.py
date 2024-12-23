@@ -2,7 +2,7 @@ import argparse
 import json
 import sys
 import os
-import multiprocessing as mp
+import torch.multiprocessing as mp
 from typing import AsyncGenerator, Dict
 
 from fastapi import FastAPI, Request

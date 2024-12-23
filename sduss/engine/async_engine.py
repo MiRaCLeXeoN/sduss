@@ -175,11 +175,13 @@ class RequestTracker:
         # Use set to handle multi-cancelled requests
         finished_request_ids: Set[str] = set()
 
+        # Remove finished reqs
         while not self._finished_requests.empty():
             request_id = self._finished_requests.get_nowait()
             finished_request_ids.add(request_id)
             self._request_streams_mapping.pop(request_id, None)
 
+        # Start new reqs
         while not self._new_requests.empty():
             stream, new_request_param = self._new_requests.get_nowait()
             if stream.request_id in finished_request_ids:
@@ -278,6 +280,9 @@ class AsyncEngine:
 
         self._request_tracker = RequestTracker()
 
+        if self.start_engine_loop:
+            self.start_background_loop()
+
         if self.engine_config.log_requests:
             logger.info("AsyncEngine initialization done. System Ready.")
             sys.stderr.flush()
@@ -323,6 +328,7 @@ class AsyncEngine:
         new_requsts_params, finished_request_ids = (
             self._request_tracker.get_new_and_finished_requests())
         
+        # Add request batch
         if self.engine_config.engine_use_ray:
             await self.engine.add_request_batch.remote(new_requsts_params)
         elif self.engine_config.engine_use_mp:
@@ -387,16 +393,6 @@ class AsyncEngine:
     ) -> AsyncStream:
         if self.engine_config.log_requests:
             logger.info(f"Received new request {request_id}")
-        
-        if not self.is_running:
-            if self.start_engine_loop:
-                self.start_background_loop()
-            else:
-                raise RuntimeError(
-                    "Background loop is not running. If it was running, "
-                    "inspect the output to find the stacktrace of the "
-                    "error that caused the background loop to stop "
-                    "(AsyncEngineDeadError).")
         
         stream = self._request_tracker.add_request(
             request_id=request_id,

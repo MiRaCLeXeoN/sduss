@@ -63,7 +63,6 @@ class Engine:
         gpu_pg: Optional["PlacementGroup"],
         cpu_pg: Optional["PlacementGroup"],
     ) -> None:
-        time.sleep(5)
         if engine_config.log_status:
             logger.info(
                 "Initializing an engine with config:\n"
@@ -193,13 +192,13 @@ class Engine:
         distributed_init_method: str,
     ):
         self.workers: 'List[MpExecutor]' = []
-        for i in range(self.parallel_config.world_size):
-            worker = MpExecutor(f"sduss_gpu_worker{i}", is_prepare_worker=False)
+        for i in range(self.parallel_config.num_gpu_workers):
+            worker = MpExecutor(f"sduss_gpu_worker{i}", rank=i, is_prepare_worker=False)
             self.workers.append(worker)
 
         self.prepare_workers = []
-        for i in range(1):
-            worker = MpExecutor(f"sduss_cpu_worker{i}", is_prepare_worker=True)
+        for i in range(self.parallel_config.num_cpu_workers):
+            worker = MpExecutor(f"sduss_cpu_worker{i}", rank=i, is_prepare_worker=True)
             self.prepare_workers.append(worker)
         
         # init_torch_dist_process_group(self.workers, backend="nccl")
@@ -210,17 +209,19 @@ class Engine:
         
         # execute `init_worker` 
         for i, worker in enumerate(self.workers):
-            worker.init_worker(worker_init_fn=partial(worker_init_fn, model_config, 
-                                                      parallel_config, scheduler_config, engine_config, rank=i,
+            worker.init_worker(worker_init_fn=partial(worker_init_fn, model_config, parallel_config, 
+                                                      scheduler_config, engine_config, rank=i, is_prepare_worker=False,
                                                       distributed_init_method=distributed_init_method))
         self._run_workers_blocking("init_dis_env", self.workers, get_all_outputs=True)
-        # execute `init_worker` method of prepare_workers
         if self.scheduler_config.overlap_prepare:
             for i, worker in enumerate(self.prepare_workers):
                 worker.init_worker(worker_init_fn=partial(worker_init_fn, model_config, parallel_config, 
-                                                          scheduler_config, engine_config, rank=i, is_prepare_worker=True,
-                                                          distributed_init_method=distributed_init_method))
+                                                            scheduler_config, engine_config, rank=i, is_prepare_worker=True,
+                                                            distributed_init_method=distributed_init_method))
             self._run_workers_blocking("init_prepare", self.prepare_workers, get_all_outputs=True)
+        
+        # Load model
+        if self.scheduler_config.overlap_prepare:
             self._run_workers_blocking("load_model", self.workers + self.prepare_workers, get_all_outputs=True)
         else:
             self._run_workers_blocking("load_model", self.workers, get_all_outputs=True)

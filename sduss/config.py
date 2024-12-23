@@ -63,6 +63,7 @@ class ParallelConfig:
         data_parallel_size: int,
         num_cpus_cpu_worker: int,
         num_cpus_gpu_worker: int,
+        num_cpu_workers: int,
         worker_use_ray: bool,
         worker_use_mp: bool,
         max_parallel_loading_workers: Optional[int] = None,
@@ -85,26 +86,28 @@ class ParallelConfig:
 
         self.world_size = pipeline_parallel_size * tensor_parallel_size * data_parallel_size
 
-        self.num_workers = self.world_size 
+        self.num_cpu_workers = num_cpu_workers
+        self.num_gpu_workers = self.world_size
         self.num_cpus_cpu_worker = num_cpus_cpu_worker
         self.num_cpus_gpu_worker = num_cpus_gpu_worker
         
+        # ! FIXME: We currently only supports mp for multi-devices
         if self.world_size > 1:
+            logger.info("World size > 1, forcing to use torch.multiprocessing.")
+            self.worker_use_ray = False
             self.worker_use_mp = True
         self._verify_args()
 
 
     def _verify_args(self) -> None:
-        if (self.pipeline_parallel_size > 1 or self.tensor_parallel_size > 1 
-            or self.data_parallel_size > 1):
+        if (self.pipeline_parallel_size > 1 or self.tensor_parallel_size > 1):
             raise NotImplementedError(
-                "Parallelism is not supported yet.")
+                "PP and TP is not supported yet.")
+        assert self.worker_use_ray != self.worker_use_mp, "Cannot use multiprocessing and ray at the same time."
     
     
     def update_params(self, scheduler_config: 'SchedulerConfig'):
-        if scheduler_config.overlap_prepare:
-            # 1 extra worker for prepare stage
-            self.num_workers += 1
+        pass
     
     
     def verify_with_scheduler_config(

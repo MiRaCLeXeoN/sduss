@@ -68,7 +68,7 @@ def initialize_cluster(
         
         ray.init(address=ray_address,
                  num_cpus=(parallel_config.world_size * parallel_config.num_cpus_gpu_worker
-                            + (parallel_config.num_workers - parallel_config.world_size) * parallel_config.num_cpus_cpu_worker +
+                            + (parallel_config.num_cpu_workers) * parallel_config.num_cpus_cpu_worker +
                             + 1 * 1),
                  num_gpus=parallel_config.world_size,
                  ignore_reinit_error=True)
@@ -112,8 +112,7 @@ def initialize_cluster(
             # We need extra workers
             # 1 more for the engine
             bundles = [{"CPU": 1}]
-            bundles += [{"CPU": parallel_config.num_cpus_cpu_worker}] * (parallel_config.num_workers 
-                                        - parallel_config.world_size)
+            bundles += [{"CPU": parallel_config.num_cpus_cpu_worker}] * parallel_config.num_cpu_workers
             cpu_pg = ray.util.placement_group(bundles, strategy="STRICT_PACK")
 
         # We should wait until PG is ready -- this will block until all 

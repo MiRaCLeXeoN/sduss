@@ -28,6 +28,7 @@ class EngineArgs:
         self.data_parallel_size = kwargs.pop("data_parallel_size", 1)
         self.num_cpus_cpu_worker = kwargs.pop("num_cpus_cpu_worker", 8)
         self.num_cpus_gpu_worker = kwargs.pop("num_cpus_gpu_worker", 4)
+        self.num_cpu_workers = kwargs.pop("num_cpu_workers", 1)
         self.max_parallel_loading_workers = kwargs.pop("max_parallel_loading_workers", None)
         # Scheduler configs
         self.max_batchsize = kwargs.pop("max_batchsize", 32)
@@ -122,6 +123,12 @@ class EngineArgs:
             type=int,
             help="Number of cpus for each gpu workers."
         )
+        parser.add_argument(
+            '--num_cpu_workers',
+            default=1,
+            type=int,
+            help="Number of cpu workers to use."
+        )
 
         # Scheduler configs
         parser.add_argument(
@@ -209,6 +216,7 @@ class EngineArgs:
             data_parallel_size=self.data_parallel_size,
             num_cpus_cpu_worker=self.num_cpus_cpu_worker,
             num_cpus_gpu_worker=self.num_cpus_gpu_worker,
+            num_cpu_workers=self.num_cpu_workers,
             worker_use_ray=self.worker_use_ray,
             worker_use_mp=self.worker_use_mp,
             max_parallel_loading_workers=self.max_parallel_loading_workers
@@ -237,8 +245,6 @@ class EngineArgs:
         parallel_config = self.get_parallel_config()
         scheduler_config = self.get_scheduler_config()
         engine_config = self.get_engine_config()
-        # Update parameters
-        parallel_config.update_params(scheduler_config=scheduler_config)
         return pipeline_config, parallel_config, scheduler_config, engine_config
 
 
@@ -270,17 +276,18 @@ class AsyncEngineArgs(EngineArgs):
             '--engine_use_ray',
             action='store_true',
             help='Use Ray to start the Execution engine in a separate process '
-                'as the server process'
+                'as the server process.'
         )
         parser.add_argument(
             '--engine_use_mp',
             action='store_true',
-            help='Disable logging requests\' timeline'
+            help='Use multiprocessing to start the execution engine in a separate process'
+                'as the server process.'
         )
         parser.add_argument(
             '--disable_log_requests',
             action='store_true',
-            help='Disable logging requests\' timeline'
+            help='disable logging feature of each requests'
         )
         
         return parser

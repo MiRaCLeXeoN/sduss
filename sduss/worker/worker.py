@@ -313,7 +313,7 @@ def _init_distributed_environment(
     else:
         torch.distributed.init_process_group(
             backend="nccl",
-            world_size=parallel_config.world_size,
+            world_size=parallel_config.num_gpu_workers,
             rank=rank,
             init_method=distributed_init_method
         )

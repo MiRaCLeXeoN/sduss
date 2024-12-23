@@ -11,9 +11,11 @@ class MpExecutor:
     def __init__(
         self,
         name: str,
+        rank: int,
         is_prepare_worker: bool,
     ) -> None:
         self.name = name
+        self.rank = rank,
         self.is_prepare_worker = is_prepare_worker
 
         self.task_queue: multiprocessing.Queue[Task] = multiprocessing.Queue(500)
