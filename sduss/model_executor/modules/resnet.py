@@ -10,7 +10,8 @@ from .base_module import BaseModule
 from typing import Optional, List, Tuple, Union
 from torch import Tensor
 import time
-
+from .cache_manager import CacheManager
+from .groupnorm import get_adjacency
 
 class SplitModule():
     def __init__(self):
@@ -141,6 +142,7 @@ class SplitLinear(SplitModule, nn.Linear):
         for _ in range(20):
             self.streams.append(torch.cuda.Stream())
         self.total_linear_time = 0
+        self.last_output = CacheManager()
         
     def get_input_name(self, shape):
         if len(shape) == 2:
@@ -152,63 +154,28 @@ class SplitLinear(SplitModule, nn.Linear):
         path = f'{directory}/{self.dir}/{self.in_features}-{self.out_features}'
         return self._get_profile(path, self.get_input_name)
 
-    def forward(self, input: Tensor):
+    def forward(self, input: Tensor,input_indices: list = None, mask: list = None):
         # if input.ndim == 3:
         #     print(f'linear {self.in_features}|{self.out_features} {input.shape[0]}|{input.shape[1]}|{input.shape[2]}')
         # else:
         #     print(f'linear {self.in_features}|{self.out_features} {input.shape[0]}|{input.shape[1]}')
-        start = time.time()
-        if self.profile is not None:
-            shape = input.shape
-            batch_size = shape[0]
-            # input_dim = "-".join(list(map(str, shape[1:])))
-            # input_index_list = self.get_input_name(shape)
-            # input_dim = str(shape[input_index_list[0]])
-            input_dim = "-".join(list(map(str, shape[1:])))
-            if input_dim in self.profile and self.profile[input_dim][batch_size - 1][0]:
-                
-                # split_inputs = input.split(self.profile[input_dim][batch_size - 1][1], dim=0)
-                split_list = self.profile[input_dim][batch_size - 1][1]
-                # print([x.shape for x in split_inputs])
-                length = len(split_list)
-                res = list()
-                # for index in range(length):
-                #     if len(shape) == 2:
-                #         res.append(torch.empty([split_list[index], self.weight.shape[0]], device="cuda", dtype=torch.float16))
-                #     else:
-                #         res.append(torch.empty([split_list[index], shape[1], self.weight.shape[0]], device="cuda", dtype=torch.float16))
-                if len(shape) == 2:
-                    res = torch.empty([batch_size, self.weight.shape[0]], device="cuda", dtype=torch.float16)
-                else:
-                    res = torch.empty([batch_size, shape[1], self.weight.shape[0]], device="cuda", dtype=torch.float16)
-                # res = [None] * length
-                base = 0
-                # torch.cuda.synchronize()
-                for index in range(length):
-                    # torch.cuda.synchronize(self.streams[index])
-                    # with torch.cuda.stream(self.streams[index]):
-                        # output = F.linear(split_inputs[index], self.weight, self.bias)
-                        # output = torch.mm(split_inputs[index], self.weight.transpose(-1, -2)) + self.bias
-                        # res[index] = output
-                        # res.append(F.linear(input[base:base + split_list[index]], self.weight, self.bias))
-                        res[base:base + split_list[index]] = F.linear(input[base:base + split_list[index]], self.weight, self.bias)
-                        base = base + split_list[index]
-
-                # for index in range(length):
-                    # self.streams[index].synchronize()
-                    # torch.cuda.synchronize(self.streams[index])
-                # torch.cuda.synchronize()
-                # print([x.shape for x in res])
-                # exit(0)
-                end = time.time()
-                self.total_linear_time += (end - start)
-                # return torch.cat(res, dim=0)
-                return res
-        l = F.linear(input, self.weight, self.bias)
         # torch.cuda.synchronize()
-        end = time.time()
-        self.total_linear_time += (end - start)
-        return l
+        
+        if mask is not None:
+            # start = time.time()
+            l = F.linear(input[mask], self.weight, self.bias)
+            # if self.last_output is None:
+            #     self.last_output = l
+            # else:
+            #     self.last_output[mask] = l
+            output = self.last_output.update_and_return(input_indices, l, mask)
+            # torch.cuda.synchronize()
+            # end = time.time()
+            # self.total_linear_time += (end - start)
+        else:
+            output = F.linear(input, self.weight, self.bias)
+        
+        return output
 
 class SplitGroupnorm(SplitModule, nn.GroupNorm):
     def __init__(self, num_groups: int, num_channels: int, eps: float = 1e-5, affine: bool = True,
@@ -282,6 +249,7 @@ class PatchConv(BaseModule):
     def __init__(self, module: nn.Conv2d):
         super(PatchConv, self).__init__(module)
         self.conv_time = 0
+        self.conv_batch = 0
 
     def naive_forward(self, x: torch.Tensor) -> torch.Tensor:
         #  x: [B, C, H, W]
@@ -292,6 +260,8 @@ class PatchConv(BaseModule):
     # each of which has the index of batch the origin batch should padding with
     def forward(self, input: torch.Tensor, is_sliced: bool=False, padding_idx: list=None, is_padding: bool = True, *args, **kwargs) -> torch.Tensor:
         b, c, h, w = input.shape
+        # torch.cuda.synchronize()
+        # start = time.time()
         boundary_size = self.module.padding[0]
         conv_list = list()
         if not is_sliced or boundary_size == 0:
@@ -301,18 +271,24 @@ class PatchConv(BaseModule):
                 output = self.module.patched_forward(input, self.module.weight, self.module.bias, False)
             else:
                 output = self.naive_forward(input)
+        # torch.cuda.synchronize()
+        # self.conv_time += (time.time() - start)
+        # self.conv_batch += b*c*h*w
         return output
 
 class PatchUpsample2D(BaseModule):
 
     def __init__(self, module: Upsample2D):
         super().__init__(module)
+        self.output = CacheManager()
 
 
     def forward(self, hidden_states, 
                 output_size=None, 
+                mask: list = None,
                 latent_offset: dict = None,
                 padding_idx: dict = None,
+                input_indices: list = None,
                 is_sliced:bool = False):
         assert hidden_states.shape[1] == self.module.channels
 
@@ -348,12 +324,15 @@ class PatchUpsample2D(BaseModule):
         if self.module.use_conv:
             if self.module.name == "conv":
                 if is_sliced:
-                    hidden_states = self.module.conv(hidden_states,  is_padding=False, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+                    output = self.module.conv(get_adjacency(hidden_states, padding_idx["cuda"])[mask], is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
                 else:
-                    hidden_states = self.module.conv(hidden_states,  is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
-                # hidden_states = self.module.conv(F.pad(hidden_states, padding, mode="replicate"), is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
-                if is_sliced:
-                    hidden_states = F.pad(hidden_states, (1, 1, 1, 1), mode="replicate")
+                    output = self.module.conv(hidden_states)
+                # if self.output is None:
+                #     self.output = output
+                # else:
+                #     self.output[mask] = output
+                # hidden_states = self.output
+                hidden_states = self.output.update_and_return(input_indices, output, mask)
             else:
                 hidden_states = self.Conv2d_0(hidden_states)
 
@@ -362,28 +341,32 @@ class PatchUpsample2D(BaseModule):
 class PatchDownsample2D(BaseModule):
     def __init__(self, module: Downsample2D):
         super().__init__(module)
+        self.output = CacheManager()
     
     def forward(self, hidden_states,
+                mask:list = None,
                 latent_offset: dict = None,
                 padding_idx: dict = None,
+                input_indices: list = None,
                 is_sliced:bool = False):
         assert hidden_states.shape[1] == self.module.channels
         if self.module.norm is not None:
             hidden_states = self.module.norm(hidden_states.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-        '''
         if self.module.use_conv and self.module.padding == 0:
             pad = (0, 1, 0, 1)
             hidden_states = F.pad(hidden_states, pad, mode="constant", value=0)
-        '''
 
         assert hidden_states.shape[1] == self.module.channels
         if is_sliced:
-            hidden_states = self.module.conv(hidden_states,  is_padding=False, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
+            output = self.module.conv(get_adjacency(hidden_states, padding_idx["cuda"])[mask], is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
         else:
-            hidden_states = self.module.conv(hidden_states,  is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
-        # hidden_states = self.module.conv(F.pad(hidden_states, padding, mode="replicate"), is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
-        if is_sliced:
-            hidden_states = F.pad(hidden_states, (1, 1, 1, 1), mode="replicate")
+            output = self.module.conv(hidden_states)
+        # if self.output is None:
+        #     self.output = output
+        # else:
+        #     self.output[mask] = output
+        # hidden_states = self.output
+        hidden_states = self.output.update_and_return(input_indices, output, mask)
         return hidden_states
 
 class PatchResnetBlock2D(BaseModule):
@@ -392,16 +375,19 @@ class PatchResnetBlock2D(BaseModule):
         module: ResnetBlock2D
     ):
         super().__init__(module)
-        self.pad = torch.nn.ReflectionPad2d(1)
+        self.last_result = None
+        self.conv1_output = CacheManager()
+        self.conv2_output = CacheManager()
     
     def forward(self, input_tensor, temb, 
-                dim_2: bool = False,
                 latent_offset: dict = None,
                 padding_idx: dict = None,
                 patch_map: dict = None,
+                mask: list = None,
+                input_indices: list = None,
                 is_sliced:bool = False):
         hidden_states = input_tensor
-
+        batch, _, _, _ = input_tensor.shape
         # hidden_states = self.module.norm1(hidden_states, is_sliced=is_sliced, latent_offset=latent_offset)
         # hidden_states = self.module.nonlinearity(hidden_states)
         hidden_states = self.module.norm1(hidden_states, is_sliced=is_sliced, latent_offset=latent_offset["cuda"], patch_map=patch_map["cuda"], padding_idx=padding_idx["cuda"])
@@ -417,17 +403,25 @@ class PatchResnetBlock2D(BaseModule):
             input_tensor = self.module.downsample(input_tensor, is_sliced=is_sliced, latent_offset=latent_offset, padding_idx=padding_idx)
             hidden_states = self.module.downsample(hidden_states, is_sliced=is_sliced, latent_offset=latent_offset, padding_idx=padding_idx)
 
-        hidden_states = self.module.conv1(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx["cpu"], is_padding=False)
-
+        output = self.module.conv1(hidden_states[mask], is_sliced=is_sliced, padding_idx=padding_idx["cpu"], is_padding=False)
+        # print(output.shape)
+        # print(mask)
+        # if self.conv1_output is None:
+        #     self.conv1_output = output
+        # else:
+        #     self.conv1_output[mask] = output
+        # hidden_states = self.conv1_output
+        hidden_states = self.conv1_output.update_and_return(input_indices, output, mask)
         if temb is not None:
             temb = self.module.time_emb_proj(self.module.nonlinearity(temb))[:, :, None, None]
 
         if self.module.time_embedding_norm == "default":
             if temb is not None:
+
                 hidden_states = hidden_states + temb
 
             # hidden_states = self.module.norm2(hidden_states, is_sliced=is_sliced, latent_offset=latent_offset)
-            hidden_states = self.module.norm2(hidden_states, is_sliced=is_sliced, dim_2=dim_2, latent_offset=latent_offset["cuda"], patch_map=patch_map["cuda"], padding_idx=padding_idx["cuda"])
+            hidden_states = self.module.norm2(hidden_states, is_sliced=is_sliced, latent_offset=latent_offset["cuda"], patch_map=patch_map["cuda"], padding_idx=padding_idx["cuda"])
 
         elif self.module.time_embedding_norm == "scale_shift":
             if temb is None:
@@ -447,13 +441,17 @@ class PatchResnetBlock2D(BaseModule):
         hidden_states = self.module.nonlinearity(hidden_states)
 
         hidden_states = self.module.dropout(hidden_states)
-        hidden_states = self.module.conv2(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx["cpu"], is_padding=False)
 
+        output = self.module.conv2(hidden_states[mask], is_sliced=is_sliced, padding_idx=padding_idx["cpu"], is_padding=False)
+        # if self.conv2_output is None:
+        #     self.conv2_output = output
+        # else:
+        #     self.conv2_output[mask] = output
+        # hidden_states = self.conv2_output
+        hidden_states = self.conv2_output.update_and_return(input_indices, output, mask)
         if self.module.conv_shortcut is not None:
             input_tensor = self.module.conv_shortcut(input_tensor, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
 
-        if dim_2:
-            input_tensor = self.pad(input_tensor)
         output_tensor = (input_tensor + hidden_states) / self.module.output_scale_factor
 
         return output_tensor

@@ -18,6 +18,7 @@ from .transformer import PatchTransformer2DModel, PatchBasicTransformerBlock
 from .unet_2d_blocks import PatchUNetMidBlock2DCrossAttn, PatchCrossAttnDownBlock2D, PatchDownBlock2D, PatchCrossAttnUpBlock2D, PatchUpBlock2D
 import math
 import time
+import torch.nn.functional as F
 
 class PatchUNet(BaseModel):  # for Patch Parallelism
     def __init__(self, model: UNet2DConditionModel):
@@ -91,16 +92,12 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                 # elif isinstance(submodule, Upsample2D):
                     # wrapped_submodule = PatchUpsample2D(submodule)
                     # setattr(module, subname, wrapped_submodule)
-                
+        self.diff = None
         super(PatchUNet, self).__init__(model)
         # print(self.config)
 
 
-    def split_sample(self, samples, patch_size):
-        # left_idx = list()
-        # top_idx = list()
-        # right_idx = list()
-        # bottom_idx = list()
+    def split_sample(self, samples, patch_size, input_indices):
         latent_offset = list()
         patch_map = list()
         latent_offset.append(0)
@@ -108,7 +105,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
         resolution_offset.append(0)
         padding_idx = list()
         new_sample = list()
-        
+        indices = list()
         for resolution, res_sample in samples.items():
             resolution = int(resolution)
             patch_on_height = (resolution // patch_size)
@@ -116,6 +113,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
             latent_patch_size = int(patch_size // 8)
             if res_sample is None or res_sample.shape[0] == 0:
                 continue
+            index = 0
             for sample in res_sample:
                 latent_offset.append(latent_offset[-1] + patch_on_width ** 2)
                 sample = torch.nn.functional.pad(sample, (1, 1, 1, 1), "constant", 0).unsqueeze(0)
@@ -125,10 +123,6 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                         paddings = torch.empty(4, device=sample.device, dtype=torch.int32)
                         # paddings = [None] * 4
                         if (patch_on_height) == 1:
-                            # left_idx.append(-1)
-                            # right_idx.append(-1)
-                            # top_idx.append(-1)
-                            # bottom_idx.append(-1)
                             paddings[0] = -1
                             paddings[1] = -1
                             paddings[2] = -1
@@ -138,63 +132,33 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                             padding_idx.append(paddings)
                             continue
                         if w == 0:
-                            # left_idx.append(-1)
-                            # right_idx.append(len(new_sample) + 1)
                             paddings[1] = -1
                             paddings[3] = len(new_sample) + 1
                         elif w == (patch_on_width) - 1:
-                            # left_idx.append(len(new_sample) - 1)
-                            # right_idx.append(-1)
                             paddings[1] = len(new_sample) - 1
                             paddings[3] = -1
                         else:
-                            # left_idx.append(len(new_sample) - 1)
-                            # right_idx.append(len(new_sample) + 1)
                             paddings[1] = len(new_sample) - 1
                             paddings[3] = len(new_sample) + 1
                         if h == 0:
-                            # top_idx.append(-1)
-                            # bottom_idx.append(len(new_sample) + (patch_on_height))
                             paddings[0] = -1
                             paddings[2] = len(new_sample) + (patch_on_height)
                         elif h == (patch_on_height) - 1:
-                            # top_idx.append(len(new_sample) - (patch_on_height))
-                            # bottom_idx.append(-1)
                             paddings[0] = len(new_sample) - (patch_on_height)
                             paddings[2] = -1
                         else:
-                            # top_idx.append(len(new_sample) - (patch_on_height))
-                            # bottom_idx.append(len(new_sample) + (patch_on_height))
                             paddings[0] = len(new_sample) - (patch_on_height)
                             paddings[2] = len(new_sample) + (patch_on_height)
                         new_sample.append(sample[:, :, h * latent_patch_size : (h + 1) * latent_patch_size + 2, w * latent_patch_size : (w + 1) * latent_patch_size + 2])
                         patch_map.append(len(latent_offset)-1)
                         padding_idx.append(paddings)
+                        # print(input_indices)
+                        # print(resolution)
+                        indices.append(input_indices[str(resolution)][index] + f"-{h}-{w}")
+                index += 1
             if res_sample.shape[0] != 0:
                 resolution_offset.append(len(latent_offset)-1)
         # padding_idx = [left_idx, top_idx, right_idx, bottom_idx]
-        left_batch_idx = list()
-        right_batch_idx = list()
-        right_idx = list()
-        past_batch = list()
-        patch_num_list = list()
-        base_idx = 0
-        for resolution_index in range(len(resolution_offset) - 1):
-            batch_size = latent_offset[resolution_offset[resolution_index + 1]] - latent_offset[resolution_offset[resolution_index]]
-            latent_size = resolution_offset[resolution_index + 1] - resolution_offset[resolution_index]
-            patch_per_latent = batch_size // latent_size
-            for index in range(batch_size):
-                cur_index = base_idx + index
-                if index % patch_per_latent == 0:
-                    right_batch_idx.extend([cur_index + i for i in range(patch_per_latent)] * patch_per_latent)
-                    right_idx.extend([i for i in range(patch_per_latent)] * patch_per_latent)
-                past = len(left_batch_idx)
-                past_batch.extend([past for i in range(patch_per_latent)])
-                left_batch_idx.extend([cur_index for _ in range(patch_per_latent)])
-                patch_num_list.extend([patch_per_latent for _ in range(patch_per_latent)])
-                
-            base_idx += batch_size
-
         padding_idx = {
             "cuda": torch.cat(padding_idx, dim=0).cuda(),
             "cpu": padding_idx
@@ -211,12 +175,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
             "cuda": torch.tensor(patch_map, device="cuda", dtype=torch.int32),
             "cpu": patch_map
         }
-        left_batch_idx = torch.tensor(left_batch_idx, device="cuda", dtype=torch.int32)
-        right_batch_idx = torch.tensor(right_batch_idx, device="cuda", dtype=torch.int32)
-        right_idx = torch.tensor(right_idx, device="cuda", dtype=torch.int32)
-        patch_num_list = torch.tensor(patch_num_list, device="cuda", dtype=torch.int32)
-        past_batch = torch.tensor(past_batch, device="cuda", dtype=torch.int32)
-        return padding_idx, latent_offset, resolution_offset, torch.cat(new_sample, dim=0), patch_map, left_batch_idx, right_batch_idx, patch_num_list, right_idx, past_batch
+        return indices, padding_idx, latent_offset, resolution_offset, torch.cat(new_sample, dim=0), patch_map
         # return torch.cat(padding_idx, dim=0).cuda(), torch.tensor(latent_offset, device="cuda", dtype=torch.int32), torch.tensor(resolution_offset, device="cuda", dtype=torch.int32), torch.cat(new_sample, dim=0), torch.tensor(patch_map, device="cuda", dtype=torch.int32)
 
     def concat_sample(self, patch_size, new_sample, latent_offset):
@@ -254,7 +213,9 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
         return_dict: bool = True,
         record: bool = False,
         patch_size: int = None,
-        is_sliced:bool = False
+        is_sliced:bool = False,
+        save_index: int = 0,
+        input_indices: dict = None,
     ):
         # b, c, h, w = sample.shape
         # if patch_size is None:
@@ -270,24 +231,11 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
             and encoder_attention_mask is None
         )
         sample_key = None
-        # print(sample)
+        # torch.cuda.synchronize()
         start = time.time()
         if is_sliced:
-            self.model.conv_in.module.padding = (0,0)
-            def find_greatest_common_divisor(sample):
-                cur_gcd = None
-                def euclid(x, y):
-                    while y:
-                        x, y = y, x % y
-                    return x
-                for resolution in sample:
-                    if cur_gcd is None:
-                        cur_gcd = int(resolution)
-                    else:
-                        cur_gcd = euclid(cur_gcd, int(resolution))
-                return cur_gcd
             # patch_size = find_greatest_common_divisor(sample)
-            padding_idx, latent_offset, resolution_offset, sample, patch_map, left_batch_idx, right_batch_idx, patch_num_list, right_idx, past_batch = self.split_sample(sample, patch_size)
+            indices, padding_idx, latent_offset, resolution_offset, sample, patch_map = self.split_sample(sample, patch_size, input_indices)
             encode_latens = list()
             text_embs_list = list()
             text_ids_list = list()
@@ -303,24 +251,32 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
             encoder_hidden_states = torch.cat(encode_latens, dim=0)
             if added_cond_kwargs is not None and added_cond_kwargs['text_embeds'] is not None:
                 added_cond_kwargs["text_embeds"]= torch.cat(text_embs_list, dim=0)
-                added_cond_kwargs["time_ids"] = torch.cat(text_ids_list, dim=0)          
+                added_cond_kwargs["time_ids"] = torch.cat(text_ids_list, dim=0)           
         else:
+            indices = None
             self.model.conv_in.module.padding = (1,1)
             padding_idx = {"cpu": None, "cuda": None}
             latent_offset = {"cpu": None, "cuda": None}
             patch_map = {"cpu": None, "cuda": None}
             resolution_offset = {"cpu": None, "cuda": None}
-            left_batch_idx = None
-            right_batch_idx = None
-            right_idx = None
-            patch_num_list = None
-            past_batch = None
             for key in sample:
                 patch_size = sample[key].shape[-1]
                 sample_key = key
                 sample = sample[key]
                 break
-        
+        # sample = sample.cuda()
+        batch, _, _, _, = sample.shape
+        # print(timestep)
+        # normalized_batch = F.normalize(sample.view(batch, -1), p=2, dim=1)
+        # print(torch.mm(normalized_batch, normalized_batch.t()))
+        # if self.diff is None:
+        #     self.diff = sample[12] - sample[10]
+        # else:
+        #     if timestep.item() > 880:
+        #         # sample[3] = sample[0]
+        #         # sample[7] = sample[5]
+        #         sample[12] = sample[10]
+        #         # sample[16] = sample[14]
         end = time.time()
         self.total_time += (end - start)
         default_overall_up_factor = 2**self.model.num_upsamplers
@@ -382,8 +338,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
         sample = self.model.conv_in(sample, 
                                     is_sliced=is_sliced, padding_idx=padding_idx,
                                     )
-        print(self.model.conv_in)
-        print("after split", sample.shape)
+
         # 2.5 GLIGEN position net
         if cross_attention_kwargs is not None and cross_attention_kwargs.get("gligen", None) is not None:
             cross_attention_kwargs = cross_attention_kwargs.copy()
@@ -405,7 +360,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
         # maintain backward compatibility for legacy usage, where
         #       T2I-Adapter and ControlNet both use down_block_additional_residuals arg
         #       but can only use one or the other
-
+        total_blocks = 0
         down_block_res_samples = (sample,)
         for downsample_block in self.model.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
@@ -426,22 +381,21 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                     latent_offset=latent_offset,
                     patch_map=patch_map,
                     resolution_offset = resolution_offset,
-                    left_batch_idx=left_batch_idx,
-                    right_batch_idx=right_batch_idx,
-                    right_idx=right_idx,
-                    past_batch=past_batch,
-                    patch_num_list=patch_num_list,
+                    index=save_index,
+                    timestep=timestep,
+                    total_blocks=total_blocks,
+                    input_indices=indices,
                     **additional_residuals,
                 )
             else:
-                sample, res_samples = downsample_block(hidden_states=sample, temb=emb, 
+                sample, res_samples = downsample_block(hidden_states=sample, temb=emb, input_indices=indices,
                                                        patch_map=patch_map,latent_offset=latent_offset,
                                                        is_sliced=is_sliced, padding_idx=padding_idx,
+                                                       index=save_index, total_blocks=total_blocks, timestep=timestep,
                                                        )
                 if is_adapter and len(down_intrablock_additional_residuals) > 0:
                     sample += down_intrablock_additional_residuals.pop(0)
-            print("sample shape", sample.shape)
-            print("res_samples shape", res_samples[0].shape)
+            total_blocks += 1
             down_block_res_samples += res_samples
 
         if is_controlnet:
@@ -470,18 +424,19 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                     patch_map=patch_map,
                     latent_offset=latent_offset,
                     resolution_offset=resolution_offset,
-                    left_batch_idx=left_batch_idx,
-                    right_batch_idx=right_batch_idx,
-                    right_idx=right_idx,
-                    past_batch=past_batch,
-                    patch_num_list=patch_num_list,
+                    index=save_index,
+                    timestep=timestep,
+                    total_blocks=total_blocks,
+                    input_indices=indices,
                 )
             else:
-                sample = self.model.mid_block(sample, emb, 
+                sample = self.model.mid_block(sample, emb, input_indices=indices,
                                               patch_map=patch_map,latent_offset=latent_offset,
                                               is_sliced=is_sliced, padding_idx=padding_idx,
+                                              index=save_index,timestep=timestep,
+                    total_blocks=total_blocks,
                                               )
-
+            total_blocks += 1
             # To support T2I-Adapter-XL
             if (
                 is_adapter
@@ -520,22 +475,28 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                     patch_map=patch_map,
                     latent_offset=latent_offset,
                     resolution_offset=resolution_offset,
-                    left_batch_idx=left_batch_idx,
-                    right_batch_idx=right_batch_idx,
-                    right_idx=right_idx,
-                    past_batch=past_batch,
-                    patch_num_list=patch_num_list,
+                    index=save_index,
+                    timestep=timestep,
+                    total_blocks=total_blocks,
+                    input_indices=indices,
                 )
             else:
                 sample = upsample_block(
                     hidden_states=sample,
                     temb=emb,
+                    input_indices=indices,
                     res_hidden_states_tuple=res_samples,
                     upsample_size=upsample_size,
                     patch_map=patch_map,
                     latent_offset=latent_offset,
-                    is_sliced=is_sliced, padding_idx=padding_idx,
+                    index=save_index,
+                    timestep=timestep,
+                    total_blocks=total_blocks,
+                    is_sliced=is_sliced, padding_idx=padding_idx
                 )
+            total_blocks += 1
+
+        # print(total_blocks)
 
         # 6. post-process
         if self.model.conv_norm_out:
@@ -548,20 +509,22 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
         sample = self.model.conv_out(sample, 
                                      is_sliced=is_sliced, padding_idx=padding_idx, is_padding=False
                                      )
-        print(sample.shape)
+        # torch.cuda.synchronize()
         start = time.time()
+        # sample = sample.cpu()
         if is_sliced:
             sample = (self.concat_sample(patch_size, sample, latent_offset["cpu"]), )
         else:
             sample = ({
                 sample_key: sample
             }, )
+        # sample = sample.cuda()
         end = time.time()
         self.total_time += (end - start)
-        
         return sample
 
     
     @property
     def add_embedding(self):
         return self.model.add_embedding
+    

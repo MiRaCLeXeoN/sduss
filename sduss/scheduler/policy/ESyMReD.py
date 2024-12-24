@@ -2,7 +2,7 @@ import time
 import joblib
 import os
 import numpy as np
-
+import time
 from typing import List, TYPE_CHECKING, Dict, Tuple
 
 from sduss.scheduler.wrappers import ResolutionRequestQueue
@@ -34,9 +34,7 @@ class Predictor:
         else:
             data = task_distribute[:, :1] * 4 + task_distribute[:, 1:2] * 9 + task_distribute[:, 2:3] * 16
         data = np.concatenate((data, np.expand_dims(np.count_nonzero(task_distribute, axis=1), axis=0).T), axis=1)
-        print(data)
-        print(self.model.predict(data))
-        return self.model.predict(data) / 1000
+        return self.model.predict(data) / 1800
     
     # def re_load(self):
     #     self.model = joblib.load(self.model_path)
@@ -125,7 +123,7 @@ class ESyMReD_Scheduler(Policy):
     
     def schedule_requests(self, max_num: int) -> SchedulerOutput:
         """Schedule requests for next iteration."""
-        
+        start = time.time()
         flattened_reqs = self._flatten_all_reqs_without_status(RequestStatus.WAITING)
 
         # If not reqs to schedule, return EMPTY
@@ -135,7 +133,16 @@ class ESyMReD_Scheduler(Policy):
                 status=RequestStatus.EMPTY,
                 update_all_waiting_reqs=True,
             )
+        
+        # complete request as soon as we can
+        post_processing_queue = self._get_all_reqs_by_status(RequestStatus.POSTPROCESSING)
 
+        if len(post_processing_queue) > 0:
+            scheduled_status = RequestStatus.POSTPROCESSING
+            return SchedulerOutput(
+                scheduled_requests=convert_list_to_res_dict(post_processing_queue),
+                status=scheduled_status,
+            )
         # Set slack
         for req in flattened_reqs:
             req.set_slack(self.model_name, False, self.predict_time)
@@ -356,14 +363,17 @@ class ESyMReD_Scheduler(Policy):
                 if num_to_collect <= 0:
                     break
             # end while
-
+            '''
             if len(res_reqs_dict) > 1:
                 is_sliced = True
                 patch_size = find_gcd(list(res_reqs_dict))
             elif len(res_reqs_dict) == 1:
                 is_sliced = False
                 patch_size = list(res_reqs_dict.keys())[0]
-            
+            '''
+            is_sliced = True
+            patch_size = 256
+        # print(f"schedule time = {time.time() - start}")
         return SchedulerOutput(
             scheduled_requests=res_reqs_dict,
             status=target_status if len(res_reqs_dict) > 0 else RequestStatus.EMPTY,

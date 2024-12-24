@@ -319,6 +319,6 @@ def _init_distributed_environment(
         )
     
     # warmup
-    torch.distributed.all_reduce(torch.zeros(1).cuda())
-    initialize_model_parallel(parallel_config.tensor_parallel_size,
-                              parallel_config.pipeline_parallel_size)
+    # torch.distributed.all_reduce(torch.zeros(1).cuda())
+    # initialize_model_parallel(parallel_config.tensor_parallel_size,
+    #                           parallel_config.pipeline_parallel_size)
