@@ -15,11 +15,11 @@ from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from sduss.logger import init_logger
 from sduss.config import (PipelineConfig, ParallelConfig, 
                           SchedulerConfig, EngineConfig)
-from sduss.entrypoints.outputs import RequestOutput
+from sduss.entrypoints.wrappers import ReqOutput
 from sduss.worker import WorkerOutput
-from sduss.executor.ray_executor import initialize_cluster
+from sduss.executor.ray_executor import ray_initialize_cluster
 from sduss.model_executor.sampling_params import BaseSamplingParams
-from sduss.scheduler import RequestStatus
+from sduss.dispatcher import RequestStatus
 
 from .engine import Engine
 from .arg_utils import AsyncEngineArgs
@@ -66,7 +66,7 @@ class AsyncStream:
         self._finished = False
     
     
-    def put(self, item: RequestOutput) -> None:
+    def put(self, item: ReqOutput) -> None:
         if self._finished:
             # We cannot put more items.
             return
@@ -87,7 +87,7 @@ class AsyncStream:
         return self
     
     
-    async def __anext__(self) -> RequestOutput:
+    async def __anext__(self) -> ReqOutput:
         result = await self._queue.get()
         if result is StopAsyncIteration:
             raise StopAsyncIteration
@@ -199,7 +199,7 @@ class RequestTracker:
     
     def process_request_output(
             self,
-            request_output: RequestOutput,
+            request_output: ReqOutput,
             verbose: bool = False
         ) -> None:
         """Process a request output from the engine."""
@@ -241,9 +241,6 @@ class AsyncEngine:
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
         engine_config: EngineConfig,
-        distributed_init_method: str,
-        gpu_pg: Optional["PlacementGroup"],
-        cpu_pg: Optional["PlacementGroup"],
         *args,
         start_engine_loop: bool = True,
         **kwargs,
@@ -255,16 +252,13 @@ class AsyncEngine:
         self.scheduler_config = scheduler_config
         self.engine_config = engine_config
 
-        assert isinstance(engine_config, EngineConfig)
         # Engine
         self.engine = self._init_engine(
             pipeline_config=pipeline_config,
             parallel_config=parallel_config,
             scheduler_config=scheduler_config,
             engine_config=engine_config,
-            distributed_init_method=distributed_init_method,
-            gpu_pg=gpu_pg,
-            cpu_pg=cpu_pg,
+            **kwargs
         )
 
         if self.engine_config.engine_use_ray:
@@ -368,7 +362,7 @@ class AsyncEngine:
             if not has_requests_in_progress:
                 await self._request_tracker.wait_for_new_requests()
             has_requests_in_progress = await self.engine_step()
-            # Try to cede control to other coroutines
+            # Try to cede control to other coroutines, like adding new reqs
             await asyncio.sleep(0)
 
     
@@ -437,22 +431,28 @@ class AsyncEngine:
         start_engine_loop: bool = True
     ) -> "AsyncEngine":
         """Creates an AsyncEngine from the engine arguments."""
+        kwargs = {}
+
         # Create the engine configs.
         (pipeline_config, parallel_config, scheduler_config, 
          engine_config) = engine_args.create_engine_configs()
-        # Initialize the cluster.
-        distributed_init_method, gpu_pg, cpu_pg = initialize_cluster(
-            parallel_config, scheduler_config, engine_config.engine_use_ray)
+
+
+        if engine_config.engine_use_ray:
+            # Initialize the cluster.
+            gpu_pg, cpu_pg = ray_initialize_cluster(
+                parallel_config, scheduler_config, engine_config.engine_use_ray)
+            kwargs["gpu_pg"] = gpu_pg
+            kwargs["cpu_pg"] = cpu_pg
+
         # Create the async LLM engine.
         engine = cls(
             pipeline_config,
             parallel_config,
             scheduler_config,
             engine_config,
-            distributed_init_method,
-            gpu_pg,
-            cpu_pg,
             start_engine_loop=start_engine_loop,
+            **kwargs
         )
         return engine
     

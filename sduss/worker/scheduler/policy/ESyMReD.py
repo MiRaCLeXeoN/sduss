@@ -5,8 +5,9 @@ import numpy as np
 
 from typing import List, TYPE_CHECKING, Dict, Tuple
 
-from sduss.scheduler.wrappers import ResolutionRequestQueue
+from sduss.dispatcher.wrappers import ResolutionRequestQueue
 from sduss.utils import get_os_env
+from sduss.logger import init_logger
 
 from .policy import Policy
 from ..wrappers import SchedulerOutput, RequestStatus
@@ -14,7 +15,9 @@ from ..utils import find_gcd, convert_list_to_res_dict
 from ..esymred_utils import Hyper_Parameter
 
 if TYPE_CHECKING:
-    from sduss.scheduler import Request
+    from sduss.dispatcher import Request
+
+logger = init_logger(__name__)
 
 class Predictor:
     def __init__(self, model_path: str):
@@ -374,7 +377,7 @@ class ESyMReD_Scheduler(Policy):
         )
 
     
-    def scheduler_request_overlap_prepare(
+    def schedule_requests_overlap_prepare(
         self, 
         max_num: int, 
         max_overlapped_prepare_reqs: int,

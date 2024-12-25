@@ -2,15 +2,19 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from sduss.scheduler.wrappers import ResolutionRequestQueue, SchedulerOutput
+    from sduss.dispatcher.wrappers import ResolutionRequestQueue, SchedulerOutput
 
 class Policy(ABC):
 
     def __init__(self, **kwargs) -> None:
         # Reference scheduler's request pool
-        self.request_pool : Dict[int, 'ResolutionRequestQueue'] = kwargs.pop("request_pool")
+        self.request_pool : List[Dict[int, 'ResolutionRequestQueue']] = kwargs.pop("request_pool")
         self.non_blocking_step: bool = kwargs.pop("non_blocking_step")
         self.overlap_prepare: bool = kwargs.pop("overlap_prepare")
+    
+    @abstractmethod
+    def add_request(self, req) -> None:
+        raise NotImplementedError("You must implemente this method in the derived class.")
 
     
     @abstractmethod
@@ -29,13 +33,13 @@ class Policy(ABC):
     
     
     @abstractmethod
-    def scheduler_request_overlap_prepare(
+    def schedule_requests_overlap_prepare(
         self, 
         max_num: int, 
         max_overlapped_prepare_reqs: int,
         accept_overlap_prepare_reqs: bool,
     ) -> 'SchedulerOutput':
-        """Scheduler requests for next iteration regarding overlapping prepare
+        """Schedule requests for next iteration regarding overlapping prepare
         stage requests.
 
         Args:

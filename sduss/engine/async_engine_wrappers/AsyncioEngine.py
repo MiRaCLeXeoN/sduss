@@ -3,8 +3,8 @@ import asyncio
 from typing import TYPE_CHECKING, List, Any
 from functools import partial
 
-from sduss.entrypoints.outputs import RequestOutput
-from sduss.scheduler import RequestStatus
+from sduss.entrypoints.wrappers import ReqOutput
+from sduss.dispatcher import RequestStatus
 from sduss.worker import WorkerOutput
 
 from ..engine import Engine
@@ -13,7 +13,7 @@ from ..engine import Engine
 class _AsyncEngine(Engine):
     
     # TODO: Since we enforced engine using ray, this is unnecessary.
-    async def step_async(self) -> List[RequestOutput]:
+    async def step_async(self) -> List[ReqOutput]:
         """Performs one decoding iteration and returns newly generated results.
         The workers are ran asynchronously if possible.
         """
@@ -24,7 +24,7 @@ class _AsyncEngine(Engine):
             return await self._step_blocking_async()
     
     
-    async def _step_blocking_async(self) -> List[RequestOutput]:
+    async def _step_blocking_async(self) -> List[ReqOutput]:
         """Performs one denoising iteration and returns newly generated results."""
         scheduler_output, req_ids = self._schedule()
 

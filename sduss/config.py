@@ -1,5 +1,5 @@
 """All configuration classes """
-from typing import Optional, Union, Dict
+from typing import Optional, Union, Dict, List
 
 from sduss.logger import init_logger
 from sduss.utils import get_cpu_memory
@@ -66,7 +66,8 @@ class ParallelConfig:
         num_cpu_workers: int,
         worker_use_ray: bool,
         worker_use_mp: bool,
-        max_parallel_loading_workers: Optional[int] = None,
+        max_parallel_loading_workers: Optional[int],
+        gpus: List[int],
     ) -> None:
         """Configuration for the distributed execution.
 
@@ -90,6 +91,7 @@ class ParallelConfig:
         self.num_gpu_workers = self.world_size
         self.num_cpus_cpu_worker = num_cpus_cpu_worker
         self.num_cpus_gpu_worker = num_cpus_gpu_worker
+        self.gpus = gpus
         
         # ! FIXME: We currently only supports mp for multi-devices
         if self.world_size > 1:
@@ -100,10 +102,15 @@ class ParallelConfig:
 
 
     def _verify_args(self) -> None:
+        if self.worker_use_ray:
+            raise NotImplementedError("Ray is not currently supported.")
+
         if (self.pipeline_parallel_size > 1 or self.tensor_parallel_size > 1):
             raise NotImplementedError(
                 "PP and TP is not supported yet.")
         assert self.worker_use_ray != self.worker_use_mp, "Cannot use multiprocessing and ray at the same time."
+        assert self.worker_use_ray or self.worker_use_mp, "Either worker_use_ray or worker_use_mp must be set."
+        assert len(self.gpus) == self.world_size
     
     
     def update_params(self, scheduler_config: 'SchedulerConfig'):
@@ -155,7 +162,17 @@ class EngineConfig:
         self.engine_use_ray = engine_use_ray
         self.engine_use_mp = engine_use_mp
         self.log_requests = log_requests
+
+        self._verify_args()
     
+    
+    def _verify_args(self):
+        if self.engine_use_ray:
+            raise NotImplementedError("Ray is not currently supported.")
+
+        assert self.engine_use_ray != self.engine_use_mp, "Cannot use multiprocessing and ray at the same time."
+        assert self.engine_use_ray or self.engine_use_mp, "Either engine_use_ray or engine_use_mp must be set."
+            
     
     def verify_with_scheduler_config(self, scheduler_config: SchedulerConfig):
         # Currently we only support 2 combinations:

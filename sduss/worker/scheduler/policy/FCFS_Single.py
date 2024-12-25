@@ -6,7 +6,7 @@ from .policy import Policy
 from ..wrappers import SchedulerOutput, RequestStatus
 
 if TYPE_CHECKING:
-    from sduss.scheduler import Request
+    from sduss.dispatcher import Request
 
 class FCFS_Single(Policy):
     """First Come First Serve.
@@ -79,7 +79,7 @@ class FCFS_Single(Policy):
         )
 
 
-    def scheduler_request_overlap_prepare(
+    def schedule_requests_overlap_prepare(
         self, 
         max_num: int, 
         max_overlapped_prepare_reqs: int,

@@ -10,8 +10,7 @@ from .model_runner import ModelRunner
 from .wrappers import WorkerOutput, WorkerRequest
 from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig, EngineConfig
 
-from sduss.scheduler import Request, RequestStatus
-from sduss.model_executor import set_random_seed
+from sduss.model_executor import set_random_seed, get_pipeline_cls
 from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
 from sduss.logger import init_logger
 
@@ -34,7 +33,8 @@ class Worker:
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
         engine_config: EngineConfig,
-        rank: Optional[int] = None,
+        rank: int,
+        device: int,
         is_prepare_worker: bool = False,
         distributed_init_method: Optional[str] = None,
     ) -> None:
@@ -51,6 +51,8 @@ class Worker:
         self.scheduler_config = scheduler_config
         self.engine_config = engine_config
         self.rank = rank
+        self.device_num = device
+        self.device = None
         self.is_prepare_worker = is_prepare_worker
         self.distributed_init_method = distributed_init_method
 
@@ -61,6 +63,14 @@ class Worker:
         self.request_pool: Dict[int, WorkerRequest] = {} 
 
         self.model_runner = ModelRunner(pipeline_config, parallel_config, scheduler_config, is_prepare_worker)
+        self.scheduler: Dispatcher = None
+
+        # compute local_rank, rank wrt current machine
+        num_gpus = torch.cuda.device_count()
+        if parallel_config.world_size <= num_gpus:
+            self.local_rank = self.rank
+        else:
+            raise NotImplementedError("Cross-node distribution is not supported yet!")
 
         # global logger
         # if self.is_prepare_worker:
@@ -77,28 +87,23 @@ class Worker:
         # this behavior.
         # Related issue:
         # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
-        os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
 
         # Check up
         assert self.is_prepare_worker == False
 
+        os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
         # ? This env var set by Ray causes exceptions with graph building
         os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
         
-        # Env vars will be set by Ray
-        self.rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
-        if self.rank < 0:
-            raise ValueError("Invalid or unspecified rank")
-        local_rank = int(os.getenv("LOCAL_RANK", "0"))
-        self.device = torch.device(f"cuda:{local_rank}")
+        self.device = torch.device(f"cuda:{self.device_num}")
         torch.cuda.set_device(self.device)
 
-        logger.debug(f"rank={self.rank}, local_rank={local_rank}")
-        
         _init_distributed_environment(self.parallel_config, self.rank, 
                                       self.distributed_init_method)
         
         set_random_seed(self.pipeline_config.seed)
+
+        logger.debug(f"Worker rank={self.rank} local_rank={self.local_rank} complete initialization")
     
     
     def init_prepare(self) -> None:
@@ -111,6 +116,8 @@ class Worker:
 
     def load_model(self):
         self.model_runner.load_model()
+        self.scheduler = Dispatcher(self.scheduler_config, self.parallel_config, 
+                                   self.engine_config, self.model_runner.pipeline.SUPPORT_RESOLUTIONS)
     
 
     def add_request(self, req_id: int, wr: WorkerRequest):
@@ -313,12 +320,16 @@ def _init_distributed_environment(
     else:
         torch.distributed.init_process_group(
             backend="nccl",
-            world_size=parallel_config.num_gpu_workers,
+            world_size=parallel_config.world_size,
             rank=rank,
             init_method=distributed_init_method
         )
     
     # warmup
-    torch.distributed.all_reduce(torch.zeros(1).cuda())
-    initialize_model_parallel(parallel_config.tensor_parallel_size,
-                              parallel_config.pipeline_parallel_size)
+    tensor = torch.ones(1) * rank
+    tensor = tensor.cuda()
+    print(f"[Rank {rank}, device {torch.cuda.current_device()}] Before allreduce: {tensor.item()}")
+    torch.distributed.all_reduce(tensor)
+    print(f"[Rank {rank}, device {torch.cuda.current_device()}] After allreduce: {tensor.item()}")
+    # initialize_model_parallel(parallel_config.tensor_parallel_size,
+    #                           parallel_config.pipeline_parallel_size)

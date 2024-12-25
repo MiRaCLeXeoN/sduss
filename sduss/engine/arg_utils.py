@@ -8,7 +8,7 @@ from typing import Optional, Tuple
 from sduss.config import (PipelineConfig, ParallelConfig, SchedulerConfig,
                           EngineConfig)
 
-from .utils import get_torch_dtype_from_string
+from .utils import get_torch_dtype_from_string, parse_ranges
 
 class EngineArgs:
     """Arguments for the base class Engine
@@ -30,6 +30,7 @@ class EngineArgs:
         self.num_cpus_gpu_worker = kwargs.pop("num_cpus_gpu_worker", 4)
         self.num_cpu_workers = kwargs.pop("num_cpu_workers", 1)
         self.max_parallel_loading_workers = kwargs.pop("max_parallel_loading_workers", None)
+        self.gpus = parse_ranges(kwargs.pop("gpus", "[0]"))
         # Scheduler configs
         self.max_batchsize = kwargs.pop("max_batchsize", 32)
         self.use_mixed_precisoin = kwargs.pop("use_mixed_precision", False)
@@ -129,6 +130,12 @@ class EngineArgs:
             type=int,
             help="Number of cpu workers to use."
         )
+        parser.add_argument(
+            '--gpus',
+            default="[0]",
+            type=str,
+            help="cuda devices to use, in form like [0-2, 4, 7-8]."
+        )
 
         # Scheduler configs
         parser.add_argument(
@@ -219,7 +226,8 @@ class EngineArgs:
             num_cpu_workers=self.num_cpu_workers,
             worker_use_ray=self.worker_use_ray,
             worker_use_mp=self.worker_use_mp,
-            max_parallel_loading_workers=self.max_parallel_loading_workers
+            max_parallel_loading_workers=self.max_parallel_loading_workers,
+            gpus=self.gpus,
         )
     
     def get_scheduler_config(self) -> SchedulerConfig:

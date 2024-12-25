@@ -5,7 +5,7 @@ import tqdm
 from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
 
 from sduss.utils import Counter
-from sduss.entrypoints.outputs import RequestOutput
+from sduss.entrypoints.wrappers import ReqOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.model_executor.diffusers import BasePipeline
 from sduss.engine.arg_utils import EngineArgs
@@ -41,7 +41,7 @@ class DiffusionPipeline:
         self,
         sampling_params: Union[BaseSamplingParams, List[BaseSamplingParams]] = None,
         use_tqdm: bool = True,
-    ) -> List[RequestOutput]:
+    ) -> List[ReqOutput]:
         """Generates images according to prompts.
 
         NOTE: This class automatically batches the given prompts, considering
@@ -83,12 +83,12 @@ class DiffusionPipeline:
     def _run_engine(
         self,
         use_tqdm: bool,
-    ) -> List[RequestOutput]:
+    ) -> List[ReqOutput]:
         if use_tqdm:
             num_requests = self.engine.get_num_unfinished_requests()
             pbar = tqdm.tqdm(total=num_requests, desc="Processed requests")       
         
-        outputs: List[RequestOutput] = []
+        outputs: List[ReqOutput] = []
         while self.engine.has_unfinished_normal_requests():
             step_outputs = self.engine.step()
             for output in step_outputs:

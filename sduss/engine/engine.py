@@ -19,14 +19,15 @@ import ray
 from ray.air.util.torch_dist import init_torch_dist_process_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-from sduss.scheduler import Scheduler, SchedulerOutput, Request, RequestStatus
+from sduss.dispatcher import Dispatcher, SchedulerOutput, Request, RequestStatus
 from sduss.worker import WorkerOutput
 from sduss.logger import init_logger
-from sduss.entrypoints.outputs import RequestOutput
+from sduss.entrypoints.wrappers import ReqOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.config import (PipelineConfig, ParallelConfig, SchedulerConfig, EngineConfig)
 from sduss.engine.arg_utils import EngineArgs
-from sduss.executor.ray_executor import RayExecutor, initialize_cluster
+from sduss.executor.ray_executor import RayExecutor, ray_initialize_cluster
+from sduss.executor.mp_executor import mp_init_method
 from sduss.executor.mp_executor import MpExecutor
 from sduss.engine.metrics import record_metrics
 
@@ -42,11 +43,11 @@ _LOGGING_INTERVAL_SEC = 5
 
 def worker_init_fn(
         model_config, parallel_config, scheduler_config, engine_config, 
-        rank=None, is_prepare_worker=False, distributed_init_method = None,
+        rank, device, is_prepare_worker=False, distributed_init_method = None,
     ):
     from sduss.worker.worker import Worker
     return Worker(model_config, parallel_config, scheduler_config, 
-                    engine_config, rank=rank, is_prepare_worker=is_prepare_worker,
+                    engine_config, rank=rank, device=device, is_prepare_worker=is_prepare_worker,
                     distributed_init_method=distributed_init_method)
 
 class Engine:
@@ -59,9 +60,7 @@ class Engine:
         parallel_config: ParallelConfig,
         scheduler_config: SchedulerConfig,
         engine_config: EngineConfig,
-        distributed_init_method: str,
-        gpu_pg: Optional["PlacementGroup"],
-        cpu_pg: Optional["PlacementGroup"],
+        **kwargs,
     ) -> None:
         if engine_config.log_status:
             logger.info(
@@ -78,12 +77,16 @@ class Engine:
         
         # Create the parallel GPU workers
         if self.parallel_config.worker_use_ray:
+            gpu_pg = kwargs.pop("gpu_pg")
+            cpu_pg = kwargs.pop("cpu_pg")
             self._init_workers_ray(gpu_pg, cpu_pg)
         elif self.parallel_config.worker_use_mp:
             # TODO: Curretnly mp supports only single node execution
-            self._init_workers_mp(distributed_init_method)
+            self._init_workers_mp(mp_init_method())
         else:
-            self._init_workers(distributed_init_method)
+            self._init_workers()
+        if engine_config.log_status:
+            logger.info("All workers initialization complete")
             
         # Logging.
         self.last_logging_time = 0.0
@@ -107,7 +110,9 @@ class Engine:
         self._set_pipeline_cls()
         
         self.support_resolutions = self.pipeline_cls.SUPPORT_RESOLUTIONS
-        self.scheduler = Scheduler(scheduler_config, engine_config, self.support_resolutions)
+        self.dispatcher = Dispatcher(scheduler_config, parallel_config, engine_config, self.support_resolutions)
+        if engine_config.log_status:
+            logger.info("Dispatcher initialization complete")
 
         self._step_counter = 0
         self.engine_ready = True
@@ -136,17 +141,21 @@ class Engine:
         """Create an inference engine from arguments"""
         # Create engine configs.
         pipeline_config, parallel_config, scheduler_config, engine_config= engine_args.create_engine_configs()
+
+        kwargs = {}
         # Initialize the cluster
-        distributed_init_method, gpu_pg, cpu_pg = initialize_cluster(
-            parallel_config, scheduler_config)
+        if engine_config.engine_use_ray or parallel_config.worker_use_ray:
+            gpu_pg, cpu_pg = ray_initialize_cluster(
+                parallel_config, scheduler_config)
+            kwargs["gpu_pg"] = gpu_pg
+            kwargs["cpu_pg"] = cpu_pg
+            
         # Create engine instance
         return cls(pipeline_config, 
                    parallel_config, 
                    scheduler_config, 
                    engine_config,
-                   distributed_init_method, 
-                   gpu_pg,
-                   cpu_pg)
+                   **kwargs)
         
 
     def _verify_args(self):
@@ -169,7 +178,7 @@ class Engine:
         from sduss.worker.worker import Worker
 
         assert self.parallel_config.world_size == 1, (
-            "Ray is required if parallel size is greater than 1"
+            "MP or Ray is required if world size > 1."
         )
         
         self.workers: List[Worker] = []
@@ -193,12 +202,12 @@ class Engine:
     ):
         self.workers: 'List[MpExecutor]' = []
         for i in range(self.parallel_config.num_gpu_workers):
-            worker = MpExecutor(f"sduss_gpu_worker{i}", rank=i, is_prepare_worker=False)
+            worker = MpExecutor(f"sduss_gpu_worker{i}", rank=i, device=self.parallel_config.gpus[i], is_prepare_worker=False)
             self.workers.append(worker)
 
         self.prepare_workers = []
         for i in range(self.parallel_config.num_cpu_workers):
-            worker = MpExecutor(f"sduss_cpu_worker{i}", rank=i, is_prepare_worker=True)
+            worker = MpExecutor(f"sduss_cpu_worker{i}", rank=i, device=self.parallel_config.gpus[i], is_prepare_worker=True)
             self.prepare_workers.append(worker)
         
         # init_torch_dist_process_group(self.workers, backend="nccl")
@@ -210,13 +219,15 @@ class Engine:
         # execute `init_worker` 
         for i, worker in enumerate(self.workers):
             worker.init_worker(worker_init_fn=partial(worker_init_fn, model_config, parallel_config, 
-                                                      scheduler_config, engine_config, rank=i, is_prepare_worker=False,
+                                                      scheduler_config, engine_config, rank=i, 
+                                                      device=worker.device, is_prepare_worker=False,
                                                       distributed_init_method=distributed_init_method))
         self._run_workers_blocking("init_dis_env", self.workers, get_all_outputs=True)
         if self.scheduler_config.overlap_prepare:
             for i, worker in enumerate(self.prepare_workers):
                 worker.init_worker(worker_init_fn=partial(worker_init_fn, model_config, parallel_config, 
-                                                            scheduler_config, engine_config, rank=i, is_prepare_worker=True,
+                                                            scheduler_config, engine_config, rank=i, device=-1, 
+                                                            is_prepare_worker=True,
                                                             distributed_init_method=distributed_init_method))
             self._run_workers_blocking("init_prepare", self.prepare_workers, get_all_outputs=True)
         
@@ -233,6 +244,8 @@ class Engine:
         cpu_pg: "PlacementGroup",
         **ray_remote_kwargs,
     ):
+        # TODO: This function is not finished
+        raise NotImplementedError()
         if self.engine_config.log_status:
             logger.info("_init_workers_ray called")
         # Disable Ray usage stats collection
@@ -319,36 +332,16 @@ class Engine:
             self._run_workers_blocking("load_model", self.workers, get_all_outputs=True)
     
 
-    def add_request(
-        self,
-        request_id: int,
-        sampling_params: BaseSamplingParams,
-        arrival_time: Optional[float] = None,
-    ) -> None:
-        """Add a request to the engine's request pool.
-
-        Args:
-            request_id (int): _description_
-            samping_params (SamplingParams): _description_
-            arrival_time (Optional[float], optional): _description_. Defaults to None.
-        """
-        # Create a new Request
-        req = Request(request_id=request_id, 
-                      arrival_time=arrival_time, 
-                      sampling_params=sampling_params)
-
-        # Add the request to the scheduler.
-        self.scheduler.add_request(req)
-    
-    
-    def add_request_batch(
+    def add_requests(
         self,
         new_requests_params: List[Dict],
     ) -> None:
         """Add a batch of requests."""
+        reqs = []
         for req_param_dict in new_requests_params:
             req = Request(**req_param_dict)
-            self.scheduler.add_request(req)
+            reqs.append[req]
+        self.dispatcher.add_requests(reqs)
 
     
     def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> List[Request]:
@@ -357,24 +350,24 @@ class Engine:
         Args:
             request_id: The ID(s) of the request to abort.
         """
-        return self.scheduler.abort_requests(request_ids)
+        return self.dispatcher.abort_requests(request_ids)
 
     
     def _schedule(self) -> Tuple[SchedulerOutput, List[int]] :
         """Scheduling for current round."""
         if self.scheduler_config.overlap_prepare:
-            scheduler_output = self.scheduler.schedule_overlap_prepare(
+            scheduler_output = self.dispatcher.schedule_overlap_prepare(
                 accept_overlap_prepare_reqs=self.overlapped_prepare_handlers is None
             )
         else:
-            scheduler_output = self.scheduler.schedule()
+            scheduler_output = self.dispatcher.schedule()
         # Extract request ids
         req_ids = scheduler_output.get_req_ids()
         
         return scheduler_output, req_ids
     
     
-    def _step_blocking(self) -> List[RequestOutput]:
+    def _step_blocking(self) -> List[ReqOutput]:
         """Performs one denoising iteration and returns newly generated results."""
         scheduler_output, req_ids = self._schedule()
 
@@ -510,7 +503,7 @@ class Engine:
         return output
 
     
-    def step(self) -> List[RequestOutput]:
+    def step(self) -> List[ReqOutput]:
         """One step consists of scheduling and execution of requests."""
         self._step_counter += 1
         try:
@@ -531,9 +524,9 @@ class Engine:
         denoising_output,
         postprocessing_output,
         overlapped_prepare_output,
-    ) -> List[RequestOutput]:
+    ) -> List[ReqOutput]:
         # 1. update status of reqs in this round to new status to ensure consistency
-        finished_reqs = self.scheduler.update_reqs_status_nonblocking(
+        finished_reqs = self.dispatcher.update_reqs_status_nonblocking(
             scheduler_output,
             req_ids,
             prepare_output,
@@ -549,7 +542,7 @@ class Engine:
         # This cannot be be done as blocking version, since `POSTPROCESSING` requests in
         # this round has already been updated to `FINISHED_STOPPED` status. We should refrain
         # from freeing them and only free those examined by scheduler and returned in step 1.
-        self.scheduler.free_finished_requests(finished_reqs)
+        self.dispatcher.free_finished_requests(finished_reqs)
 
         # 3. Abort reqs
         if scheduler_output.abort_req_ids:
@@ -557,7 +550,7 @@ class Engine:
 
         ret = []
         for req in finished_reqs:
-            ret.append(RequestOutput(req))
+            ret.append(ReqOutput(req))
 
         if self.collect_data and self.prev_scheduler_output:
             if self.prev_scheduler_output.status == RequestStatus.DENOISING:
@@ -601,15 +594,15 @@ class Engine:
         scheduler_output: SchedulerOutput,
         req_ids: List[int],
         output: Optional[WorkerOutput],
-    ) -> List[RequestOutput]:
+    ) -> List[ReqOutput]:
         """Update requests status and prepare return result if available."""
         
         # Update the scheduled sequence groups with the model outputs
-        self.scheduler.update_reqs_status(scheduler_output=scheduler_output,
+        self.dispatcher.update_reqs_status(scheduler_output=scheduler_output,
                                           output=output,
                                           req_ids=req_ids)
         # collect finished reqs
-        finished_reqs = self.scheduler.get_finished_requests()
+        finished_reqs = self.dispatcher.get_finished_requests()
 
         # abort reqs
         if scheduler_output.abort_req_ids:
@@ -618,13 +611,13 @@ class Engine:
         # Create output wrappers
         ret = []
         for req in finished_reqs:
-            ret.append(RequestOutput(req))
+            ret.append(ReqOutput(req))
         
         if self.collect_data:
             self._collect_data(scheduler_output, ret, output)
         
         # free finished reqs
-        self.scheduler.free_finished_requests(finished_reqs)
+        self.dispatcher.free_finished_requests(finished_reqs)
         
         return ret
 
@@ -709,6 +702,7 @@ class Engine:
         """
         if self.engine_config.log_status:
             logger.info(f"_run_workers_blocking start method {method}")
+
         all_outputs = []
         if max_concurrent_workers:
             work_groups = [
@@ -784,12 +778,12 @@ class Engine:
 
     def get_num_unfinished_requests(self) -> int:
         """Gets the number of unfinished requests."""
-        return self.scheduler.get_num_unfinished_normal_reqs()
+        return self.dispatcher.get_num_unfinished_normal_reqs()
 
 
     def has_unfinished_normal_requests(self) -> bool:
         """Returns True if there are unfinished requests."""
-        return self.scheduler.has_unfinished_normal_requests(is_nonblocking=self.engine_config.non_blocking_step)
+        return self.dispatcher.has_unfinished_normal_requests(is_nonblocking=self.engine_config.non_blocking_step)
 
     
     def _log_system_states(
@@ -806,7 +800,7 @@ class Engine:
         #     cpu_cache_usage=cpu_cache_usage,
         # ) 
 
-        self.scheduler.log_status()
+        self.dispatcher.log_status()
         logger.info(scheduler_output.get_log_string())
         sys.stdout.flush()
     
@@ -822,7 +816,7 @@ class Engine:
     def _collect_data(
         self,
         scheduler_output: 'SchedulerOutput',
-        req_outputs: List[RequestOutput],
+        req_outputs: List[ReqOutput],
         worker_output: WorkerOutput,
     ) -> None:
         self.sm_monitor.checkpoint()

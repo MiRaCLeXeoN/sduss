@@ -2,6 +2,7 @@ import torch.multiprocessing as multiprocessing
 
 from typing import TYPE_CHECKING
 
+from sduss.utils import get_open_port
 from sduss.utils import Task, MainLoop
 
 if TYPE_CHECKING:
@@ -12,10 +13,12 @@ class MpExecutor:
         self,
         name: str,
         rank: int,
+        device: int,
         is_prepare_worker: bool,
     ) -> None:
         self.name = name
         self.rank = rank,
+        self.device = device
         self.is_prepare_worker = is_prepare_worker
 
         self.task_queue: multiprocessing.Queue[Task] = multiprocessing.Queue(500)
@@ -58,3 +61,10 @@ class MpExecutor:
     def end_worker(self):
         self.task_queue.put(Task(method_name="shutdown"))
         self.process.join()
+
+
+def mp_init_method():
+    # Initialize cluster locally
+    port = get_open_port()
+    distributed_init_method = f"tcp://localhost:{port}"
+    return distributed_init_method

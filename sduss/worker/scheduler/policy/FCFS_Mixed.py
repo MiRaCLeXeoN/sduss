@@ -8,7 +8,7 @@ from ..utils import find_gcd, convert_list_to_res_dict
 
 
 if TYPE_CHECKING:
-    from sduss.scheduler import Request
+    from sduss.dispatcher import Request
 
 class FCFS_Mixed(Policy):
     """First Come First Serve.
@@ -95,7 +95,7 @@ class FCFS_Mixed(Policy):
         )
 
     
-    def scheduler_request_overlap_prepare(
+    def schedule_requests_overlap_prepare(
         self, 
         max_num: int, 
         max_overlapped_prepare_reqs: int,

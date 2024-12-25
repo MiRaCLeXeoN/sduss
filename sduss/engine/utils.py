@@ -121,3 +121,19 @@ class SmUtilMonitor:
 def get_torch_dtype_from_string(dtype_name) -> torch.dtype:
     return getattr(torch, dtype_name)
 
+    
+def parse_ranges(range_string):
+    # Remove brackets and split by commas
+    range_string = range_string.strip("[]")
+    parts = range_string.split(",")
+    
+    result = []
+    for part in parts:
+        part = part.strip()
+        if "-" in part:  # Check if it's a range
+            start, end = map(int, part.split("-"))
+            result.extend(range(start, end + 1))  # Add all numbers in the range
+        else:  # Single number
+            result.append(int(part))
+    
+    return result

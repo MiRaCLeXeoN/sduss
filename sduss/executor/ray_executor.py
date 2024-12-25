@@ -44,12 +44,11 @@ except ImportError as e:
 if TYPE_CHECKING:
     from ray.util.placement_group import PlacementGroup
     
-def initialize_cluster(
+def ray_initialize_cluster(
     parallel_config: ParallelConfig,
     scheduler_config: SchedulerConfig,
-    engine_use_ray: bool = False,
     ray_address: Optional[str] = None,
-) -> Tuple[str, Optional["PlacementGroup"]]:
+) -> Tuple[Optional["PlacementGroup"], Optional["PlacementGroup"]]:
     """Initialize the distributed cluster with ray.
     
     We will check the number of available gpus in the cluster and the
@@ -61,22 +60,18 @@ def initialize_cluster(
         distributed backend. `placement_group` includes the specification
         of the resources for each distributed worker.
     """
-    if parallel_config.worker_use_ray or engine_use_ray:
-        if ray is None:
-            raise ImportError("Ray is not properly installed! It is necessary "
-                              "for distributed inference")
-        
-        ray.init(address=ray_address,
-                 num_cpus=(parallel_config.world_size * parallel_config.num_cpus_gpu_worker
-                            + (parallel_config.num_cpu_workers) * parallel_config.num_cpus_cpu_worker +
-                            + 1 * 1),
-                 num_gpus=parallel_config.world_size,
-                 ignore_reinit_error=True)
-    else:
-        # Initialize cluster locally
-        port = get_open_port()
-        distributed_init_method = f"tcp://localhost:{port}"
-        return distributed_init_method, None, None
+    assert parallel_config.worker_use_ray
+
+    if ray is None:
+        raise ImportError("Ray is not properly installed! Try use multiprocessing instead or check your installation!")
+    
+    ray.init(address=ray_address,
+                num_cpus=(parallel_config.world_size * parallel_config.num_cpus_gpu_worker
+                        + (parallel_config.num_cpu_workers) * parallel_config.num_cpus_cpu_worker +
+                        + 1 * 1),
+                num_gpus=parallel_config.world_size,
+                ignore_reinit_error=True)
+
     
     current_placement_group = ray.util.get_current_placement_group()
     if current_placement_group:
@@ -94,7 +89,7 @@ def initialize_cluster(
             raise ValueError(
                 "The number of required GPUs exceeds the total number of available GPUs "
                 "in the cluster.")
-        return (None, current_placement_group, None)
+        return (current_placement_group, None)
     else:
         num_gpus_in_cluster = ray.cluster_resources().get("GPU", 0)
         if parallel_config.world_size > num_gpus_in_cluster:
@@ -123,5 +118,5 @@ def initialize_cluster(
         if scheduler_config.overlap_prepare:
             ray.get(cpu_pg.ready(), timeout=1800)
         logger.debug("Ray plamencement group ready.")
-        return (None, gpu_pg, cpu_pg)
+        return (gpu_pg, cpu_pg)
     

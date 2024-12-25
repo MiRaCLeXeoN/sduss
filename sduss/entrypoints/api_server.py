@@ -15,7 +15,7 @@ from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.model_executor.diffusers import BasePipeline
 from sduss.utils import random_uuid
 from sduss.model_executor.model_loader import get_pipeline_cls
-from sduss.entrypoints.outputs import RequestOutput
+from sduss.entrypoints.wrappers import ReqOutput
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 TIMEOUT_TO_PREVENT_DEADLOCK = 1  # seconds.
@@ -49,7 +49,7 @@ async def generate(request: Request) -> Response:
     results_generator = engine.generate(request_id=request_id, sampling_params=sampling_params)
 
     # Non-streaming case. Iterate only once.
-    final_output: RequestOutput = None
+    final_output: ReqOutput = None
     async for request_output in results_generator:
         if await request.is_disconnected():
             # Abort the request if the client disconnects.

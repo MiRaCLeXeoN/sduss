@@ -4,7 +4,7 @@ from typing import List, Dict, TYPE_CHECKING
 
 import torch
 
-from sduss.scheduler import RequestStatus, Request
+from sduss.dispatcher import RequestStatus, Request
 from sduss.model_executor.utils import BaseOutput
 
 if TYPE_CHECKING:

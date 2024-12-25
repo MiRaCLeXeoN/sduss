@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple, Dict, Union, Iterable
 from typing import TYPE_CHECKING
 from datetime import datetime
 
-from sduss.config import SchedulerConfig, EngineConfig
+from sduss.config import SchedulerConfig, ParallelConfig, EngineConfig
 from sduss.logger import init_logger
 
 from .policy import PolicyFactory
@@ -28,6 +28,7 @@ class Scheduler:
     def __init__(
         self,
         scheduler_config: SchedulerConfig,
+        parallel_config: ParallelConfig,
         engine_config: EngineConfig,
         support_resolutions: List[int],
     ) -> None:
@@ -40,8 +41,9 @@ class Scheduler:
         self.use_mixed_precision = scheduler_config.use_mixed_precision
         self.max_overlapped_prepare_reqs = scheduler_config.max_overlapped_prepare_reqs
         
+        self.data_parallel_size = parallel_config.data_parallel_size
         # resolution -> queues -> RequestQueue
-        self.request_pool: Dict[int, ResolutionRequestQueue] = {}
+        self.request_pool: List[Dict[int, ResolutionRequestQueue]] = [{}] * self.data_parallel_size
         # req_id -> req, for fast reference
         self.req_mapping: Dict[int, Request] = {}
         # Lazy import to avoid circular import
@@ -75,7 +77,7 @@ class Scheduler:
         ) -> SchedulerOutput:
         """Scheduler requests with overlapped prepare stage."""
         self.cycle_counter += 1
-        scheduler_output = self.policy.scheduler_request_overlap_prepare(
+        scheduler_output = self.policy.schedule_requests_overlap_prepare(
             max_num=self.max_batchsize,
             max_overlapped_prepare_reqs=self.max_overlapped_prepare_reqs,
             accept_overlap_prepare_reqs=accept_overlap_prepare_reqs)
@@ -85,12 +87,16 @@ class Scheduler:
         return scheduler_output
         
         
-    def add_request(self, req: Request) -> None:
+    def add_requests(self, reqs: List[Request] | Request) -> None:
         """Add a new request to waiting queue."""
-        resolution = req.sampling_params.resolution
-        self.request_pool[resolution].add_request(req)
-        assert req.request_id not in self.req_mapping
-        self.req_mapping[req.request_id] = req
+        if not isinstance(reqs, list):
+            reqs = [reqs]
+        
+        for req in reqs:
+            assert req.request_id not in self.req_mapping
+            self.req_mapping[req.request_id] = req
+
+        self.policy.add_request(reqs)
         
 
     def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> List[Request]:
@@ -331,7 +337,8 @@ class Scheduler:
         
         
     def _initialize_resolution_queues(self, res: int) -> None:
-        self.request_pool[res] = ResolutionRequestQueue(res)
+        for i in range(self.data_parallel_size):
+            self.request_pool[i][res] = ResolutionRequestQueue(res)
 
     
     def _get_next_status(self, prev_status: RequestStatus) -> RequestStatus:

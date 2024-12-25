@@ -5,11 +5,13 @@
 # export OVERLAP_PREPARE="--overlap_prepare"
 # export NON_BLOCKING_STEP="--non_blocking_step"
 
+export DATA_PARALLEL_SIZE=2
 export SLO="5"
 export DISTRIBUTION="equal"
 export NUM=100
-export MODEL="sd1.5"
+export MODEL="sdxl"
 export QPS="0.4"
+export GPUS="[6, 7]"
 ARRIVAL_DISTRI="gamma"
 
 # export POLICY="fcfs_single"
@@ -49,6 +51,6 @@ python ./tests/server/esymred_test.py \
     --port 8000 \
     --num $NUM
 sleep 3
-ps aux | grep python | grep -v grep | awk '{print $2}' | xargs kill -9
+ps aux | grep sduss | grep -v grep | awk '{print $2}' | xargs kill -9
 # echo "cancelled job $job_num"
 cp ./outputs/*$job_num.* ${folder_path}/

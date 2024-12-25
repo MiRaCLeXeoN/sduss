@@ -5,7 +5,7 @@ export SDUSS_COLLECT_DATA=true
 export ESYMRED_PREDICTOR_PATH="./exp/$MODEL.pkl"
 export ESYMRED_EXEC_TIME_DIR="./exp/profile"
 
-export TORCH_INCLUDE_PATH="/workspace/local_conda_env/opt/conda/envs/sduss/lib/python3.9/site-packages/torch/include"
+export TORCH_INCLUDE_PATH="/root/miniconda3/envs/sduss/lib/python3.9/site-packages/torch/include"
 
 if [ ${MODEL} == "sd1.5" ]; then
     export MODEL_PATH="/workspace/huggingface/hub/models--sd-legacy--stable-diffusion-v1-5/snapshots/f03de327dd89b501a01da37fc5240cf4fdba85a1"
@@ -23,4 +23,6 @@ python ./sduss/entrypoints/api_server.py \
     --max_batchsize 12 \
     --torch_dtype "float16" \
     --engine_use_mp \
-    --worker_use_mp
+    --worker_use_mp \
+    --data_parallel_size ${DATA_PARALLEL_SIZE} \
+    --gpus "${GPUS}"
