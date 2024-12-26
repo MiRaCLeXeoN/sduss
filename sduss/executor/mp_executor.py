@@ -1,9 +1,10 @@
+import asyncio
 import torch.multiprocessing as multiprocessing
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 from sduss.utils import get_open_port
-from sduss.utils import Task, MainLoop
+from .utils import Task, ExecutorMainLoop
 
 if TYPE_CHECKING:
     from sduss.worker import WorkerOutput
@@ -30,7 +31,7 @@ class MpExecutor:
     
     def init_worker(self, worker_init_fn) -> None:
         self.process = multiprocessing.Process(
-            target=MainLoop,
+            target=ExecutorMainLoop,
             name=self.name,
             kwargs={
                 "task_queue" : self.task_queue,
@@ -40,22 +41,46 @@ class MpExecutor:
         )
         self.process.start()
     
+
+    def _add_task(self, method_name, need_res: bool, method_args = [], method_kwargs = {}) -> 'Task':
+        task = Task(method_name, need_res, *method_args, **method_kwargs)
+        self.task_queue.put_nowait(task)
+        return task
     
-    def execute_method(self, method: str, *method_args, **method_kwargs):
-        self.task_queue.put(Task(method_name=method, *method_args, **method_kwargs))
-        return self
+    
+    def execute_method(
+        self, 
+        method: str,
+        need_res: bool,
+        *method_args, 
+        **method_kwargs,
+    ):
+        """Execute the method and return the handler.
+
+        Args:
+            method (str): method name
+            need_res (bool): if true, this method will block until the result is returned,
+                otherwise it will return immediately after the task is sent to the engine.
+        """
+        task = self._add_task(method, need_res, method_args, method_kwargs)
+        if need_res:
+            # Then we explicitly wait until the result is returned
+            return asyncio.get_event_loop().run_until_complete(self._wait_task(task))
+        else:
+            return None
+
+
     
     
     def get_blocking(self):
         return self.output_queue.get()
     
     
-    def data_is_available(self):
-        return not self.output_queue.empty()
-    
-    
-    def get_result(self):
-        return self.output_queue.get()
+    def get_result_nowait(self) -> List:
+        outputs = []
+        while not self.output_queue.empty():
+            outputs.append(self.output_queue.get())
+        return outputs
     
     
     def end_worker(self):

@@ -1,11 +1,5 @@
-"""Main engine module.
-
-Here defines the main base Engine class
-
-"""
 import copy
 import os
-import time
 import datetime
 import sys
 import logging
@@ -14,19 +8,13 @@ import traceback
 from typing import Optional, Union, List, Any, Tuple, Dict, TYPE_CHECKING, Iterable
 from functools import partial
 
-import ray
-# default to regard ray as an indispensible part
-from ray.air.util.torch_dist import init_torch_dist_process_group
-from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
-
-from sduss.dispatcher import Dispatcher, SchedulerOutput, Request, RequestStatus
+from sduss.dispatcher import Dispatcher, Request, DispatcherResultType
 from sduss.worker import WorkerOutput
 from sduss.logger import init_logger
 from sduss.entrypoints.wrappers import ReqOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.config import (PipelineConfig, ParallelConfig, SchedulerConfig, EngineConfig)
 from sduss.engine.arg_utils import EngineArgs
-from sduss.executor.ray_executor import RayExecutor, ray_initialize_cluster
 from sduss.executor.mp_executor import mp_init_method
 from sduss.executor.mp_executor import MpExecutor
 from sduss.engine.metrics import record_metrics
@@ -76,35 +64,10 @@ class Engine:
         self._verify_args()
         
         # Create the parallel GPU workers
-        if self.parallel_config.worker_use_ray:
-            gpu_pg = kwargs.pop("gpu_pg")
-            cpu_pg = kwargs.pop("cpu_pg")
-            self._init_workers_ray(gpu_pg, cpu_pg)
-        elif self.parallel_config.worker_use_mp:
-            # TODO: Curretnly mp supports only single node execution
-            self._init_workers_mp(mp_init_method())
-        else:
-            self._init_workers()
+        self._init_workers_mp(mp_init_method())
         if engine_config.log_status:
             logger.info("All workers initialization complete")
             
-        # Logging.
-        self.last_logging_time = 0.0
-        # List of (timestamp, num_tokens)
-        self.num_generated_images: List[Tuple[float, int]] = []
-
-        # Non-blokcing required attributes
-        self.prev_prepare_handlers = None
-        self.prev_denoising_handlers = None
-        self.prev_postprocessing_handlers = None
-        self.prev_empty_handlers = None
-        self.prev_scheduler_output = None
-
-        # For overlapped prepare
-        self.overlapped_prepare_handlers = None
-        self.overlapped_prepare_sche_opt = list()  # Use list as a double buffer
-        self.issued_receive_data = False
-
         self.pipeline_cls = None
         self.sampling_param_cls = None
         self._set_pipeline_cls()
@@ -125,38 +88,25 @@ class Engine:
         if self.collect_data:
             self._prepare_collect_data()
 
-    
-    def engine_is_ready(self) -> bool:
-        return self.engine_ready
-    
-    
-    def _set_pipeline_cls(self) -> None:
-        from sduss.model_executor.model_loader import get_pipeline_cls
-        self.pipeline_cls: BasePipeline = get_pipeline_cls(self.pipeline_config)
-        self.sampling_param_cls = self.pipeline_cls.get_sampling_params_cls()
 
-    
     @classmethod
     def from_engine_args(cls, engine_args: EngineArgs) -> "Engine":
         """Create an inference engine from arguments"""
         # Create engine configs.
         pipeline_config, parallel_config, scheduler_config, engine_config= engine_args.create_engine_configs()
 
-        kwargs = {}
-        # Initialize the cluster
-        if engine_config.engine_use_ray or parallel_config.worker_use_ray:
-            gpu_pg, cpu_pg = ray_initialize_cluster(
-                parallel_config, scheduler_config)
-            kwargs["gpu_pg"] = gpu_pg
-            kwargs["cpu_pg"] = cpu_pg
-            
         # Create engine instance
         return cls(pipeline_config, 
                    parallel_config, 
                    scheduler_config, 
-                   engine_config,
-                   **kwargs)
-        
+                   engine_config,)
+    
+
+    def _set_pipeline_cls(self) -> None:
+        from sduss.model_executor.model_loader import get_pipeline_cls
+        self.pipeline_cls: BasePipeline = get_pipeline_cls(self.pipeline_config)
+        self.sampling_param_cls = self.pipeline_cls.get_sampling_params_cls()
+
 
     def _verify_args(self):
         """Verify args. Now only parallel config requires verification."""
@@ -164,37 +114,6 @@ class Engine:
         self.pipeline_config.verify_with_scheduler_config(self.scheduler_config)
         self.engine_config.verify_with_scheduler_config(self.scheduler_config)
 
-    
-    def _init_workers(self, distributed_init_method: str):
-        """Initialize workers without ray
-        
-        Attach self.workers to self and call `init_model` method on all workers.
-
-        Args:
-            distributed_init_method (str): 
-        """
-        # ? Lazy import the worker to avoid importing torch.cude/xformers
-        # ? before CUDA_VISIBLE_DEVICE is set in the worker
-        from sduss.worker.worker import Worker
-
-        assert self.parallel_config.world_size == 1, (
-            "MP or Ray is required if world size > 1."
-        )
-        
-        self.workers: List[Worker] = []
-        worker = Worker(
-            self.pipeline_config,
-            self.parallel_config,
-            self.scheduler_config,
-            self.engine_config,
-            0,
-            distributed_init_method,
-        )
-        self.workers.append(worker)
-        # initialize model on all workers
-        self._run_workers_blocking("init_dis_env", get_all_outputs=True)
-        self._run_workers_blocking("load_model", get_all_outputs=True)
-    
     
     def _init_workers_mp(
         self,
@@ -205,7 +124,7 @@ class Engine:
             worker = MpExecutor(f"sduss_gpu_worker{i}", rank=i, device=self.parallel_config.gpus[i], is_prepare_worker=False)
             self.workers.append(worker)
 
-        self.prepare_workers = []
+        self.prepare_workers: 'List[MpExecutor]' = []
         for i in range(self.parallel_config.num_cpu_workers):
             worker = MpExecutor(f"sduss_cpu_worker{i}", rank=i, device=self.parallel_config.gpus[i], is_prepare_worker=True)
             self.prepare_workers.append(worker)
@@ -236,101 +155,7 @@ class Engine:
             self._run_workers_blocking("load_model", self.workers + self.prepare_workers, get_all_outputs=True)
         else:
             self._run_workers_blocking("load_model", self.workers, get_all_outputs=True)
-        
-        
-    def _init_workers_ray(
-        self,
-        gpu_pg: "PlacementGroup",
-        cpu_pg: "PlacementGroup",
-        **ray_remote_kwargs,
-    ):
-        # TODO: This function is not finished
-        raise NotImplementedError()
-        if self.engine_config.log_status:
-            logger.info("_init_workers_ray called")
-        # Disable Ray usage stats collection
-        ray_usage = os.environ.get("RAY_USAGE_STATS_ENABLED", "0")
-        if ray_usage != "1":
-            os.environ["RAY_USAGE_STATS_ENABLED"] = "0"
 
-        # ? why should PlacementGroup use forward reference?
-        
-        # ? Lazy import the worker to avoid importing torch.cuda/xformers
-        # ? before CUDA_VISIBLE_DEVICE is set in the worker
-        from sduss.worker.worker import Worker
-
-        # create workers using ray interface
-        self.workers = []
-        for i, bundle in enumerate(gpu_pg.bundle_specs):
-            if bundle.get("GPU"):
-                worker = ray.remote(
-                    num_cpus=0,
-                    num_gpus=1,
-                    scheduling_strategy=PlacementGroupSchedulingStrategy(
-                        placement_group=gpu_pg,
-                        placement_group_bundle_index=i,
-                        placement_group_capture_child_tasks=True,),
-                    **ray_remote_kwargs,
-                )(RayExecutor).remote(self.pipeline_config.trust_remote_code)
-                self.workers.append(worker)
-            else:
-                raise RuntimeError("No gpu resources detected in gpu placement group.")
-
-        if self.scheduler_config.overlap_prepare:
-            self.prepare_workers = []
-            for i, bundle in enumerate(cpu_pg.bundle_specs):
-                if i == 0:
-                    # Skip 0th bundle, which is dedicated for engine
-                    continue
-                worker = ray.remote(
-                    num_cpus=0,
-                    num_gpus=0,
-                    scheduling_strategy=PlacementGroupSchedulingStrategy(
-                        placement_group=cpu_pg,
-                        placement_group_bundle_index=i,
-                        placement_group_capture_child_tasks=True),
-                    **ray_remote_kwargs,
-                )(RayExecutor).remote(self.pipeline_config.trust_remote_code)
-                self.prepare_workers.append(worker)
-        
-        init_torch_dist_process_group(self.workers, backend="nccl")
-        model_config = copy.deepcopy(self.pipeline_config)
-        parallel_config = copy.deepcopy(self.parallel_config)
-        scheduler_config = copy.deepcopy(self.scheduler_config)
-        engine_config = copy.deepcopy(self.engine_config)
-        
-        # execute `init_worker` method of workers
-        self._run_workers_blocking(
-            "init_worker",
-            self.workers,
-            get_all_outputs=True,
-            worker_init_fn=lambda: Worker(
-                model_config,
-                parallel_config,
-                scheduler_config,
-                engine_config
-            )
-        )
-        self._run_workers_blocking("init_dis_env", self.workers, get_all_outputs=True)
-        # execute `init_worker` method of prepare_workers
-        if self.scheduler_config.overlap_prepare:
-            self._run_workers_blocking(
-                "init_worker",
-                self.prepare_workers,
-                get_all_outputs=False,
-                worker_init_fn=lambda: Worker(
-                    model_config,
-                    parallel_config,
-                    scheduler_config,
-                    engine_config,
-                    is_prepare_worker=True,
-                )
-            )
-            self._run_workers_blocking("init_prepare", self.prepare_workers, get_all_outputs=True)
-            self._run_workers_blocking("load_model", self.workers + self.prepare_workers, get_all_outputs=True)
-        else:
-            self._run_workers_blocking("load_model", self.workers, get_all_outputs=True)
-    
 
     def add_requests(
         self,
@@ -353,167 +178,18 @@ class Engine:
         return self.dispatcher.abort_requests(request_ids)
 
     
-    def _schedule(self) -> Tuple[SchedulerOutput, List[int]] :
-        """Scheduling for current round."""
-        if self.scheduler_config.overlap_prepare:
-            scheduler_output = self.dispatcher.schedule_overlap_prepare(
-                accept_overlap_prepare_reqs=self.overlapped_prepare_handlers is None
-            )
-        else:
-            scheduler_output = self.dispatcher.schedule()
-        # Extract request ids
-        req_ids = scheduler_output.get_req_ids()
-        
-        return scheduler_output, req_ids
-    
-    
-    def _step_blocking(self) -> List[ReqOutput]:
-        """Performs one denoising iteration and returns newly generated results."""
-        scheduler_output, req_ids = self._schedule()
-
-        if self.engine_config.log_status:
-            self._log_system_states(scheduler_output)
-
-        output = None
-        if scheduler_output.status == RequestStatus.WAITING:
-            # Currently, we don't do anything in waiting stage
-            pass
-        elif scheduler_output.status == RequestStatus.PREPARE:
-            # For prepare stage inference
-            # TODO(MX): We may pass schduler output directly
-            output: WorkerOutput = self._run_workers_blocking(
-                "exec_prepare_stage", 
-                self.workers,
-                scheduler_reqs=scheduler_output.get_reqs_as_list(),
-                use_mixed_precision=self.scheduler_config.use_mixed_precision)
-        elif scheduler_output.status == RequestStatus.DENOISING:
-            # For denoising stage inference
-            output: WorkerOutput = self._run_workers_blocking(
-                "exec_denoising_stage", 
-                self.workers,
-                req_ids=req_ids,
-                use_mixed_precision=self.scheduler_config.use_mixed_precision,
-                is_sliced=scheduler_output.is_sliced,
-                patch_size=scheduler_output.patch_size)
-        elif (scheduler_output.status == RequestStatus.POSTPROCESSING):
-            # For post stage inference
-            output: WorkerOutput = self._run_workers_blocking(
-                "exec_post_stage",
-                self.workers,
-                req_ids=req_ids,
-                use_mixed_precision=self.scheduler_config.use_mixed_precision,
-            )
-        else:
-            # We don't expect EMPTY to be in blocking method
-            raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
-        
-        finished_req_outputs = self._process_output(scheduler_output=scheduler_output,
-                                       req_ids=req_ids,
-                                       output=output,)
-        
-        return finished_req_outputs
-    
-    
-    def _step_nonblocking(self):
-        """Non-blocking step."""
-        # 0. Check if overlapped prepare results are aviable:
-        overlapped_prepare_output = None
-        if self.overlapped_prepare_handlers:
-            overlapped_prepare_output = self._get_output_nonblocking(self.overlapped_prepare_handlers)
-            self.overlapped_prepare_handlers = self.overlapped_prepare_handlers if not overlapped_prepare_output else None
-        
-        # 1. Schedule
-        scheduler_output, req_ids = self._schedule()
-        
-        if self.engine_config.log_status:
-            self._log_system_states(scheduler_output)
-
-        # 2. Wait for result from previous round
-        # This must be after step 1 to truly overlap scheduling and execution.
-        prepare_output, denoising_output, postprocessing_output = (
-            self.get_prev_handlers_output(get_output_all_workers=False))
-
-        # 3. Schedule prepare if prepare reqs available
-        if scheduler_output.has_prepare_requests():
-            # We don't expect prepare stage if we have overlapped prepare-requests to process
-            assert scheduler_output.status != RequestStatus.PREPARE
-            self.overlapped_prepare_handlers = self._run_workers_nonblocking(
-                "exec_prepare_stage", 
-                self.prepare_workers,
-                scheduler_reqs=scheduler_output.get_prepare_reqs_as_list(),
-                use_mixed_precision=self.scheduler_config.use_mixed_precision)
-            self.overlapped_prepare_sche_opt.append(scheduler_output)
-
-        # 4. Issue tasks to workers
-        if scheduler_output.status ==RequestStatus.EMPTY:
-            # Empty indicates that no reqs to run, we don't need to do anything.
-            if overlapped_prepare_output:
-                self.prev_empty_handlers = self._run_workers_nonblocking(
-                    "receive_prepare_output",
-                    self.workers,
-                    prepare_output=overlapped_prepare_output
-                )
-        elif scheduler_output.status == RequestStatus.WAITING:
-            # Currently, we don't do anything in waiting stage
-            if overlapped_prepare_output:
-                self.prev_empty_handlers = self._run_workers_nonblocking(
-                    "receive_prepare_output",
-                    self.workers,
-                    prepare_output=overlapped_prepare_output
-                )
-        elif scheduler_output.status == RequestStatus.PREPARE:
-            # Requests are derived from normal reqs instead of prepare_reqs in shceduler_output
-            self.prev_prepare_handlers = self._run_workers_nonblocking(
-                "exec_prepare_stage",
-                self.workers,
-                scheduler_reqs=scheduler_output.get_reqs_as_list(),
-                use_mixed_precision=self.scheduler_config.use_mixed_precision,
-                prepare_output=overlapped_prepare_output)
-        elif scheduler_output.status == RequestStatus.DENOISING:
-            # For denoising stage inference
-            # transfer prepare result from previous round to worker
-            self.prev_denoising_handlers = self._run_workers_nonblocking(
-                "exec_denoising_stage", 
-                self.workers,
-                req_ids=req_ids,
-                use_mixed_precision=self.scheduler_config.use_mixed_precision,
-                is_sliced=scheduler_output.is_sliced,
-                patch_size=scheduler_output.patch_size,
-                prepare_output=overlapped_prepare_output)
-        elif scheduler_output.status == RequestStatus.POSTPROCESSING:
-            # For post stage inference
-            self.prev_postprocessing_handlers = self._run_workers_nonblocking(
-                "exec_post_stage",
-                self.workers,
-                req_ids=req_ids,
-                use_mixed_precision=self.scheduler_config.use_mixed_precision,
-                prepare_output=overlapped_prepare_output
-            )
-        else:
-            raise RuntimeError(f"Unexpected status {str(scheduler_output.status)}.")
-        
-        # 5. Process output and update requests status.
-        output = self._process_nonblocking_output(scheduler_output=scheduler_output,
-                                                  req_ids=req_ids,
-                                                  prepare_output=prepare_output,
-                                                  denoising_output=denoising_output,
-                                                  postprocessing_output=postprocessing_output,
-                                                  overlapped_prepare_output=overlapped_prepare_output)
-        
-        return output
-
-    
     def step(self) -> List[ReqOutput]:
         """One step consists of scheduling and execution of requests."""
         self._step_counter += 1
         try:
-            if self.engine_config.non_blocking_step:
-                return self._step_nonblocking()
-            else:
-                return self._step_blocking()
+            reqs_by_dp: Dict[int, Request] = self.dispatcher.dispatch()
         except Exception as e:
             print(e)
             traceback.print_exc()
+    
+    
+    def dispatch_reqs(self, reqs_by_dp: DispatcherResultType) -> None:
+        
     
     
     def _process_nonblocking_output(
@@ -553,9 +229,9 @@ class Engine:
             ret.append(ReqOutput(req))
 
         if self.collect_data and self.prev_scheduler_output:
-            if self.prev_scheduler_output.status == RequestStatus.DENOISING:
+            if self.prev_scheduler_output.status == ReqStatus.DENOISING:
                 target_worker_output = denoising_output
-            elif self.prev_scheduler_output.status == RequestStatus.POSTPROCESSING:
+            elif self.prev_scheduler_output.status == ReqStatus.POSTPROCESSING:
                 target_worker_output = postprocessing_output
             else:
                 target_worker_output = prepare_output
@@ -621,32 +297,6 @@ class Engine:
         
         return ret
 
-    
-    def _run_workers_in_batch(
-        self,
-        workers: List,
-        method: str,
-        *args,
-        **kwargs,
-    ):
-        all_outputs = []
-        for worker in workers:
-            if self.parallel_config.worker_use_ray:
-                executor = partial(worker.execute_method.remote, method)
-            if self.parallel_config.worker_use_mp:
-                executor = partial(worker.execute_method, method)
-            else:
-                executor = getattr(worker, method)
-
-            output = executor(*args, **kwargs)
-            all_outputs.append(output)
-        
-        if self.parallel_config.worker_use_ray:
-            all_outputs = ray.get(all_outputs)
-        elif self.parallel_config.worker_use_mp:
-            all_outputs = [worker.get_blocking() for worker in all_outputs]
-        return all_outputs
-
 
     def _run_workers_nonblocking(
         self,
@@ -683,11 +333,27 @@ class Engine:
             raise RuntimeError("Your chosen worker type doesn't support nonblokcing method at now.")
         return obj_refs
         
-    
+
+    def _run_workers_in_batch(
+        self,
+        workers: List[MpExecutor],
+        method: str,
+        *args,
+        **kwargs,
+    ):
+        all_outputs = []
+        for worker in workers:
+            output = worker.execute_method(method, *args, **kwargs)
+            all_outputs.append(output)
+        
+        all_outputs = [worker.get_blocking() for worker in all_outputs]
+        return all_outputs
+        
+
     def _run_workers_blocking(
         self,
         method: str,
-        workers: List[RayExecutor],
+        workers: List[MpExecutor],
         *args,
         get_all_outputs: bool = False,
         max_concurrent_workers: Optional[int] = None,
@@ -701,8 +367,13 @@ class Engine:
                 Defaults to False.
         """
         if self.engine_config.log_status:
-            logger.info(f"_run_workers_blocking start method {method}")
+            logger.info(f"_run_workers_blocking start method {method}, {get_all_outputs=}")
+        
+        # If no workers specified, directly return
+        if not workers:
+            return
 
+        # Split workers into subgroups
         all_outputs = []
         if max_concurrent_workers:
             work_groups = [
@@ -712,6 +383,7 @@ class Engine:
         else:
             work_groups = [workers]
 
+        # Launch tasks subgroup by subgroup
         for worker_subgroup in work_groups:
             all_outputs.extend(
                 self._run_workers_in_batch(worker_subgroup, method, *args, **kwargs)
@@ -726,50 +398,6 @@ class Engine:
             return output
         
         
-    def get_prev_handlers_output(
-            self, 
-            get_output_all_workers: bool = False,
-            issued_receive_data_in_prev: bool = False,
-        ) -> Union[List[WorkerOutput], WorkerOutput]:
-        """Get output from handlers set by previous round.
-
-        Args:
-            get_output_all_workers (bool, optional): If true, outputs from all workers
-                will be returned as a list. Otherwise only the first output will be extracted
-                and returned.
-        """
-        prepare_output = denoising_output = postprocessing_output = None
-
-        if self.parallel_config.worker_use_mp:
-            get_result = lambda worker_list: [worker.get_blocking() for worker in worker_list]
-        elif self.parallel_config.worker_use_ray:
-            get_result = ray.get
-
-        if self.prev_prepare_handlers:
-            prepare_output = get_result(self.prev_prepare_handlers)
-            self.prev_prepare_handlers = None
-        if self.prev_denoising_handlers:
-            denoising_output = get_result(self.prev_denoising_handlers)
-            self.prev_denoising_handlers = None
-        if self.prev_postprocessing_handlers:
-            postprocessing_output = get_result(self.prev_postprocessing_handlers)
-            self.prev_postprocessing_handlers = None
-        
-        if self.prev_empty_handlers:
-            # We need to pop one extra output from workers to ensure the mapping order
-            # of req->output
-            # results will be omitted
-            get_result(self.prev_empty_handlers)
-            self.prev_empty_handlers = None
-
-        if get_output_all_workers:
-            return prepare_output, denoising_output, postprocessing_output
-
-        prepare_output = prepare_output[0] if prepare_output else prepare_output
-        denoising_output = denoising_output[0] if denoising_output else denoising_output
-        postprocessing_output = postprocessing_output[0] if postprocessing_output else postprocessing_output
-        return prepare_output, denoising_output, postprocessing_output
-
     
     def get_pipeline_config(self) -> PipelineConfig:
         """Gets the model configuration."""
@@ -790,19 +418,15 @@ class Engine:
         self,
         scheduler_output: SchedulerOutput,
     ) -> None:
-        # record_metrics(
-        #     avg_prompt_throughput=avg_prompt_throughput,
-        #     avg_generation_throughput=avg_generation_throughput,
-        #     scheduler_running=len(self.scheduler.running),
-        #     scheduler_swapped=len(self.scheduler.swapped),
-        #     scheduler_waiting=len(self.scheduler.waiting),
-        #     gpu_cache_usage=gpu_cache_usage,
-        #     cpu_cache_usage=cpu_cache_usage,
-        # ) 
-
         self.dispatcher.log_status()
         logger.info(scheduler_output.get_log_string())
         sys.stdout.flush()
+    
+
+
+    def engine_is_ready(self) -> bool:
+        return self.engine_ready
+    
     
 
     def clear(self):

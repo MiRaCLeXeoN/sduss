@@ -3,7 +3,7 @@ import time
 from typing import List, TYPE_CHECKING, Dict
 
 from .policy import Policy
-from ..wrappers import SchedulerOutput, RequestStatus
+from ..wrappers import SchedulerOutput, ReqStatus
 from ..utils import find_gcd, convert_list_to_res_dict
 
 
@@ -28,7 +28,7 @@ class FCFS_Mixed(Policy):
         return reqs
     
     
-    def _get_all_reqs_by_status(self, status: "RequestStatus") -> List['Request']:
+    def _get_all_reqs_by_status(self, status: "ReqStatus") -> List['Request']:
         reqs = []
         for resolution_queue in self.request_pool.values():
             reqs.extend(resolution_queue.get_all_reqs_by_status(status))
@@ -50,7 +50,7 @@ class FCFS_Mixed(Policy):
             # No reqs to schedule
             return SchedulerOutput(
                 scheduled_requests={},
-                status=RequestStatus.EMPTY,
+                status=ReqStatus.EMPTY,
             )
 
         # Find the oldest request
@@ -79,7 +79,7 @@ class FCFS_Mixed(Policy):
         is_sliced = None
         patch_size = None
         # Only apply for denoising stage
-        if target_status == RequestStatus.DENOISING:
+        if target_status == ReqStatus.DENOISING:
             if len(res_reqs_dict) > 1:
                 is_sliced = True
                 patch_size = find_gcd(list(res_reqs_dict))
@@ -109,7 +109,7 @@ class FCFS_Mixed(Policy):
             # when using non-blocking paradigm.
             return SchedulerOutput(
                 scheduled_requests={}, 
-                status=RequestStatus.EMPTY,
+                status=ReqStatus.EMPTY,
             )
 
         # Find the oldest request
@@ -138,7 +138,7 @@ class FCFS_Mixed(Policy):
         is_sliced = None
         patch_size = None
         # Only apply for denoising stage
-        if target_status == RequestStatus.DENOISING:
+        if target_status == ReqStatus.DENOISING:
             if len(res_reqs_dict) > 1:
                 is_sliced = True
                 patch_size = find_gcd(list(res_reqs_dict))
@@ -148,8 +148,8 @@ class FCFS_Mixed(Policy):
         
         # Get overlapped prepare requests if current stage is not prepare
         prepare_requests = None
-        if target_status != RequestStatus.PREPARE and accept_overlap_prepare_reqs:
-            _prepare_reqs = self._get_all_reqs_by_status(RequestStatus.PREPARE)
+        if target_status != ReqStatus.PREPARE and accept_overlap_prepare_reqs:
+            _prepare_reqs = self._get_all_reqs_by_status(ReqStatus.PREPARE)
             prepare_requests = convert_list_to_res_dict(_prepare_reqs, max_overlapped_prepare_reqs)
         
         return SchedulerOutput(

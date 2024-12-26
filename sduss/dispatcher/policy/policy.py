@@ -2,15 +2,15 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from sduss.dispatcher.wrappers import ResolutionRequestQueue, SchedulerOutput
+    from ..request_pool import RequestPool, Request
 
 class DispatchPolicy(ABC):
 
     def __init__(self, **kwargs) -> None:
-        # Reference scheduler's request pool
-        # FIXME:
-        pass
+        self.request_pool: 'RequestPool' = kwargs.pop("request_pool")
+        self.dp_size = kwargs.pop("dp_size")
     
+
     @abstractmethod
-    def add_request(self, req) -> None:
+    def dispatch_requests(self) -> 'Dict[int, List[Request]]':
         raise NotImplementedError("You must implemente this method in the derived class.")

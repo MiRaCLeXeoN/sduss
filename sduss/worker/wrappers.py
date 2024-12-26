@@ -4,7 +4,7 @@ from typing import List, Dict, TYPE_CHECKING
 
 import torch
 
-from sduss.dispatcher import RequestStatus, Request
+from sduss.dispatcher import ReqStatus, Request
 from sduss.model_executor.utils import BaseOutput
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ class WorkerRequest:
         self.request_id = scheduler_req.request_id
         # Status from new requests should be `waiting`
         # self.status = scheduler_req.status
-        # assert self.status == RequestStatus.WAITING
+        # assert self.status == ReqStatus.WAITING
         self.sampling_params: "BaseSamplingParams" = scheduler_req.sampling_params
         # self.remain_steps: int = scheduler_req.remain_steps
 
@@ -91,46 +91,18 @@ class WorkerOutput:
     def __init__(
         self,
         worker_reqs: WorkerRequestDictType = None,
-        status: RequestStatus = None,
         start_time : float = None,
         end_time : float = None,
-        is_from_prepare_worker : bool = False,
     ) -> None:
         # Performance recording
         self.start_time = start_time
         self.end_time = end_time
 
-        self.is_from_prepare_worker = is_from_prepare_worker
-
-        if status == RequestStatus.POSTPROCESSING:
-            reqs_dict: Dict[int, BaseOutput] = {}
-            for res in worker_reqs:
-                for wr in worker_reqs[res]:
-                    reqs_dict[wr.request_id] = wr.output
-            
-            # req_id -> pipeline output cls
-            # pipeline output cls is assured to exist in CPU memory instead of on device
-            self.req_output_dict = reqs_dict
-        elif status == RequestStatus.PREPARE:
-            # Return all worker requests directly
-            # map: req_id -> inference steps
-            reqs_dict: Dict[int, int] = {}
-            for res in worker_reqs:
-                for wr in worker_reqs[res]:
-                    reqs_dict[wr.request_id] = len(wr.scheduler_states.timesteps)
-            self.reqs_steps_dict = reqs_dict
-            # If prepare stage is overlapped, we should return all worker_reqs directly
-            if is_from_prepare_worker:
-                for req_list in worker_reqs.values():
-                    for wr in req_list:
-                        wr.to_numpy()
-                self.worker_reqs = worker_reqs
-        elif status == RequestStatus.DENOISING:
-            pass
-    
-    
-    def __eq__(self, value: object) -> bool:
-        if isinstance(value, WorkerOutput):
-            return True
-        else:
-            return False
+        req_output_dict: Dict[int, BaseOutput] = {}
+        for res in worker_reqs:
+            for wr in worker_reqs[res]:
+                req_output_dict[wr.request_id] = wr.output
+        
+        # req_id -> pipeline output cls
+        # pipeline output cls is assured to exist in CPU memory instead of on device
+        self.req_output_dict = req_output_dict

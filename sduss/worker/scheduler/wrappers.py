@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = init_logger(__name__)
 
-class RequestStatus(enum.IntEnum):
+class ReqStatus(enum.IntEnum):
     """Status of a sequence."""
     # Empty
     EMPTY = enum.auto()             # Use by the scheduler to indicate no requests to run
@@ -34,62 +34,62 @@ class RequestStatus(enum.IntEnum):
     EXECUTING_PREPARE = enum.auto()
 
     @staticmethod
-    def is_finished(status: "RequestStatus") -> bool:
+    def is_finished(status: "ReqStatus") -> bool:
         return status in [
-            RequestStatus.FINISHED_STOPPED,
-            RequestStatus.FINISHED_ABORTED,
+            ReqStatus.FINISHED_STOPPED,
+            ReqStatus.FINISHED_ABORTED,
         ]
     
     
     @staticmethod
-    def is_normal_finished(status: "RequestStatus") -> bool:
+    def is_normal_finished(status: "ReqStatus") -> bool:
         return status in [
-            RequestStatus.FINISHED_STOPPED,
+            ReqStatus.FINISHED_STOPPED,
         ]
     
     
     @staticmethod
-    def is_exception(status: "RequestStatus") -> bool:
+    def is_exception(status: "ReqStatus") -> bool:
         return status in [
-            RequestStatus.EXCEPTION_SWAPPED,
+            ReqStatus.EXCEPTION_SWAPPED,
         ]
     
     
     @staticmethod
-    def is_executing(status: "RequestStatus") -> bool:
+    def is_executing(status: "ReqStatus") -> bool:
         return status in [
-            RequestStatus.EXECUTING,
-            RequestStatus.EXECUTING_PREPARE,
+            ReqStatus.EXECUTING,
+            ReqStatus.EXECUTING_PREPARE,
         ]
     
     
     @staticmethod
-    def convert_to_common_type(status: "RequestStatus") -> 'RequestStatus':
-        if RequestStatus.is_executing(status):
-            return RequestStatus.EXECUTING
+    def convert_to_common_type(status: "ReqStatus") -> 'ReqStatus':
+        if ReqStatus.is_executing(status):
+            return ReqStatus.EXECUTING
 
 
     @staticmethod
-    def get_next_status(status: "RequestStatus") -> Optional["RequestStatus"]:
-        if status == RequestStatus.WAITING:
-            return RequestStatus.PREPARE
-        elif status == RequestStatus.PREPARE:
-            return RequestStatus.DENOISING
-        elif status == RequestStatus.DENOISING:
-            return RequestStatus.POSTPROCESSING
-        elif status == RequestStatus.POSTPROCESSING:
-            return RequestStatus.FINISHED_STOPPED
-        elif status == RequestStatus.EXECUTING_PREPARE:
-            return RequestStatus.DENOISING
+    def get_next_status(status: "ReqStatus") -> Optional["ReqStatus"]:
+        if status == ReqStatus.WAITING:
+            return ReqStatus.PREPARE
+        elif status == ReqStatus.PREPARE:
+            return ReqStatus.DENOISING
+        elif status == ReqStatus.DENOISING:
+            return ReqStatus.POSTPROCESSING
+        elif status == ReqStatus.POSTPROCESSING:
+            return ReqStatus.FINISHED_STOPPED
+        elif status == ReqStatus.EXECUTING_PREPARE:
+            return ReqStatus.DENOISING
         else:
             raise RuntimeError("We cannot decide next status.")
 
 
     @staticmethod
-    def get_finished_reason(status: "RequestStatus") -> Union[str, None]:
-        if status == RequestStatus.FINISHED_STOPPED:
+    def get_finished_reason(status: "ReqStatus") -> Union[str, None]:
+        if status == ReqStatus.FINISHED_STOPPED:
             finish_reason = "stop"
-        elif status == RequestStatus.FINISHED_ABORTED:
+        elif status == ReqStatus.FINISHED_ABORTED:
             finish_reason = "abort"
         else:
             finish_reason = None
@@ -111,7 +111,7 @@ class Request:
         else:
             self.arrival_time = arrival_time
 
-        self.status = RequestStatus.WAITING
+        self.status = ReqStatus.WAITING
         self.remain_steps = sampling_params.num_inference_steps
 
         # Set afterwards
@@ -128,7 +128,7 @@ class Request:
 
 
     def is_finished(self):
-        return RequestStatus.is_finished(self.status)
+        return ReqStatus.is_finished(self.status)
 
 
     def update_predict_time(self, predict_time:float):
@@ -136,7 +136,7 @@ class Request:
     
     
     def abort(self):
-        self.status = RequestStatus.FINISHED_ABORTED
+        self.status = ReqStatus.FINISHED_ABORTED
         self.finish_time = time.time()
 
 
@@ -155,13 +155,13 @@ class Request:
         resolution = self.sampling_params.resolution
         status = self.status
         # Get ddl
-        if status == RequestStatus.WAITING or status == RequestStatus.PREPARE:
+        if status == ReqStatus.WAITING or status == ReqStatus.PREPARE:
             self.slack = 1e5
             return 
-        elif status == RequestStatus.DENOISING:
+        elif status == ReqStatus.DENOISING:
             stage = "denoising"
             ddl = DENOISING_DDL[model_name][str(resolution)]
-        elif status == RequestStatus.POSTPROCESSING:
+        elif status == ReqStatus.POSTPROCESSING:
             stage = "postprocessing"
             ddl = POSTPROCESSING_DDL[model_name][str(resolution)]
         
@@ -199,7 +199,7 @@ class SchedulerOutput:
         scheduled_requests: Dict[int, Dict[int, Request]]
             Requests to run in next iteration.
             resolution -> req_id -> req
-        status: RequestStatus
+        status: ReqStatus
             The inference stage at which the selected requests are. All the
             selected requests must be in the same stage.
         prepare_requests: Dict[int, Dict[int, Request]]
@@ -209,7 +209,7 @@ class SchedulerOutput:
     def __init__(
         self,
         scheduled_requests: SchedulerOutputReqsType = None,
-        status: RequestStatus = None,
+        status: ReqStatus = None,
         prepare_requests: SchedulerOutputReqsType = None,
         abort_req_ids: List[int] = None,
         **kwargs,
@@ -234,10 +234,10 @@ class SchedulerOutput:
     def _verify_params(self):
         # mixed precision
         mixed_precision = len(self.scheduled_requests) > 1
-        if mixed_precision and self.status == RequestStatus.DENOISING:
+        if mixed_precision and self.status == ReqStatus.DENOISING:
             assert self.is_sliced is not None and self.patch_size is not None
-        # Check prepare_requests. It should not co-exist with RequestStatus.PREPARE
-        if self.status == RequestStatus.PREPARE:
+        # Check prepare_requests. It should not co-exist with ReqStatus.PREPARE
+        if self.status == ReqStatus.PREPARE:
             assert self.prepare_requests is None
 
     
@@ -309,13 +309,13 @@ class ResolutionRequestQueue:
         self.swapped: Dict[int, Request] = {}
         self.executing: Dict[int, Request] = {}
         self.queues = {
-            RequestStatus.WAITING : self.waiting,
-            RequestStatus.PREPARE : self.prepare,
-            RequestStatus.DENOISING : self.denoising,
-            RequestStatus.POSTPROCESSING : self.postprocessing,
-            RequestStatus.FINISHED_STOPPED : self.finished,
-            RequestStatus.EXCEPTION_SWAPPED: self.swapped,
-            RequestStatus.EXECUTING : self.executing,
+            ReqStatus.WAITING : self.waiting,
+            ReqStatus.PREPARE : self.prepare,
+            ReqStatus.DENOISING : self.denoising,
+            ReqStatus.POSTPROCESSING : self.postprocessing,
+            ReqStatus.FINISHED_STOPPED : self.finished,
+            ReqStatus.EXCEPTION_SWAPPED: self.swapped,
+            ReqStatus.EXECUTING : self.executing,
         }
 
         # req_id -> req, for fast referencce
@@ -339,7 +339,7 @@ class ResolutionRequestQueue:
             req = self.reqs_mapping.pop(req_id)
             self.queues[req.status].pop(req_id)
 
-            if not RequestStatus.is_finished(req.status):
+            if not ReqStatus.is_finished(req.status):
                 self._num_unfinished_normal_reqs -= 1
             req.abort()
 
@@ -363,52 +363,52 @@ class ResolutionRequestQueue:
             raise ValueError(f"Unexpected name {name}.")
     
     
-    def _get_queue_by_status(self, status: RequestStatus) -> Dict[int, Request]:
+    def _get_queue_by_status(self, status: ReqStatus) -> Dict[int, Request]:
         """This method should only be invoked by methods of this class."""
-        if status == RequestStatus.WAITING:
+        if status == ReqStatus.WAITING:
             return self.waiting
-        elif status == RequestStatus.PREPARE:
+        elif status == ReqStatus.PREPARE:
             return self.prepare
-        elif status == RequestStatus.DENOISING:
+        elif status == ReqStatus.DENOISING:
             return self.denoising
-        elif status == RequestStatus.POSTPROCESSING:
+        elif status == ReqStatus.POSTPROCESSING:
             return self.postprocessing
-        elif status == RequestStatus.FINISHED_STOPPED:
+        elif status == ReqStatus.FINISHED_STOPPED:
             return self.finished
-        elif status == RequestStatus.EXCEPTION_SWAPPED:
+        elif status == ReqStatus.EXCEPTION_SWAPPED:
             return self.swapped
-        elif status == RequestStatus.EXECUTING:
+        elif status == ReqStatus.EXECUTING:
             return self.executing
         else:
             raise ValueError(f"Unexpected status {status}.")
 
 
-    def get_queue_by_status(self, status: RequestStatus) -> Dict[int, Request]:
+    def get_queue_by_status(self, status: ReqStatus) -> Dict[int, Request]:
         """This method will return a shallow copy of the queue dict to
         prevent any possible outside interruption."""
-        if status == RequestStatus.WAITING:
+        if status == ReqStatus.WAITING:
             return self.waiting.copy()
-        elif status == RequestStatus.PREPARE:
+        elif status == ReqStatus.PREPARE:
             return self.prepare.copy()
-        elif status == RequestStatus.DENOISING:
+        elif status == ReqStatus.DENOISING:
             return self.denoising.copy()
-        elif status == RequestStatus.POSTPROCESSING:
+        elif status == ReqStatus.POSTPROCESSING:
             return self.postprocessing.copy()
-        elif status == RequestStatus.FINISHED_STOPPED:
+        elif status == ReqStatus.FINISHED_STOPPED:
             return self.finished.copy()
-        elif status == RequestStatus.EXCEPTION_SWAPPED:
+        elif status == ReqStatus.EXCEPTION_SWAPPED:
             return self.swapped.copy()
-        elif status == RequestStatus.EXECUTING:
+        elif status == ReqStatus.EXECUTING:
             return self.executing.copy()
         else:
             raise ValueError(f"Unexpected status {str(status)}.")
     
     
-    def get_all_reqs_by_status(self, status: RequestStatus) -> List[Request]:
+    def get_all_reqs_by_status(self, status: ReqStatus) -> List[Request]:
         return list(self.queues[status].values())
     
     
-    def get_num_reqs_by_staus(self, status: RequestStatus) -> int:
+    def get_num_reqs_by_staus(self, status: ReqStatus) -> int:
         return len(self.queues[status])
 
     
@@ -419,7 +419,7 @@ class ResolutionRequestQueue:
     def get_num_unfreed_normal_reqs(self) -> int:
         num = 0
         for status, q in self.queues.items():
-            if not RequestStatus.is_exception(status):
+            if not ReqStatus.is_exception(status):
                 num += len(q)
         return num
 
@@ -432,9 +432,9 @@ class ResolutionRequestQueue:
         """
         ret = []
         for status, q in self.queues.items():
-            if (RequestStatus.is_executing(status) or
-                RequestStatus.is_finished(status) or 
-                RequestStatus.is_exception(status)):
+            if (ReqStatus.is_executing(status) or
+                ReqStatus.is_finished(status) or 
+                ReqStatus.is_exception(status)):
                 continue
             ret.extend(list(q.values()))
         return ret
@@ -479,15 +479,15 @@ class ResolutionRequestQueue:
             req = self.reqs_mapping[req_id]
             self.queues[req.status].pop(req_id)
 
-            if not RequestStatus.is_finished(req.status):
+            if not ReqStatus.is_finished(req.status):
                 self._num_unfinished_normal_reqs -= 1
 
     
     def update_reqs_status(
         self, 
         reqs_dict: RequestDictType,
-        prev_status: RequestStatus,
-        next_status: RequestStatus,
+        prev_status: ReqStatus,
+        next_status: ReqStatus,
     ):
         """Update requests' status from prev_status to next_status.
 
@@ -497,8 +497,8 @@ class ResolutionRequestQueue:
 
         Args:
             reqs_dict (RequestDictType): Req_id -> req
-            prev_status (RequestStatus): Previous status
-            next_status (RequestStatus): Next status
+            prev_status (ReqStatus): Previous status
+            next_status (ReqStatus): Next status
         """
         prev_que = self._get_queue_by_status(prev_status)
         next_que = self._get_queue_by_status(next_status)
@@ -509,7 +509,7 @@ class ResolutionRequestQueue:
             req.status = next_status
         
         # If requests are finished, decrease counting
-        if RequestStatus.is_finished(next_status):
+        if ReqStatus.is_finished(next_status):
             num = len(reqs_dict)
             self._num_unfinished_normal_reqs -= num
     
@@ -517,7 +517,7 @@ class ResolutionRequestQueue:
     def update_all_waiting_reqs_to_prepare(self) -> None:
         """Update all waiting reqs to prepare status."""
         for req_id in self.waiting:
-            self.reqs_mapping[req_id].status = RequestStatus.PREPARE
+            self.reqs_mapping[req_id].status = ReqStatus.PREPARE
             self.prepare[req_id] = self.waiting[req_id]
         self.waiting.clear()
     

@@ -10,7 +10,7 @@ from sduss.config import SchedulerConfig, ParallelConfig, EngineConfig
 from sduss.logger import init_logger
 
 from .policy import PolicyFactory
-from .wrappers import Request, RequestStatus, SchedulerOutput, ResolutionRequestQueue
+from .wrappers import Request, ReqStatus, SchedulerOutput, ResolutionRequestQueue
 
 if TYPE_CHECKING:
     from .wrappers import SchedulerOutputReqsType
@@ -179,26 +179,26 @@ class Scheduler:
         sche_reqs: "SchedulerOutputReqsType" = scheduler_output.scheduled_requests
 
         next_status = self._get_next_status(sche_status)
-        if sche_status == RequestStatus.WAITING:
+        if sche_status == ReqStatus.WAITING:
             if scheduler_output.update_all_waiting_reqs:
                 # Don't update twice
                 return 
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
-        elif sche_status == RequestStatus.PREPARE:
+        elif sche_status == ReqStatus.PREPARE:
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
             # The real remaining step may not be initial parameter
             self._update_remain_steps(reqs_steps_dict=output.reqs_steps_dict)
             return 
-        elif sche_status == RequestStatus.DENOISING:
+        elif sche_status == ReqStatus.DENOISING:
             # More steps done
             # may or may not move to post stage
             denoising_complete_reqs = self._decrease_one_step(sche_reqs)
             if len(denoising_complete_reqs) > 0:
                 self._update_reqs_to_next_status(prev_status=sche_status, 
-                                                  next_status=RequestStatus.POSTPROCESSING, 
+                                                  next_status=ReqStatus.POSTPROCESSING, 
                                                   reqs=denoising_complete_reqs)
             return 
-        elif sche_status == RequestStatus.POSTPROCESSING:
+        elif sche_status == ReqStatus.POSTPROCESSING:
             # finished reqs should be freed by calls to `free_finished_reqs`
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
             # create finish timestamp
@@ -244,12 +244,12 @@ class Scheduler:
             self._update_all_waiting_reqs()
         # 0.3 If we have overlapped reqs, update their status
         if scheduler_output.has_prepare_requests():
-            self._update_reqs_to_next_status(prev_status=RequestStatus.PREPARE, 
-                                             next_status=RequestStatus.EXECUTING,
+            self._update_reqs_to_next_status(prev_status=ReqStatus.PREPARE, 
+                                             next_status=ReqStatus.EXECUTING,
                                              reqs=scheduler_output.prepare_requests)
         if overlapped_prepare_output is not None:
-            self._update_reqs_to_next_status(prev_status=RequestStatus.EXECUTING,
-                                            next_status=RequestStatus.DENOISING,
+            self._update_reqs_to_next_status(prev_status=ReqStatus.EXECUTING,
+                                            next_status=ReqStatus.DENOISING,
                                             reqs=overlapped_prepare_sche_opt.prepare_requests)
             self._update_remain_steps(reqs_steps_dict=overlapped_prepare_output.reqs_steps_dict)
 
@@ -257,16 +257,16 @@ class Scheduler:
         # 1. Process output from previous round.
         if prev_scheduler_output is not None:
             prev_sche_status = prev_scheduler_output.status
-            if prev_sche_status == RequestStatus.EMPTY:
+            if prev_sche_status == ReqStatus.EMPTY:
                 pass
-            elif prev_sche_status == RequestStatus.WAITING:
+            elif prev_sche_status == ReqStatus.WAITING:
                 pass
-            elif prev_sche_status == RequestStatus.PREPARE:
+            elif prev_sche_status == ReqStatus.PREPARE:
                 # update remain steps is done at step 0, nothing more to do here.
                 pass
-            elif prev_sche_status == RequestStatus.DENOISING:
+            elif prev_sche_status == ReqStatus.DENOISING:
                 pass
-            elif prev_sche_status == RequestStatus.POSTPROCESSING:
+            elif prev_sche_status == ReqStatus.POSTPROCESSING:
                 assert postprocessing_output is not None
                 # create finish timestamp
                 current_timestamp = time.time()
@@ -280,26 +280,26 @@ class Scheduler:
         # 2. To ensure consistency, reqs in this round must be updated.
         sche_status = scheduler_output.status
         sche_reqs: "SchedulerOutputReqsType" = scheduler_output.scheduled_requests
-        if sche_status == RequestStatus.EMPTY:
+        if sche_status == ReqStatus.EMPTY:
             # Since nothing to do, we return directly.
             return finished_reqs
 
         next_status = self._get_next_status(sche_status)
-        if sche_status == RequestStatus.WAITING:
+        if sche_status == ReqStatus.WAITING:
             if not scheduler_output.update_all_waiting_reqs:
                 # Don't update twice
                 self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
-        elif sche_status == RequestStatus.PREPARE:
+        elif sche_status == ReqStatus.PREPARE:
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
-        elif sche_status == RequestStatus.DENOISING:
+        elif sche_status == ReqStatus.DENOISING:
             # More steps done
             # Some reqs may need move to post stage
             denoising_complete_reqs = self._decrease_one_step(sche_reqs)
             if len(denoising_complete_reqs) > 0:
                 self._update_reqs_to_next_status(prev_status=sche_status, 
-                                                  next_status=RequestStatus.POSTPROCESSING, 
+                                                  next_status=ReqStatus.POSTPROCESSING, 
                                                   reqs=denoising_complete_reqs)
-        elif sche_status == RequestStatus.POSTPROCESSING:
+        elif sche_status == ReqStatus.POSTPROCESSING:
             # finished reqs should be freed by calls to `free_finished_reqs`
             self._update_reqs_to_next_status(prev_status=sche_status, next_status=next_status, reqs=sche_reqs)
         else:
@@ -341,14 +341,14 @@ class Scheduler:
             self.request_pool[i][res] = ResolutionRequestQueue(res)
 
     
-    def _get_next_status(self, prev_status: RequestStatus) -> RequestStatus:
-        return RequestStatus.get_next_status(prev_status)
+    def _get_next_status(self, prev_status: ReqStatus) -> ReqStatus:
+        return ReqStatus.get_next_status(prev_status)
         
     
     def _update_reqs_to_next_status(
         self, 
-        prev_status: RequestStatus, 
-        next_status: RequestStatus, 
+        prev_status: ReqStatus, 
+        next_status: ReqStatus, 
         reqs: "SchedulerOutputReqsType",
     ):
         # Update resolution by resolution
@@ -372,7 +372,7 @@ class Scheduler:
         for res, reqs_dict in reqs.items():
             for req_id, req in reqs_dict.items():
                 # Prepare stage has been updated to denoising, it's safe to do so
-                assert req.status == RequestStatus.DENOISING
+                assert req.status == ReqStatus.DENOISING
                 req.remain_steps -= 1
                 if req.remain_steps == 0:
                     # add to complete reqs dict

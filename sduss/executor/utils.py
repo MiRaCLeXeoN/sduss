@@ -1,7 +1,9 @@
 import uuid
+import asyncio
 
 from typing import TYPE_CHECKING
-from .wrappers import EngineOutput
+
+from .wrappers import TaskOutput
 
 if TYPE_CHECKING:
     import torch.multiprocessing as mp
@@ -22,7 +24,7 @@ class Task:
         self.need_res = need_res
 
 
-class EngineMainLoop:
+class ExecutorMainLoop:
     """
     If executed method return None, mail loop won't add it
     to the output queue. So please make sure method's return value.
@@ -36,9 +38,26 @@ class EngineMainLoop:
         self.task_queue = task_queue
         self.output_queue = output_queue
 
-        self.engine = worker_init_fn()
+        self.worker = worker_init_fn()
+
+        self.new_reqs_event = asyncio.Event()
+        self._background_loop_unshield = asyncio.get_event_loop().create_task()
 
         self._main_loop()
+    
+    
+    async def _schedule_loop(self):
+        have_reqs = False
+        while True:
+            if not have_reqs:
+                await self.new_reqs_event.wait()
+            worker_output = self.worker.step()
+            if worker_output is not None:
+                self.output_queue.put(worker_output)
+            
+
+                
+            
     
     
     def _main_loop(self):

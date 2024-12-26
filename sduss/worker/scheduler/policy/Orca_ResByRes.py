@@ -2,7 +2,7 @@ import time
 
 from typing import Dict, List, TYPE_CHECKING
 
-from sduss.dispatcher.wrappers import ResolutionRequestQueue, RequestStatus
+from sduss.dispatcher.wrappers import ResolutionRequestQueue, ReqStatus
 
 from .policy import Policy
 from ..wrappers import SchedulerOutput
@@ -56,13 +56,13 @@ class OrcaResByRes(Policy):
             # No reqs to schedule
             return SchedulerOutput(
                 scheduled_requests={},
-                status=RequestStatus.EMPTY,
+                status=ReqStatus.EMPTY,
             )
     
         # 2. Get reqs in this resolution to run
         resolution_queue = self.request_pool[res]
         # 2.1 Schedule non-denoising reqs if avaiable
-        for status in [RequestStatus.WAITING, RequestStatus.PREPARE, RequestStatus.POSTPROCESSING]:
+        for status in [ReqStatus.WAITING, ReqStatus.PREPARE, ReqStatus.POSTPROCESSING]:
             scheduled_reqs = resolution_queue.get_all_reqs_by_status(status)
             if len(scheduled_reqs) > 0:
                 scheduled_status = status
@@ -72,11 +72,11 @@ class OrcaResByRes(Policy):
                 )
         # 2.2 Otherwise schedule denoising reqs.
         now = time.time()
-        scheduled_reqs = resolution_queue.get_all_reqs_by_status(RequestStatus.DENOISING)
+        scheduled_reqs = resolution_queue.get_all_reqs_by_status(ReqStatus.DENOISING)
         # Always schedule the oldest reqs
         scheduled_reqs.sort(key=lambda req: now - req.arrival_time, reverse=True)
         scheduled_reqs = scheduled_reqs[:max_num]  # It's OK to be OOR(out of range)
-        status = RequestStatus.DENOISING
+        status = ReqStatus.DENOISING
         
         return SchedulerOutput(
             scheduled_requests=convert_list_to_res_dict(scheduled_reqs),

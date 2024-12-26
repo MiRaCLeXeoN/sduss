@@ -1,35 +1,21 @@
 import asyncio
 import time
 import sys
-import multiprocessing
-
-import ray
 
 from typing import (List, Any, Optional, TYPE_CHECKING, Type, Tuple, Dict,
                     AsyncGenerator, Set, Iterable, Union)
 from functools import partial
-from datetime import datetime
-
-from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from sduss.logger import init_logger
 from sduss.config import (PipelineConfig, ParallelConfig, 
                           SchedulerConfig, EngineConfig)
 from sduss.entrypoints.wrappers import ReqOutput
-from sduss.worker import WorkerOutput
 from sduss.executor.ray_executor import ray_initialize_cluster
 from sduss.model_executor.sampling_params import BaseSamplingParams
-from sduss.dispatcher import RequestStatus
 
-from .engine import Engine
 from .arg_utils import AsyncEngineArgs
 from .utils import AsyncEngineDeadError
-from .async_engine_wrappers import _AsyncEngine, _MpAsyncEngine
-
-if TYPE_CHECKING:
-    import ray
-    from ray.util.placement_group import PlacementGroup
-    from sduss.executor.ray_executor import RayExecutor
+from .async_engine_wrappers import _MpAsyncEngine
 
 logger = init_logger(__name__)
 
@@ -233,8 +219,6 @@ class RequestTracker:
 
 class AsyncEngine:
 
-    _engine_class: Type[_AsyncEngine] = _AsyncEngine
-    
     def __init__(
         self,
         pipeline_config: PipelineConfig,
@@ -261,10 +245,7 @@ class AsyncEngine:
             **kwargs
         )
 
-        if self.engine_config.engine_use_ray:
-            ray.get(self.engine.engine_is_ready.remote())
-        elif self.engine_config.engine_use_mp:
-            self.engine.get_result("engine_is_ready")
+        self.engine.execute_method("engine_is_ready", True)
 
         # Asyncio loop
         # We need to keep a reference to unshielded
@@ -283,25 +264,8 @@ class AsyncEngine:
             sys.stdout.flush()
 
 
-    def _init_engine(self, *args, **kwargs) -> Union[_AsyncEngine, "ray.ObjectRef"]:
-
-        if self.engine_config.engine_use_mp:
-            engine_class = _MpAsyncEngine
-        elif self.engine_config.engine_use_ray:
-            # We must use num_cpus=0 to allow free actor scheduling in ray.
-            # This doesn't imply that we will not be allocated CPUs to.
-            cpu_pg = kwargs["cpu_pg"]
-            engine_class = ray.remote(
-                                num_cpus=1,
-                                num_gpus=0,
-                                scheduling_strategy=PlacementGroupSchedulingStrategy(
-                                    placement_group=cpu_pg,
-                                    placement_group_bundle_index=0,
-                                    placement_group_capture_child_tasks=True,
-                                )
-                            )(self._engine_class).remote
-        else:
-            engine_class = self._engine_class
+    def _init_engine(self, *args, **kwargs) -> 'Union[_MpAsyncEngine]':
+        engine_class = _MpAsyncEngine
         return engine_class(*args, **kwargs)
         
 
@@ -322,36 +286,22 @@ class AsyncEngine:
         new_requsts_params, finished_request_ids = (
             self._request_tracker.get_new_and_finished_requests())
         
-        # Add request batch
-        if self.engine_config.engine_use_ray:
-            await self.engine.add_request_batch.remote(new_requsts_params)
-        elif self.engine_config.engine_use_mp:
-            await self.engine.execute_method("add_request_batch", new_requsts_params)
-        else:
-            self.engine.add_request_batch(new_requsts_params)
+        # Add requests
+        self.engine.execute_method("add_requests", False, new_requsts_params)
         
-        # Finished requests are automatically released. Don't re-abort.
-        # if finished_request_ids:
-        #     await self._engine_abort_reqs(finished_request_ids)
-        
-        if self.engine_config.engine_use_ray:
-            request_outputs = await self.engine.step.remote()
-        elif self.engine_config.engine_use_mp:
-            request_outputs = await self.engine.execute_method("step")
-        else:
-            request_outputs = await self.engine.step_async()
+        # Peek at output if there is any
+        engine_output = self.engine.execute_method("step", True).output
+            
+        # Only process the output when we have valid ones
+        request_outputs = engine_output.request_outputs
+        if request_outputs is not None:
+            # Put the outputs into the corresponding streams.
+            for request_output in request_outputs:
+                self._request_tracker.process_request_output(
+                    request_output, verbose=self.engine_config.log_requests)
 
-        # Put the outputs into the corresponding streams.
-        for request_output in request_outputs:
-            self._request_tracker.process_request_output(
-                request_output, verbose=self.engine_config.log_requests)
+        has_unfinished_reqs = engine_output.has_unfinished_reqs
 
-        if self.engine_config.engine_use_ray:
-            has_unfinished_reqs = await self.engine.has_unfinished_normal_requests.remote()
-        elif self.engine_config.engine_use_mp:
-            has_unfinished_reqs = await self.engine.execute_method("has_unfinished_normal_requests")
-        else:
-            has_unfinished_reqs = self.engine.has_unfinished_normal_requests()
         return has_unfinished_reqs
     
 
@@ -363,7 +313,7 @@ class AsyncEngine:
                 await self._request_tracker.wait_for_new_requests()
             has_requests_in_progress = await self.engine_step()
             # Try to cede control to other coroutines, like adding new reqs
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.05)
 
     
     def start_background_loop(self) -> None:
@@ -420,7 +370,7 @@ class AsyncEngine:
                 yield request_output
         except (Exception, asyncio.CancelledError) as e:
             # If there is an exception or coroutine is cancelled, abort the request.
-            self._abort_req(request_id)
+            self.abort_requests([request_id])
             raise e
         
 
@@ -431,19 +381,10 @@ class AsyncEngine:
         start_engine_loop: bool = True
     ) -> "AsyncEngine":
         """Creates an AsyncEngine from the engine arguments."""
-        kwargs = {}
 
         # Create the engine configs.
         (pipeline_config, parallel_config, scheduler_config, 
          engine_config) = engine_args.create_engine_configs()
-
-
-        if engine_config.engine_use_ray:
-            # Initialize the cluster.
-            gpu_pg, cpu_pg = ray_initialize_cluster(
-                parallel_config, scheduler_config, engine_config.engine_use_ray)
-            kwargs["gpu_pg"] = gpu_pg
-            kwargs["cpu_pg"] = cpu_pg
 
         # Create the async LLM engine.
         engine = cls(
@@ -452,12 +393,11 @@ class AsyncEngine:
             scheduler_config,
             engine_config,
             start_engine_loop=start_engine_loop,
-            **kwargs
         )
         return engine
     
     
-    async def abort_req(self, request_id: int) -> None:
+    async def abort_requests(self, request_ids: List[int]) -> None:
         """Abort a request.
 
         Abort a submitted request. If the request is finished or not found,
@@ -472,36 +412,12 @@ class AsyncEngine:
                 "inspect the output to find the stacktrace of the "
                 "error that caused the background loop to stop "
                 "(AsyncEngineDeadError).")
-
-        return self._abort_req(request_id)
-
-    
-    def _abort_req(self, request_id: int) -> None:
-        """Abort a request.
-
-        Abort a submitted request. If the request is finished or not found,
-        this method will be a no-op.
-
-        Args:
-            request_id: The unique id of the request.
-        """
-        self._request_tracker.abort_request(request_id,
-                                            verbose=self.engine_config.log_requests)
         
-    
-    async def _engine_abort_reqs(self, request_ids: Iterable[int]):
-        if self.engine_config.engine_use_ray:
-            await self.engine.abort_requests.remote(request_ids)
-        elif self.engine_config.engine_use_mp:
-            await self.engine.execute_method("abort_requests", request_ids)
-        else:
-            self.engine.abort_requests(request_ids)
+        if not isinstance(request_ids, list):
+            request_ids = [request_ids]
 
-    
+        self.engine.execute_method("abort_requests", False, request_ids)
+
+
     async def clear(self):
-        if self.engine_config.engine_use_ray:
-            await self.engine.clear.remote()
-        elif self.engine_config.engine_use_mp:
-            await self.engine.execute_method("clear")
-        else:
-            self.engine.clear()
+        self.engine.execute_method("clear", True)

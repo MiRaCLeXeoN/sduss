@@ -3,7 +3,7 @@ import time
 from typing import List, TYPE_CHECKING
 
 from .policy import Policy
-from ..wrappers import SchedulerOutput, RequestStatus
+from ..wrappers import SchedulerOutput, ReqStatus
 
 if TYPE_CHECKING:
     from sduss.dispatcher import Request
@@ -44,7 +44,7 @@ class FCFS_Single(Policy):
         if len(flattened_reqs) == 0:
             return SchedulerOutput(
                 scheduled_requests={},
-                status=RequestStatus.WAITING,
+                status=ReqStatus.WAITING,
             )
 
         # Find the oldest request

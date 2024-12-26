@@ -4,7 +4,7 @@ import time
 from typing import Optional, List, Dict, Union, TYPE_CHECKING
 
 import torch
-import torch.distributed
+import torch.distributed as dist
 
 from .model_runner import ModelRunner
 from .wrappers import WorkerOutput, WorkerRequest
@@ -13,6 +13,8 @@ from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig, Engine
 from sduss.model_executor import set_random_seed, get_pipeline_cls
 from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
 from sduss.logger import init_logger
+
+from .scheduler import scheduler
 
 if TYPE_CHECKING:
     from .wrappers import WorkerRequestDictType
@@ -118,6 +120,10 @@ class Worker:
         self.model_runner.load_model()
         self.scheduler = Dispatcher(self.scheduler_config, self.parallel_config, 
                                    self.engine_config, self.model_runner.pipeline.SUPPORT_RESOLUTIONS)
+                                
+    
+    def step(self) -> Optional[WorkerOutput]:
+        pass
     
 
     def add_request(self, req_id: int, wr: WorkerRequest):
@@ -182,7 +188,7 @@ class Worker:
         # 3. Create return wrapper
         return WorkerOutput(
             worker_reqs=worker_reqs, 
-            status=RequestStatus.PREPARE,
+            status=ReqStatus.PREPARE,
             start_time=start_time,
             end_time=end_time,
             is_from_prepare_worker=self.is_prepare_worker,
@@ -257,7 +263,7 @@ class Worker:
         # Create output
         output = WorkerOutput(
             worker_reqs=worker_reqs_dict, 
-            status=RequestStatus.POSTPROCESSING,
+            status=ReqStatus.POSTPROCESSING,
             start_time=start_time,
             end_time=end_time,
         )
@@ -295,6 +301,10 @@ class Worker:
         # Reset the seed to ensure that the random state is not affected by
         # the model initialization and profiling.
         set_random_seed(self.pipeline_config.seed)
+    
+    
+    def clear(self) -> None:
+        dist.destroy_process_group()
 
     
 def _init_distributed_environment(
@@ -326,10 +336,10 @@ def _init_distributed_environment(
         )
     
     # warmup
-    tensor = torch.ones(1) * rank
-    tensor = tensor.cuda()
-    print(f"[Rank {rank}, device {torch.cuda.current_device()}] Before allreduce: {tensor.item()}")
-    torch.distributed.all_reduce(tensor)
-    print(f"[Rank {rank}, device {torch.cuda.current_device()}] After allreduce: {tensor.item()}")
+    # tensor = torch.ones(1) * rank
+    # tensor = tensor.cuda()
+    # print(f"[Rank {rank}, device {torch.cuda.current_device()}] Before allreduce: {tensor.item()}")
+    # torch.distributed.all_reduce(tensor)
+    # print(f"[Rank {rank}, device {torch.cuda.current_device()}] After allreduce: {tensor.item()}")
     # initialize_model_parallel(parallel_config.tensor_parallel_size,
     #                           parallel_config.pipeline_parallel_size)

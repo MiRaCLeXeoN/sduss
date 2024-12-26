@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-class EngineOutput:
+class TaskOutput:
 
     def __init__(
         self, 

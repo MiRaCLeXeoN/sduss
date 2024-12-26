@@ -5,7 +5,7 @@ class DispatchPolicyFactory:
     
     # map: name -> (cls, support_mixed_precision)
     _POLICY_REGISTRY = {
-        'greedy': (GreedyDispath, False),
+        'greedy': (GreedyDispath, True),
     }
     
     @classmethod

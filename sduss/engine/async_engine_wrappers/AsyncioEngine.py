@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, List, Any
 from functools import partial
 
 from sduss.entrypoints.wrappers import ReqOutput
-from sduss.dispatcher import RequestStatus
+from sduss.dispatcher import ReqStatus
 from sduss.worker import WorkerOutput
 
 from ..engine import Engine
@@ -29,17 +29,17 @@ class _AsyncEngine(Engine):
         scheduler_output, req_ids = self._schedule()
 
         output = None
-        if scheduler_output.status == RequestStatus.WAITING:
+        if scheduler_output.status == ReqStatus.WAITING:
             # Currently, we don't do anything in waiting stage
             pass
-        elif scheduler_output.status == RequestStatus.PREPARE:
+        elif scheduler_output.status == ReqStatus.PREPARE:
             # For prepare stage inference
             output: WorkerOutput = await self._run_workers_blocking_async(
                 "exec_prepare_stage", 
                 self.workers,
                 scheduler_reqs=scheduler_output.get_reqs_as_list(),
                 use_mixed_precision=self.scheduler_config.use_mixed_precision)
-        elif scheduler_output.status == RequestStatus.DENOISING:
+        elif scheduler_output.status == ReqStatus.DENOISING:
             # For denoising stage inference
             await self._run_workers_blocking_async(
                 "exec_denoising_stage", 
@@ -48,7 +48,7 @@ class _AsyncEngine(Engine):
                 use_mixed_precision=self.scheduler_config.use_mixed_precision,
                 is_sliced=scheduler_output.is_sliced,
                 patch_size=scheduler_output.patch_size)
-        elif (scheduler_output.status == RequestStatus.POSTPROCESSING):
+        elif (scheduler_output.status == ReqStatus.POSTPROCESSING):
             # For post stage inference
             output: WorkerOutput = await self._run_workers_blocking_async(
                 "exec_post_stage",
@@ -85,7 +85,7 @@ class _AsyncEngine(Engine):
         # 3. Schedule prepare if prepare reqs available
         if scheduler_output.has_prepare_requests():
             # We don't expect prepare stage if we have overlapped prepare-requests to process
-            assert scheduler_output.status != RequestStatus.PREPARE
+            assert scheduler_output.status != ReqStatus.PREPARE
             self.prev_prepare_handlers = await self._run_workers_nonblocking_async(
                 "exec_prepare_stage", 
                 self.prepare_workers,
@@ -93,7 +93,7 @@ class _AsyncEngine(Engine):
                 use_mixed_precision=self.scheduler_config.use_mixed_precision)
 
         # 4. Issue tasks to workers
-        if scheduler_output.status == RequestStatus.WAITING:
+        if scheduler_output.status == ReqStatus.WAITING:
             # Currently, we don't do anything in waiting stage
             if prepare_output is not None:
                 # We don't need to preserve the handlers
@@ -102,7 +102,7 @@ class _AsyncEngine(Engine):
                     self.workers,
                     prepare_output=prepare_output,
                 )
-        elif scheduler_output.status == RequestStatus.PREPARE:
+        elif scheduler_output.status == ReqStatus.PREPARE:
             # Only when there is no denoising or postprocessing reqs running will
             # prepare stage be scheduled.
             if prepare_output is not None:
@@ -118,7 +118,7 @@ class _AsyncEngine(Engine):
                 self.prepare_workers,
                 scheduler_reqs=scheduler_output.get_reqs_as_list(),
                 use_mixed_precision=self.scheduler_config.use_mixed_precision)
-        elif scheduler_output.status == RequestStatus.DENOISING:
+        elif scheduler_output.status == ReqStatus.DENOISING:
             # For denoising stage inference
             # transfer prepare result from previous round to worker
             self.prev_denoising_handlers = await self._run_workers_nonblocking_async(
@@ -129,7 +129,7 @@ class _AsyncEngine(Engine):
                 is_sliced=scheduler_output.is_sliced,
                 patch_size=scheduler_output.patch_size,
                 prepare_output=prepare_output,)
-        elif scheduler_output.status == RequestStatus.POSTPROCESSING:
+        elif scheduler_output.status == ReqStatus.POSTPROCESSING:
             # For post stage inference
             self.prev_postprocessing_handlers = await self._run_workers_nonblocking_async(
                 "exec_post_stage",
