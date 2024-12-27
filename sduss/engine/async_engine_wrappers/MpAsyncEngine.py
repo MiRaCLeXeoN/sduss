@@ -47,7 +47,7 @@ class _MpAsyncEngine:
         return task
 
     
-    async def _wait_task(self, task) -> 'EngineOutput':
+    def _wait_task_output(self, task) -> 'EngineOutput':
         """Wait until the specified task is finished, and return its result.
         
         Warn:
@@ -83,6 +83,8 @@ class _MpAsyncEngine:
         task = self._add_task(method, need_res, method_args, method_kwargs)
         if need_res:
             # Then we explicitly wait until the result is returned
-            return asyncio.get_event_loop().run_until_complete(self._wait_task(task))
+            return asyncio.get_event_loop().run_until_complete(
+                asyncio.get_event_loop().run_in_executor(self.thread_executor, self._wait_task_output(task))
+            )
         else:
             return None

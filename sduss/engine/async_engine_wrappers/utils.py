@@ -1,6 +1,9 @@
 import uuid
+import asyncio
 
 from typing import TYPE_CHECKING
+from concurrent.futures import ThreadPoolExecutor
+
 from .wrappers import EngineOutput
 
 if TYPE_CHECKING:
@@ -38,22 +41,27 @@ class EngineMainLoop:
 
         self.engine = worker_init_fn()
 
-        self._main_loop()
+        self.thread_pool = ThreadPoolExecutor(max_workers=1)
+
+        # We must run the main loop in asyncio
+        asyncio.get_event_loop().run_until_complete(self._main_loop())
+    
+    def _get_task(self):
+        return self.task_queue.get()
     
     
-    def _main_loop(self):
+    async def _main_loop(self):
         while True:
-            task: Task = self.task_queue.get()
+            task: Task = await asyncio.get_event_loop().run_in_executor(self.thread_pool, self._get_task)
             method_name = task.method
 
             # Execute method
             try:
                 handler = getattr(self.engine, method_name)
                 output = handler(*task.args, **task.kwargs)
+                engine_output = EngineOutput(task.id, output, True, None)
             except Exception as e:
                 engine_output = EngineOutput(task.id, None, False, e)
-            finally:
-                engine_output = EngineOutput(task.id, output, True, None)
 
             if task.need_res:
                 self.output_queue.put(engine_output)
@@ -61,3 +69,5 @@ class EngineMainLoop:
             # If to exit
             if method_name == "clear":
                 break
+
+            asyncio.sleep(0)

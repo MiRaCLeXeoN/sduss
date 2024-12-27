@@ -1,5 +1,6 @@
 import uuid
 import asyncio
+import queue    
 
 from typing import TYPE_CHECKING
 
@@ -12,7 +13,6 @@ class Task:
     def __init__(
         self,
         method_name: str,
-        need_res: bool,
         *args,
         **kwargs,
     ):
@@ -21,7 +21,6 @@ class Task:
         self.args = args
         self.kwargs = kwargs
         self.id = uuid.uuid4().int
-        self.need_res = need_res
 
 
 class ExecutorMainLoop:
@@ -33,17 +32,19 @@ class ExecutorMainLoop:
         self,
         task_queue: 'mp.Queue',
         output_queue: 'mp.Queue',
+        task_res_queue: 'mp.Queue',
         worker_init_fn,
     ):
         self.task_queue = task_queue
         self.output_queue = output_queue
+        self.task_res_queue = task_res_queue
 
         self.worker = worker_init_fn()
 
         self.new_reqs_event = asyncio.Event()
-        self._background_loop_unshield = asyncio.get_event_loop().create_task()
+        asyncio.get_event_loop().run_until_complete(self._main_loop())
 
-        self._main_loop()
+        # TODO: Try separate main loop and schedule loop
     
     
     async def _schedule_loop(self):
@@ -51,32 +52,47 @@ class ExecutorMainLoop:
         while True:
             if not have_reqs:
                 await self.new_reqs_event.wait()
-            worker_output = self.worker.step()
+            self.new_reqs_event.clear()
+            worker_output, have_reqs = self.worker.step()
             if worker_output is not None:
-                self.output_queue.put(worker_output)
-            
+                self.output_queue.put(TaskOutput(None, worker_output, True, None))
+            asyncio.sleep(0)
 
-                
-            
+    
+    def _process_task(self, task: Task):
+        method_name = task.method
+
+        # Execute method
+        try:
+            handler = getattr(self.worker, method_name)
+            output = handler(*task.args, **task.kwargs)
+            task_output = TaskOutput(task.id, output, True, None)
+        except Exception as e:
+            task_output = TaskOutput(task.id, None, False, e)
+        
+        # if method_name == "add_requests":
+        #     self.new_reqs_event.set()
+        
+        return task_output
     
     
-    def _main_loop(self):
+    async def _main_loop(self):
+        # FIXME: If we execute this, when will background loop be executed?
         while True:
-            task: Task = self.task_queue.get()
-            method_name = task.method
-
-            # Execute method
+            # 1. Check if there is task to do
             try:
-                handler = getattr(self.engine, method_name)
-                output = handler(*task.args, **task.kwargs)
-            except Exception as e:
-                engine_output = EngineOutput(task.id, None, False, e)
-            finally:
-                engine_output = EngineOutput(task.id, output, True, None)
+                task: Task = self.task_queue.get_nowait()
+            except queue.Empty:
+                task = None
+            if task is not None:
+                if task.method == "shutdown":
+                    break
 
-            if task.need_res:
-                self.output_queue.put(engine_output)
+                task_output = self._process_task(task)
+                self.task_res_queue.put(task_output)
+                # If to exit
             
-            # If to exit
-            if method_name == "clear":
-                break
+            # 2. One schedule step
+            worker_output, have_reqs = self.worker.step()
+            if worker_output is not None:
+                self.output_queue.put(TaskOutput(None, worker_output, True, None))
