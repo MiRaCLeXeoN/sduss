@@ -1,20 +1,20 @@
 import os
 import time
 
-from typing import Optional, List, Dict, Union, TYPE_CHECKING
+from typing import Optional, List, Dict, Union, TYPE_CHECKING, Any
 
 import torch
 import torch.distributed as dist
 
-from .model_runner import ModelRunner
-from .wrappers import WorkerOutput, WorkerRequest
+from sduss.dispatcher import Request
 from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig, EngineConfig
-
 from sduss.model_executor import set_random_seed, get_pipeline_cls
 from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
 from sduss.logger import init_logger
 
-from .scheduler import scheduler
+from .scheduler import Scheduler
+from .model_runner import ModelRunner
+from .wrappers import WorkerOutput, WorkerRequest
 
 if TYPE_CHECKING:
     from .wrappers import WorkerRequestDictType
@@ -65,7 +65,7 @@ class Worker:
         self.request_pool: Dict[int, WorkerRequest] = {} 
 
         self.model_runner = ModelRunner(pipeline_config, parallel_config, scheduler_config, is_prepare_worker)
-        self.scheduler: Dispatcher = None
+        self.scheduler: Scheduler = Scheduler()
 
         # compute local_rank, rank wrt current machine
         num_gpus = torch.cuda.device_count()
@@ -126,9 +126,8 @@ class Worker:
         pass
     
 
-    def add_request(self, req_id: int, wr: WorkerRequest):
-        assert req_id not in self.request_pool
-        self.request_pool[req_id] = wr
+    def add_requests(self, req_ids: List[int], req_sps: List[Any]):
+        pass
     
     
     def remove_requests_by_id(self, req_ids: Union[int, List[int]]):

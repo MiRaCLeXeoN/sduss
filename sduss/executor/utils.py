@@ -90,13 +90,15 @@ class ExecutorMainLoop:
     async def _main_loop(self):
         while True:
             task: Task = await asyncio.get_event_loop().run_in_executor(self.thread_pool, self.task_queue.get)
-            if task is not None:
-                # If to exit
-                if task.method == "shutdown":
-                    self.schedule_loop.cancel()
-                    break
+            # If to exit
+            if task.method == "shutdown":
+                self.schedule_loop.cancel()
+                break
 
-                task_output = self._process_task(task)
+            task_output = self._process_task(task)
+            # Even if the caller doesn't need result, we still return an output if
+            # there is an exception
+            if task.need_res or task_output.exception is not None:
                 self.task_res_queue.put(task_output)
             await asyncio.sleep(0)
             

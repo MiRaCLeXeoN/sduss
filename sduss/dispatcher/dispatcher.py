@@ -70,6 +70,7 @@ class Dispatcher:
         
     
     def dispatch(self) -> DispatcherResultType:
+        # ! Attributes of the reqeusts should be modified by the call to `dispatch_requests`
         dispatched_reqs = self.policy.dispatch_requests()
         self.request_pool.update_requests(sum(dispatched_reqs.values(), []))
         return dispatched_reqs

@@ -3,7 +3,7 @@ import time
 from typing import List, TYPE_CHECKING
 
 from .policy import Policy
-from ..wrappers import SchedulerOutput, ReqStatus
+from ..wrappers import SchedulerOutput, WorkerReqStatus
 
 if TYPE_CHECKING:
     from sduss.dispatcher import Request
@@ -44,7 +44,7 @@ class FCFS_Single(Policy):
         if len(flattened_reqs) == 0:
             return SchedulerOutput(
                 scheduled_requests={},
-                status=ReqStatus.WAITING,
+                status=WorkerReqStatus.WAITING,
             )
 
         # Find the oldest request
@@ -77,13 +77,3 @@ class FCFS_Single(Policy):
             scheduled_requests=ret,
             status=target_status,
         )
-
-
-    def schedule_requests_overlap_prepare(
-        self, 
-        max_num: int, 
-        max_overlapped_prepare_reqs: int,
-        accept_overlap_prepare_reqs: bool,
-    ) -> SchedulerOutput:
-        """Schedule requests with overlapped preapre stage."""
-        raise NotImplementedError

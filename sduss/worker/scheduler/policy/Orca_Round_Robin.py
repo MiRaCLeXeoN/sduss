@@ -107,13 +107,3 @@ class OrcaRoundRobin(Policy):
             scheduled_requests=convert_list_to_res_dict(scheduled_reqs),
             status=status,
         )
-
-    
-    def schedule_requests_overlap_prepare(
-        self, 
-        max_num: int, 
-        max_overlapped_prepare_reqs: int,
-        accept_overlap_prepare_reqs: bool,
-    ) -> SchedulerOutput:
-        """Schedule requests with overlapped preapre stage."""
-        raise NotImplementedError

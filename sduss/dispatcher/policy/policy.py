@@ -13,4 +13,11 @@ class DispatchPolicy(ABC):
 
     @abstractmethod
     def dispatch_requests(self) -> 'Dict[int, List[Request]]':
+        """Dispatch reqs to different dp ranks
+
+
+        Returns:
+            The dict may not include all dp ranks.
+        """
+        # ! The attributes of requests must be updated inside this call
         raise NotImplementedError("You must implemente this method in the derived class.")

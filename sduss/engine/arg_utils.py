@@ -36,7 +36,6 @@ class EngineArgs:
         self.use_mixed_precisoin = kwargs.pop("use_mixed_precision", False)
         self.policy = kwargs.pop("policy", "fcfs_single")
         self.overlap_prepare = kwargs.pop("overlap_prepare", False)
-        self.max_overlapped_prepare_reqs = kwargs.pop("max_overlapped_prepare_reqs", 32)
         # Engine configs
         self.disable_log_status = kwargs.pop("disable_log_status", False)
         self.non_blocking_step = kwargs.pop("non_blocking_step", False)
@@ -236,7 +235,6 @@ class EngineArgs:
             use_mixed_precision=self.use_mixed_precisoin,
             policy=self.policy,
             overlap_prepare=self.overlap_prepare,
-            max_overlapped_prepare_reqs=self.max_overlapped_prepare_reqs,
         )
     
     def get_engine_config(self) -> EngineConfig:

@@ -54,10 +54,13 @@ class MpExecutor:
         self.process.start()
     
 
-    def _add_task(self, method_name, method_args = [], method_kwargs = {}) -> 'Task':
-        task = Task(method_name, *method_args, **method_kwargs)
+    def _add_task(self, method_name, need_res: bool, method_args = [], method_kwargs = {}) -> 'Task':
+        task = Task(method_name, need_res, *method_args, **method_kwargs)
         self.task_queue.put(task)
-        self.task_pool[task.id] = task
+        # We only track a task if it need results
+        # Exceptions cause by this task will be detected by other coroutines, no need to worry
+        if task.need_res:
+            self.task_pool[task.id] = task
         return task
 
 
@@ -95,7 +98,8 @@ class MpExecutor:
         Warn:
             This call will block the whole process!
         """
-        task = self._add_task(method, method_args, method_kwargs)
+        # Sync method must use need_res=True
+        task = self._add_task(method, True, method_args, method_kwargs)
         # Then we explicitly wait until the result is returned, this will block the whole routine!
         return self._wait_task_res_sync(task)
     
@@ -120,12 +124,14 @@ class MpExecutor:
                 target_task.output = task_output.output
                 target_task.is_finished = True
             # Get the result we want
+            del self.task_pool[task.id]
             return task.output
 
 
     def execute_method_async(
         self,
         method: str,
+        need_res: bool,
         *method_args, 
         **method_kwargs,
     ):
@@ -133,10 +139,14 @@ class MpExecutor:
 
         Args:
             method (str): method name
+            need_res (bool): If set false, no handlers will be returned
         """
-        task = self._add_task(method, method_args, method_kwargs)
+        task = self._add_task(method, need_res, method_args, method_kwargs)
         # Then we explicitly wait until the result is returned, this will block the whole routine!
-        return asyncio.get_event_loop().create_task(self._wait_task_res_async(task))
+        if need_res:
+            return asyncio.get_event_loop().create_task(self._wait_task_res_async(task))
+        else:
+            return None
     
     
     def get_output_nowait(self) -> 'List[WorkerOutput]':

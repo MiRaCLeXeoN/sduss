@@ -3,7 +3,7 @@ import time
 from typing import List, TYPE_CHECKING, Dict
 
 from .policy import Policy
-from ..wrappers import SchedulerOutput, ReqStatus
+from ..wrappers import SchedulerOutput, WorkerReqStatus
 from ..utils import find_gcd, convert_list_to_res_dict
 
 
@@ -28,7 +28,7 @@ class FCFS_Mixed(Policy):
         return reqs
     
     
-    def _get_all_reqs_by_status(self, status: "ReqStatus") -> List['Request']:
+    def _get_all_reqs_by_status(self, status: "WorkerReqStatus") -> List['Request']:
         reqs = []
         for resolution_queue in self.request_pool.values():
             reqs.extend(resolution_queue.get_all_reqs_by_status(status))
@@ -50,7 +50,7 @@ class FCFS_Mixed(Policy):
             # No reqs to schedule
             return SchedulerOutput(
                 scheduled_requests={},
-                status=ReqStatus.EMPTY,
+                status=WorkerReqStatus.EMPTY,
             )
 
         # Find the oldest request
@@ -79,7 +79,7 @@ class FCFS_Mixed(Policy):
         is_sliced = None
         patch_size = None
         # Only apply for denoising stage
-        if target_status == ReqStatus.DENOISING:
+        if target_status == WorkerReqStatus.DENOISING:
             if len(res_reqs_dict) > 1:
                 is_sliced = True
                 patch_size = find_gcd(list(res_reqs_dict))
@@ -90,72 +90,6 @@ class FCFS_Mixed(Policy):
         return SchedulerOutput(
             scheduled_requests=res_reqs_dict,
             status=target_status,
-            is_sliced=is_sliced,
-            patch_size=patch_size,
-        )
-
-    
-    def schedule_requests_overlap_prepare(
-        self, 
-        max_num: int, 
-        max_overlapped_prepare_reqs: int,
-        accept_overlap_prepare_reqs: bool,
-    ) -> SchedulerOutput:
-        """Schedule requests with overlapped preapre stage."""
-        flattened_reqs = self._flatten_all_reqs()
-
-        if len(flattened_reqs) == 0:
-            # This condition will appear at the last round of a request
-            # when using non-blocking paradigm.
-            return SchedulerOutput(
-                scheduled_requests={}, 
-                status=ReqStatus.EMPTY,
-            )
-
-        # Find the oldest request
-        now = time.time()
-        flattened_reqs.sort(key = lambda req: now - req.arrival_time, reverse=True)
-        target_req = flattened_reqs[0]
-        target_status = target_req.status
-
-        queue = self._get_all_reqs_by_status(target_status)
-        queue.sort(key=lambda req: now - req.arrival_time, reverse=True)
-
-        res_reqs_dict: Dict[int, Dict[int, Request]] = {}
-        
-        # Collect reqs
-        num_to_collect = max_num
-        while num_to_collect > 0 and queue:
-            req = queue.pop(0)
-            res = req.sampling_params.resolution
-            if res not in res_reqs_dict:
-                res_reqs_dict[res] = {req.request_id : req}
-            else:
-                res_reqs_dict[res][req.request_id] = req
-            num_to_collect -= 1
-        
-        # Mixed precision arguments
-        is_sliced = None
-        patch_size = None
-        # Only apply for denoising stage
-        if target_status == ReqStatus.DENOISING:
-            if len(res_reqs_dict) > 1:
-                is_sliced = True
-                patch_size = find_gcd(list(res_reqs_dict))
-            else:
-                is_sliced = False
-                patch_size = list(res_reqs_dict.keys())[0]
-        
-        # Get overlapped prepare requests if current stage is not prepare
-        prepare_requests = None
-        if target_status != ReqStatus.PREPARE and accept_overlap_prepare_reqs:
-            _prepare_reqs = self._get_all_reqs_by_status(ReqStatus.PREPARE)
-            prepare_requests = convert_list_to_res_dict(_prepare_reqs, max_overlapped_prepare_reqs)
-        
-        return SchedulerOutput(
-            scheduled_requests=res_reqs_dict,
-            status=target_status,
-            prepare_requests=prepare_requests,
             is_sliced=is_sliced,
             patch_size=patch_size,
         )

@@ -4,6 +4,7 @@ import datetime
 import sys
 import logging
 import traceback
+import asyncio
 
 from typing import Optional, Union, List, Any, Tuple, Dict, TYPE_CHECKING, Iterable
 from functools import partial
@@ -27,7 +28,6 @@ if TYPE_CHECKING:
 
 logger = init_logger(__name__)
 
-_LOGGING_INTERVAL_SEC = 5
 
 def worker_init_fn(
         model_config, parallel_config, scheduler_config, engine_config, 
@@ -37,6 +37,7 @@ def worker_init_fn(
     return Worker(model_config, parallel_config, scheduler_config, 
                     engine_config, rank=rank, device=device, is_prepare_worker=is_prepare_worker,
                     distributed_init_method=distributed_init_method)
+
 
 class Engine:
     """The main engine that receives requests and generates texts.
@@ -141,20 +142,25 @@ class Engine:
                                                       scheduler_config, engine_config, rank=i, 
                                                       device=worker.device, is_prepare_worker=False,
                                                       distributed_init_method=distributed_init_method))
-        self._run_workers_blocking("init_dis_env", self.workers, get_all_outputs=True)
+        method_dict = {w:([], {}) for i, w in enumerate(self.workers)}
+        self._run_workers("init_dis_env", method_dict, blocking=True)
+
         if self.scheduler_config.overlap_prepare:
             for i, worker in enumerate(self.prepare_workers):
                 worker.init_worker(worker_init_fn=partial(worker_init_fn, model_config, parallel_config, 
                                                             scheduler_config, engine_config, rank=i, device=-1, 
                                                             is_prepare_worker=True,
                                                             distributed_init_method=distributed_init_method))
-            self._run_workers_blocking("init_prepare", self.prepare_workers, get_all_outputs=True)
+            method_dict = {w:([], {}) for i, w in enumerate(self.prepare_workers)}
+            self._run_workers("init_prepare", method_dict, blocking=True)
         
         # Load model
         if self.scheduler_config.overlap_prepare:
-            self._run_workers_blocking("load_model", self.workers + self.prepare_workers, get_all_outputs=True)
+            method_dict = {w:([], {}) for i, w in enumerate(self.prepare_workers + self.workers)}
+            self._run_workers("load_model", method_dict, blocking=True)
         else:
-            self._run_workers_blocking("load_model", self.workers, get_all_outputs=True)
+            method_dict = {w:([], {}) for i, w in enumerate(self.workers)}
+            self._run_workers("load_model", method_dict, blocking=True)
 
 
     def add_requests(
@@ -183,93 +189,45 @@ class Engine:
         self._step_counter += 1
         try:
             reqs_by_dp: Dict[int, Request] = self.dispatcher.dispatch()
+            self._dispatch_reqs(reqs_by_dp)
+            outputs = self._get_outputs_nowait()
         except Exception as e:
             print(e)
             traceback.print_exc()
     
     
-    def dispatch_reqs(self, reqs_by_dp: DispatcherResultType) -> None:
-        
+    def _dispatch_reqs(self, reqs_by_dp: DispatcherResultType) -> None:
+        # 1. build method dict
+        method_dict = {}
+        for dp_rank in reqs_by_dp.keys():
+            method_dict[self.workers[dp_rank]] = ([], 
+            {
+                "req_ids" : [req.request_id for req in reqs_by_dp[dp_rank]],
+                "req_sps" : [req.sampling_params for req in reqs_by_dp[dp_rank]],
+            })
+        # 2. launch method
+        self._run_workers("add_requests", method_dict, blocking=False, need_res=False)
+        return None
     
     
-    def _process_nonblocking_output(
+    def _get_outputs_nowait(
         self,
-        scheduler_output: SchedulerOutput,
-        req_ids: List[int],
-        prepare_output,
-        denoising_output,
-        postprocessing_output,
-        overlapped_prepare_output,
-    ) -> List[ReqOutput]:
-        # 1. update status of reqs in this round to new status to ensure consistency
-        finished_reqs = self.dispatcher.update_reqs_status_nonblocking(
-            scheduler_output,
-            req_ids,
-            prepare_output,
-            denoising_output,
-            postprocessing_output,
-            overlapped_prepare_output,
-            self.prev_scheduler_output,
-            overlapped_prepare_sche_opt=None if not self.overlapped_prepare_sche_opt else self.overlapped_prepare_sche_opt[0],
-        )
+    ) -> 'List[WorkerOutput]':
+        """Collect all outputs that are currently available.
 
-
-        # 2. Free finished requests.
-        # This cannot be be done as blocking version, since `POSTPROCESSING` requests in
-        # this round has already been updated to `FINISHED_STOPPED` status. We should refrain
-        # from freeing them and only free those examined by scheduler and returned in step 1.
-        self.dispatcher.free_finished_requests(finished_reqs)
-
-        # 3. Abort reqs
-        if scheduler_output.abort_req_ids:
-            finished_reqs.extend(self.abort_requests(scheduler_output.abort_req_ids))
-
-        ret = []
-        for req in finished_reqs:
-            ret.append(ReqOutput(req))
-
-        if self.collect_data and self.prev_scheduler_output:
-            if self.prev_scheduler_output.status == ReqStatus.DENOISING:
-                target_worker_output = denoising_output
-            elif self.prev_scheduler_output.status == ReqStatus.POSTPROCESSING:
-                target_worker_output = postprocessing_output
-            else:
-                target_worker_output = prepare_output
-            self._collect_data(self.prev_scheduler_output, ret, target_worker_output)
-
-        # Update
-        self.prev_scheduler_output = scheduler_output
-        if overlapped_prepare_output is not None:
-            # Reset after use
-            self.overlapped_prepare_sche_opt.pop(0)
-
-
-        return ret
-    
-    
-    def _get_output_nonblocking(
-        self,
-        handlers,
-    ) -> Optional['WorkerOutput']:
+        Returns:
+            List[WorkerOutput]: _description_
+        """
         outputs = []
-        if self.parallel_config.worker_use_mp:
-            for worker in handlers:
-                if worker.data_is_available():
-                    outputs.append(worker.get_blocking())
+        for worker in self.workers:
+            outputs.extend(worker.get_output_nowait())
 
-        # Currently, we only suppose 1 worker to get result from
-        if not outputs:
-            return None
-
-        assert len(outputs) == 1
-        return outputs[0]
+        return outputs
 
     
     def _process_output(
         self,
-        scheduler_output: SchedulerOutput,
-        req_ids: List[int],
-        output: Optional[WorkerOutput],
+        outputs: List[WorkerOutput],
     ) -> List[ReqOutput]:
         """Update requests status and prepare return result if available."""
         
@@ -298,107 +256,86 @@ class Engine:
         return ret
 
 
+    def _wait_handlers(self, handlers_dict: 'Dict[MpExecutor, asyncio.Task]') -> 'Dict[MpExecutor, Any]':
+        handlers = []
+        workers = []
+        for w, h in handlers_dict:
+            workers.append(w)
+            handlers.append(h)
+
+        outputs = asyncio.get_event_loop().run_until_complete(asyncio.gather(*handlers))
+
+        output_dict = {}
+        for i, o in enumerate(outputs):
+            output_dict[workers[i]] = o
+
+        return output_dict
+        
+
     def _run_workers_nonblocking(
         self,
         method: str,
-        workers: List,
-        *args,
-        **kwargs,
-    ) -> List[ray.ObjectRef]:
-        """Run designated workers in non-blocking form. Only ray workers
-        support this function.
+        workers_dict: 'Dict[MpExecutor, Tuple]',
+        need_res: bool,
+    ) -> 'Optional[Dict[MpExecutor, asyncio.Task]]':
+        """Run workers in nonblocking fashion. Only handlers are returned.
 
         Args:
             method (str): method name
-            workers (List[RayWorker]): List of workers to run the method.
-
-        Raises:
-            RuntimeError: This exception will be raised if workers don't use ray.
+            workers_dict (Dict[MpExecutor, Tuple]): The argument dict for each worker
+            need_res (bool): if set false, no handlers will be returned
 
         Returns:
-            List[ray.ObjectRef]: List of object references of ray to get the results later.
+            List[asyncio.Task]: Handlers for results retrieval
         """
-        if self.engine_config.log_status:
-            logger.info(f"_run_workers_nonblocking start method {method}")
-        obj_refs = []
-        if self.parallel_config.worker_use_ray:
-            for worker in workers:
-                obj_ref = worker.execute_method.remote(method, *args, **kwargs)
-                obj_refs.append(obj_ref)
-        elif self.parallel_config.worker_use_mp:
-            for worker in workers:
-                obj_ref = worker.execute_method(method, *args, **kwargs)
-                obj_refs.append(obj_ref)
+        handlers_dict = {}
+        for worker in workers_dict.keys():
+            args, kwargs = workers_dict[worker]
+            h = worker.execute_method_async(method, need_res, *args, **kwargs)
+            handlers_dict[worker] = h
+
+        if need_res:
+            return handlers_dict
         else:
-            raise RuntimeError("Your chosen worker type doesn't support nonblokcing method at now.")
-        return obj_refs
-        
+            return None
 
-    def _run_workers_in_batch(
-        self,
-        workers: List[MpExecutor],
-        method: str,
-        *args,
-        **kwargs,
-    ):
-        all_outputs = []
-        # 1. Add task to each worker
-        # We must add tasks to all workers before waiting for any of them!
-        for worker in workers:
-            output = worker.execute_method(method, *args, **kwargs)
-            all_outputs.append(output)
-        
-        all_outputs = [worker.get_blocking() for worker in all_outputs]
-        return all_outputs
-        
 
-    def _run_workers_blocking(
+    def _run_workers(
         self,
         method: str,
-        workers: List[MpExecutor],
-        *args,
-        get_all_outputs: bool = False,
-        max_concurrent_workers: Optional[int] = None,
-        **kwargs,
-    ) -> Any:
-        """Runs the method on all workers
+        workers_dict: 'Dict[MpExecutor, Tuple]',
+        blocking: bool,
+        need_res: bool = True,
+    ) -> 'Optional[Dict[MpExecutor, Any]]':
+        """Run method on selected workers
 
         Args:
-            method (str): the name of the method to be executed
-            get_all_outputs (bool, optional): Get results from all workers. 
-                Defaults to False.
+            method (str): method name
+            workers_dict (Dict[MpExecutor, Tuple]): The structured input for each worker
+            blocking (bool, optional): If true, block until the result is returned;
+                If false, return handlers for results retrieval, in nonblocking fashion. 
+                Defaults to True.
+
+        Returns:
+            Dict[MpExecutor, Any]: _description_
         """
         if self.engine_config.log_status:
-            logger.info(f"_run_workers_blocking start method {method}, {get_all_outputs=}")
+            logger.info(f"_run_workers start method {method}, {blocking=}")
         
-        # If no workers specified, directly return
-        if not workers:
-            return
+        # if we want the blocking method, we have to force need_res
+        if blocking:
+            need_res = True
 
-        # Split workers into subgroups
-        all_outputs = []
-        if max_concurrent_workers:
-            work_groups = [
-                workers[i:i + max_concurrent_workers]
-                for i in range(0, len(self.workers), max_concurrent_workers)
-            ]
-        else:
-            work_groups = [workers]
+        handlers_dict = self._run_workers_nonblocking(method, workers_dict, need_res)
 
-        # Launch tasks subgroup by subgroup
-        for worker_subgroup in work_groups:
-            all_outputs.extend(
-                self._run_workers_in_batch(worker_subgroup, method, *args, **kwargs)
-            )
-        
-        if get_all_outputs:
-            return all_outputs
+        if not need_res:
+            return None
+
+        if blocking:
+            output_dict = self._wait_handlers(handlers_dict)
+            return output_dict
         else:
-            output = all_outputs[0]
-            for other_output in all_outputs[1:]:
-                assert output == other_output, "Trying to ignore other valid outputs."
-            return output
-        
+            return handlers_dict
         
     
     def get_pipeline_config(self) -> PipelineConfig:
@@ -418,17 +355,13 @@ class Engine:
     
     def _log_system_states(
         self,
-        scheduler_output: SchedulerOutput,
     ) -> None:
-        self.dispatcher.log_status()
-        logger.info(scheduler_output.get_log_string())
+        pass
         sys.stdout.flush()
-    
 
 
     def engine_is_ready(self) -> bool:
         return self.engine_ready
-    
     
 
     def clear(self):
@@ -437,6 +370,13 @@ class Engine:
             self.sm_monitor.log_result_to_file()
         sys.stdout.flush()
         sys.stderr.flush()
+
+        for w in self.workers:
+            w.end_worker()
+        
+        if self.scheduler_config.overlap_prepare:
+            for w in self.prepare_workers:
+                w.end_worker()
     
     
     def _collect_data(
