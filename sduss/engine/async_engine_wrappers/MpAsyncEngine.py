@@ -48,7 +48,7 @@ class _MpAsyncEngine:
 
     
     def _wait_task_output(self, task) -> 'EngineOutput':
-        """Wait until the specified task is finished, and return its result.
+        """Wait until the task is finished, and return its result.
         
         Warn:
             This method assumes that the methods will be completed in the order of
@@ -65,8 +65,30 @@ class _MpAsyncEngine:
             output = None
         return output
 
+
+    def execute_method_sync(
+        self, 
+        method: str,
+        need_res: bool,
+        *method_args, 
+        **method_kwargs,
+    ) -> 'Optional[EngineOutput]':
+        """Execute method, blocking the whole thread until the result is returned.
+
+        Args:
+            method (str): method name
+            need_res (bool): need result or not
+
+        """
+        task = self._add_task(method, need_res, method_args, method_kwargs)
+        if need_res:
+            # Then we explicitly wait until the result is returned
+            return self.output_queue.get()
+        else:
+            return None
+
         
-    def execute_method(
+    async def execute_method_async(
         self, 
         method: str,
         need_res: bool,
@@ -83,8 +105,6 @@ class _MpAsyncEngine:
         task = self._add_task(method, need_res, method_args, method_kwargs)
         if need_res:
             # Then we explicitly wait until the result is returned
-            return asyncio.get_event_loop().run_until_complete(
-                asyncio.get_event_loop().run_in_executor(self.thread_executor, self._wait_task_output(task))
-            )
+            return await asyncio.get_event_loop().run_in_executor(self.thread_executor, self._wait_task_output(task))
         else:
             return None

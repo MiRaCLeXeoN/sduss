@@ -29,6 +29,12 @@ class EngineMainLoop:
     """
     If executed method return None, mail loop won't add it
     to the output queue. So please make sure method's return value.
+
+    Warn:
+        Be engine main loop works in a "pull" fashion, all results should be 
+        explicitly pulled from the async engine! It implies:
+            1. Methods and results are produced in exactly the same order!
+            2. If no tasks coming, engine will not run at all!
     """
     def __init__(
         self,
@@ -44,15 +50,12 @@ class EngineMainLoop:
         self.thread_pool = ThreadPoolExecutor(max_workers=1)
 
         # We must run the main loop in asyncio
-        asyncio.get_event_loop().run_until_complete(self._main_loop())
+        self._main_loop()
+
     
-    def _get_task(self):
-        return self.task_queue.get()
-    
-    
-    async def _main_loop(self):
+    def _main_loop(self):
         while True:
-            task: Task = await asyncio.get_event_loop().run_in_executor(self.thread_pool, self._get_task)
+            task: Task = self.task_queue.get()
             method_name = task.method
 
             # Execute method
@@ -69,5 +72,3 @@ class EngineMainLoop:
             # If to exit
             if method_name == "clear":
                 break
-
-            asyncio.sleep(0)

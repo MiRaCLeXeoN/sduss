@@ -245,7 +245,7 @@ class AsyncEngine:
             **kwargs
         )
 
-        self.engine.execute_method("engine_is_ready", True)
+        self.engine.execute_method_sync("engine_is_ready", True)
 
         # Asyncio loop
         # We need to keep a reference to unshielded
@@ -287,10 +287,10 @@ class AsyncEngine:
             self._request_tracker.get_new_and_finished_requests())
         
         # Add requests
-        self.engine.execute_method("add_requests", False, new_requsts_params)
+        await self.engine.execute_method_async("add_requests", False, new_requsts_params)
         
         # Peek at output if there is any
-        engine_output = self.engine.execute_method("step", True).output
+        engine_output = await self.engine.execute_method_async("step", True).output
             
         # Only process the output when we have valid ones
         request_outputs = engine_output.request_outputs
@@ -416,8 +416,8 @@ class AsyncEngine:
         if not isinstance(request_ids, list):
             request_ids = [request_ids]
 
-        self.engine.execute_method("abort_requests", False, request_ids)
+        await self.engine.execute_method_async("abort_requests", False, request_ids)
 
 
     async def clear(self):
-        self.engine.execute_method("clear", True)
+        await self.engine.execute_method_async("clear", True)

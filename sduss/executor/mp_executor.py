@@ -21,6 +21,7 @@ class MpExecutor:
         rank: int,
         device: int,
         is_prepare_worker: bool,
+        thread_pool = None,
     ) -> None:
         self.name = name
         self.rank = rank,
@@ -32,11 +33,15 @@ class MpExecutor:
         self.output_queue: 'multiprocessing.Queue[WorkerOutput]' = multiprocessing.Queue(100)
 
         self.lock = threading.Lock()
-        self.thread_pool = ThreadPoolExecutor(max_workers=1)
+        if thread_pool:
+            self.thread_pool = thread_pool
+        else:
+            self.thread_pool = ThreadPoolExecutor(max_workers=1)
         self.task_pool: Dict[int, Tuple[Task, asyncio.Event]] = {}
         self.task_semaphore = threading.Semaphore(value=0)
         self.shutdown_event = threading.Event()
 
+        # We must run loop in another thread
         self.task_res_loop = asyncio.get_event_loop().run_in_executor(self.thread_pool, self._process_task_res_loop)
 
     
@@ -64,6 +69,7 @@ class MpExecutor:
 
             task_output = self.task_res_queue.get()
             task_id = task_output.id
+            # We must protect the shared task_pool across different threads!
             with self.lock:
                 task, event = self.task_pool.pop(task_id)
             task.output = task_output.output
@@ -71,7 +77,7 @@ class MpExecutor:
             event.set()
         
 
-    def _add_task(self, method_name, method_args = [], method_kwargs = {}) -> 'Task':
+    def _add_task_async(self, method_name, method_args = [], method_kwargs = {}) -> 'Task':
         task = Task(method_name, *method_args, **method_kwargs)
         self.task_queue.put(task)
         event = asyncio.Event()
@@ -83,39 +89,54 @@ class MpExecutor:
         return task, event
     
     
-    async def _wait_task(self, task, event) -> Any:
+    def _add_task_sync(self, method_name, method_args = [], method_kwargs = {}) -> 'Task':
+        task = Task(method_name, *method_args, **method_kwargs)
+        self.task_queue.put(task)
+        return task
+    
+    
+    async def _wait_task_async(self, task, event) -> Any:
         event.wait()
         return task.output
+
+    
+    def _wait_task_sync(self, task) -> Any:
+        return self.task_res_queue.get()
     
     
-    def execute_method_nonblocking(
-        self, 
-        method: str,
-        *method_args, 
-        **method_kwargs,
-    ):
-        """Execute the method and return the future.
-
-        Args:
-            method (str): method name
-            need_res (bool): if true, this method will block until the result is returned,
-                otherwise it will return immediately after the task is sent to the engine.
-        """
-        task, event = self._add_task(method, method_args, method_kwargs)
-        # This requires the engine run in async fashion! 
-        # If engine is not, this coroutine will never get chance to run
-        return asyncio.get_event_loop().create_task(self._wait_task(task, event))
-
-
-    def execute_method_blocking(
+    def execute_method_sync(
         self,
         method: str,
         *method_args, 
         **method_kwargs,
     ):
-        task, event = self._add_task(method, method_args, method_kwargs)
-        # Then we explicitly wait until the result is returned
-        return asyncio.get_event_loop().run_until_complete(self._wait_task(task, event))
+        """Execute the method and block the whole thread until result is returned.
+
+        Args:
+            method (str): method name
+
+        Warn:
+            This call will block the whole process!
+        """
+        task = self._add_task_sync(method, method_args, method_kwargs)
+        # Then we explicitly wait until the result is returned, this will block the whole routine!
+        return self._wait_task_sync(task)
+
+
+    async def execute_method_async(
+        self,
+        method: str,
+        *method_args, 
+        **method_kwargs,
+    ):
+        """Execute method and return the handler for result retrieval.
+
+        Args:
+            method (str): method name
+        """
+        task, event = self._add_task_async(method, method_args, method_kwargs)
+        # Then we explicitly wait until the result is returned, this will block the whole routine!
+        return asyncio.get_event_loop().create_task(self._wait_task_async(task, event))
     
     
     def get_output_nowait(self) -> 'List[WorkerOutput]':
@@ -127,15 +148,16 @@ class MpExecutor:
     
     def end_worker(self):
         # End worker process
+        logger.info(f"Worker {self.name} shutdown start.")
         self.task_queue.put(Task(method_name="shutdown"))
         self.process.join()
 
         # End output loop
         self.task_semaphore.release(n=1)
         self.shutdown_event.set()
-        asyncio.get_event_loop().run_until_complete(self.task_res_loop)
+        await self.task_res_loop
 
-        logger.info(f"Worker {self.name} shutdown.")
+        logger.info(f"Worker {self.name} shutdown complete.")
 
 
 def mp_init_method():

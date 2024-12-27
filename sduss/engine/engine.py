@@ -342,6 +342,8 @@ class Engine:
         **kwargs,
     ):
         all_outputs = []
+        # 1. Add task to each worker
+        # We must add tasks to all workers before waiting for any of them!
         for worker in workers:
             output = worker.execute_method(method, *args, **kwargs)
             all_outputs.append(output)

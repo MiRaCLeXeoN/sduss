@@ -3,6 +3,7 @@ import asyncio
 import queue    
 
 from typing import TYPE_CHECKING
+from concurrent.futures import ThreadPoolExecutor
 
 from .wrappers import TaskOutput
 
@@ -13,6 +14,7 @@ class Task:
     def __init__(
         self,
         method_name: str,
+        need_res: bool,
         *args,
         **kwargs,
     ):
@@ -21,6 +23,7 @@ class Task:
         self.args = args
         self.kwargs = kwargs
         self.id = uuid.uuid4().int
+        self.need_res = need_res
 
 
 class ExecutorMainLoop:
@@ -41,22 +44,28 @@ class ExecutorMainLoop:
 
         self.worker = worker_init_fn()
 
+        self.thread_pool = ThreadPoolExecutor(max_workers=1)
         self.new_reqs_event = asyncio.Event()
+        # We must run 2 loops at the same time
+        # Because we want 1) step is always proceeding, in a "pushing" not "pulling" fashion
+        # 2) even there are no tasks ongoing, it can still respond to any tasks
+        self.schedule_loop = asyncio.get_event_loop().create_task(self._schedule_loop())
         asyncio.get_event_loop().run_until_complete(self._main_loop())
 
-        # TODO: Try separate main loop and schedule loop
-    
     
     async def _schedule_loop(self):
-        have_reqs = False
-        while True:
-            if not have_reqs:
-                await self.new_reqs_event.wait()
-            self.new_reqs_event.clear()
-            worker_output, have_reqs = self.worker.step()
-            if worker_output is not None:
-                self.output_queue.put(TaskOutput(None, worker_output, True, None))
-            asyncio.sleep(0)
+        try:
+            have_reqs = False
+            while True:
+                if not have_reqs:
+                    await self.new_reqs_event.wait()
+                self.new_reqs_event.clear()
+                worker_output, have_reqs = self.worker.step()
+                if worker_output is not None:
+                    self.output_queue.put(TaskOutput(None, worker_output, True, None))
+                await asyncio.sleep(0)
+        except asyncio.CancelledError:
+            raise
 
     
     def _process_task(self, task: Task):
@@ -70,29 +79,26 @@ class ExecutorMainLoop:
         except Exception as e:
             task_output = TaskOutput(task.id, None, False, e)
         
-        # if method_name == "add_requests":
-        #     self.new_reqs_event.set()
+        if method_name == "add_requests":
+            self.new_reqs_event.set()
         
         return task_output
     
+
+    def _wait_for_task(self):
+        return self.task_queue.get()
+
     
     async def _main_loop(self):
-        # FIXME: If we execute this, when will background loop be executed?
         while True:
-            # 1. Check if there is task to do
-            try:
-                task: Task = self.task_queue.get_nowait()
-            except queue.Empty:
-                task = None
+            task: Task = await asyncio.get_event_loop().run_in_executor(self.thread_pool, self._wait_for_task)
             if task is not None:
+                # If to exit
                 if task.method == "shutdown":
+                    self.schedule_loop.cancel()
                     break
 
                 task_output = self._process_task(task)
                 self.task_res_queue.put(task_output)
-                # If to exit
+            await asyncio.sleep(0)
             
-            # 2. One schedule step
-            worker_output, have_reqs = self.worker.step()
-            if worker_output is not None:
-                self.output_queue.put(TaskOutput(None, worker_output, True, None))
