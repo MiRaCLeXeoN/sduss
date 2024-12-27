@@ -24,6 +24,7 @@ class Task:
         self.kwargs = kwargs
         self.id = uuid.uuid4().int
         self.need_res = need_res
+        self.is_finished = False
 
 
 class ExecutorMainLoop:
@@ -57,6 +58,7 @@ class ExecutorMainLoop:
         try:
             have_reqs = False
             while True:
+                # To avoid busy waiting, we use event here
                 if not have_reqs:
                     await self.new_reqs_event.wait()
                 self.new_reqs_event.clear()
@@ -85,13 +87,9 @@ class ExecutorMainLoop:
         return task_output
     
 
-    def _wait_for_task(self):
-        return self.task_queue.get()
-
-    
     async def _main_loop(self):
         while True:
-            task: Task = await asyncio.get_event_loop().run_in_executor(self.thread_pool, self._wait_for_task)
+            task: Task = await asyncio.get_event_loop().run_in_executor(self.thread_pool, self.task_queue.get)
             if task is not None:
                 # If to exit
                 if task.method == "shutdown":
