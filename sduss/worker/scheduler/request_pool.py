@@ -1,6 +1,6 @@
 import pandas as pd
 
-from typing import Union, Optional, List, TYPE_CHECKING, Dict, Set, Iterable
+from typing import Union, Optional, List, TYPE_CHECKING, Dict, Set, Iterable, Callable
 from collections import defaultdict
 
 from sduss.logger import init_logger
@@ -15,8 +15,8 @@ class WorkerRequestPool:
         self,
         support_resolutions: List[int],
     ):
-        self.requests = pd.DataFrame(columns=["request_id", "status",
-                                              "resolution", "remain_steps"])
+        self.columns = ["request_id", "status", "resolution", "remain_steps"]
+        self.requests = pd.DataFrame(columns=self.columns)
         self.requests.set_index("request_id", inplace=True)
 
         self.req_mapping: Dict[int, WorkerRequest] = {}
@@ -51,7 +51,7 @@ class WorkerRequestPool:
             }
 
 
-    def remove_requests(self, request_ids: Iterable[int]):
+    def remove_requests(self, request_ids: Iterable[int]) -> List[WorkerRequest]:
         """Remove a request from the pool by its id."""
         if isinstance(request_ids, int):
             request_ids = [request_ids]
@@ -109,6 +109,19 @@ class WorkerRequestPool:
         return req_ids
     
     
+    def get_unfinished_req_ids(self) -> List[int]:
+        req_ids = self.requests.index[~self.requests["status"].apply(WorkerReqStatus.is_finished)].tolist()
+        return req_ids
+    
+    
+    def get_unfinished_req_ids_by_res(self, resolution: int) -> List[int]:
+        req_ids = self.requests.index[
+            (~self.requests["status"].apply(WorkerReqStatus.is_finished)
+             & self.requests["resolution"] == resolution)
+        ].tolist()
+        return req_ids
+    
+    
     def free_finished_reqs(self) -> List[WorkerRequest]:
         req_ids = self.get_finished_req_ids()
         return self.remove_requests(req_ids)
@@ -116,4 +129,79 @@ class WorkerRequestPool:
     
     def has_unfinished_reqs(self) -> bool:
         return (~self.requests["status"].apply(WorkerReqStatus.is_finished)).any()
+    
+    
+    def get_unfinished_reqs(self) -> List[WorkerRequest]:
+        req_ids = self.get_unfinished_req_ids()
+        return self.get_by_ids(req_ids)
+
+    
+    def get_reqs_ids_by_complex(
+        self,
+        status: WorkerReqStatus = None,
+        resolution: int = None,
+        remain_steps: int = None
+    ) -> List[int]:
+        if (status is None
+            and resolution is None
+            and remain_steps is None):
+            return []
+
+        # Start with a default mask that includes all rows
+        mask = pd.Series(True, index=self.requests.index)
+
+        if status:
+            mask = mask & (self.requests["status"] == status)
+        if resolution:
+            mask = mask & (self.requests["resolution"] == resolution)
+        if remain_steps:
+            mask = mask & (self.requests["remain_steps"] == remain_steps)
+        
+        return self.requests.index[mask].tolist()
+    
+    
+    def get_req_ids_by_function(
+        self,
+        condition_func: Callable,
+    ) -> List:
+        """
+        Filters requests based on a custom condition function.
+
+        Args:
+            condition_func (Callable): Functions that takes columns as inputs 
+                and returns a boolean.
+
+        Returns:
+            List: A list of `request_id`s where the condition function evaluates to True.
+        """
+        # Apply the function row by row and get the mask
+        mask = self.requests.apply(
+            lambda row: condition_func(**{col_name:row[col_name] for col_name in self.columns}),
+            axis=1
+        )
+        
+        # Return the request IDs where the mask is True
+        return self.requests.index[mask].tolist()
+        
+    
+    def get_reqs_by_complex(
+        self,
+        status: WorkerReqStatus = None,
+        resolution: int = None,
+        remain_steps: int = None
+    ) -> List[WorkerRequest]:
+        req_ids = self.get_reqs_ids_by_complex(
+            status,
+            resolution,
+            remain_steps,
+        )
+        return self.get_by_ids(req_ids)
+    
+
+    def get_log_status_str(self) -> str:
+        return self.requests.to_string()
+        
+    
+    def log_status(self):
+        logger.debug(self.get_log_status_str())
         

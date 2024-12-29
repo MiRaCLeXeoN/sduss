@@ -10,7 +10,6 @@ from ._model_runner import _ModelRunner
 
 logger = init_logger(__name__)
 
-    
 class ModelRunner:
     def __init__(
         self,
@@ -20,9 +19,9 @@ class ModelRunner:
     ) -> None:
         self.name = name
 
-        self.task_queue: 'mp.Queue[Task]' = mp.Queue()
+        self.task_queue: 'mp.Queue[Task]' = mp.Queue(10)
         # Output queue is used for holding request outputs only
-        self.output_queue: 'mp.Queue[TaskOutput]' = mp.Queue()
+        self.output_queue: 'mp.Queue[TaskOutput]' = mp.Queue(5)
 
         # Set afterwards    
         self.runner = mp.Process(
@@ -43,7 +42,7 @@ class ModelRunner:
 
     
     def get_result(self, task: Task) -> Any:
-        # Its safe to discard all other outputs like this
+        # It's safe to discard all other outputs like this
         # Because we ensure that the worker won't interleave sync and async calls
         # No risk of confusing outputs
         while True:
@@ -96,3 +95,4 @@ class ModelRunner:
     def shutdown(self):
         self.execute_method_sync("shutdown")
         self.runner.join()
+        logger.info(f"{self.name} shutdown complete")

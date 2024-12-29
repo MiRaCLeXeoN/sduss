@@ -1,12 +1,7 @@
-import os
-import time
+import torch
 
 from typing import Optional, List, Dict, Union, TYPE_CHECKING, Any, Tuple
 
-import torch
-import torch.distributed as dist
-
-from sduss.dispatcher import Request
 from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig, EngineConfig
 from sduss.model_executor import get_pipeline_cls
 from sduss.logger import init_logger
@@ -18,7 +13,7 @@ from .wrappers import WorkerOutput, WorkerRequest, WorkerReqStatus
 if TYPE_CHECKING:
     from .runner.wrappers import RunnerOutput
 
-logger = init_logger(__name__)
+logger = None
 
 class Worker:
     """A worker GPU class
@@ -69,6 +64,7 @@ class Worker:
         self.pipeline_cls = get_pipeline_cls(self.pipeline_config)
         self.model_runner = ModelRunner(pipeline_config, parallel_config, 
                                         scheduler_config, is_prepare_worker,
+                                        name=f"ModelRunner rank {self.rank}",
                                         rank=rank,
                                         device_num=device,
                                         distributed_init_method=distributed_init_method,
@@ -83,11 +79,8 @@ class Worker:
         self.prev_task = None
         self.prev_sche_output = None
 
-        # global logger
-        # if self.is_prepare_worker:
-        #     logger = init_logger(__name__, to_file_name="./outputs/prepare_worker")
-        # else:
-        #     logger = init_logger(__name__, to_file_name="./outputs/gpu_worker")
+        global logger
+        logger = init_logger(__name__, no_stdout=True, to_file_name=f"./outputs/gpu_worker_{self.rank}")
     
 
     def init_dis_env(self) -> None:
@@ -103,8 +96,20 @@ class Worker:
                                 
     
     def step(self) -> Tuple[WorkerOutput, bool]:
+        if self.engine_config.log_status:
+            self.log_status()
+
         # 1. Schedule
-        scheduler_output = self.scheduler.schedule()
+        ## ! We must check unfinished reqs before reqs get updated by this round
+        ## ! Since in unblocking fashion, when the very last req is running post stage,
+        ## ! it will be updated to finished status. So has_unfinished_reqs will be 0, even if
+        ## ! one is still running.
+        has_unfinished_reqs = self.scheduler.has_unfinished_requests()
+        if has_unfinished_reqs:
+            scheduler_output = self.scheduler.schedule()
+        else:
+            # We have last reqs running post stage, no need to schedule
+            scheduler_output = SchedulerOutput(status=WorkerReqStatus.EMPTY)
         
         # 2. Wait for results from previous round
         prev_output = None
@@ -116,20 +121,23 @@ class Worker:
         
         # 4. Process output and update requests status
         self._update_reqs(scheduler_output)
+        ## finished reqs are automatically removed from request pool by scheduler
         finished_reqs = self._process_prev_output(prev_output, self.prev_sche_output)
         
         self.prev_task = task
         self.prev_sche_output = scheduler_output
 
         worker_output = WorkerOutput(finished_reqs)
-        has_unfinished_reqs = self.scheduler.has_finished_requests()
 
         return worker_output, has_unfinished_reqs
     
     
     def _issue_task(self, scheduler_output: 'SchedulerOutput') -> None:
         status = scheduler_output.status
-        if status == WorkerReqStatus.PREPARE:
+        if status == WorkerReqStatus.EMPTY:
+            # Nothing to do
+            task = None
+        elif status == WorkerReqStatus.PREPARE:
             reqs = scheduler_output.get_reqs_as_list()
             req_ids = []
             req_sps = []
@@ -159,7 +167,7 @@ class Worker:
     
     def _update_reqs(self, scheduler_output: 'SchedulerOutput'):
         # 1. update status of reqs in this round to new status to ensure consistency
-        self.scheduler.update_reqs_status()
+        self.scheduler.update_reqs_status(scheduler_output)
     
 
     def add_requests(self, req_ids: List[int], req_sps: List[Any]):
@@ -174,6 +182,10 @@ class Worker:
             req_ids = [req_ids]
         self.scheduler.abort_requests(req_ids)
     
+
+    def log_status(self):
+        logger.debug(self.scheduler.get_log_status_str())
+    
     
     def shutdown(self) -> None:
-        self.model_runner.execute_method_sync("shutdown")
+        self.model_runner.shutdown()

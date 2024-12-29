@@ -19,6 +19,10 @@ if TYPE_CHECKING:
 
 class WorkerReqStatus(enum.IntEnum):
     """Status of a sequence."""
+    # Empty
+    EMPTY = enum.auto()             # No requests are scheduled
+                                    # This is to handle condition where very last req is 
+                                    # running post stage and resulting in no unfinished reqs
     # Running
     PREPARE = enum.auto()           # ready for prepare stage
     DENOISING = enum.auto()         # ready for denoising stage
@@ -26,8 +30,6 @@ class WorkerReqStatus(enum.IntEnum):
     # Finished
     FINISHED_STOPPED = enum.auto()
     FINISHED_ABORTED = enum.auto()
-    # Exception
-    EXCEPTION_SWAPPED = enum.auto()
 
     @staticmethod
     def is_finished(status: "WorkerReqStatus") -> bool:
@@ -41,13 +43,6 @@ class WorkerReqStatus(enum.IntEnum):
     def is_normal_finished(status: "WorkerReqStatus") -> bool:
         return status in [
             WorkerReqStatus.FINISHED_STOPPED,
-        ]
-    
-    
-    @staticmethod
-    def is_exception(status: "WorkerReqStatus") -> bool:
-        return status in [
-            WorkerReqStatus.EXCEPTION_SWAPPED,
         ]
 
 

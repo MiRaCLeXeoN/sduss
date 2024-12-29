@@ -2,13 +2,14 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Tuple, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from sduss.dispatcher.wrappers import ResolutionRequestQueue, SchedulerOutput
+    from ..request_pool import WorkerRequestPool
+    from ..wrappers import SchedulerOutput
 
 class Policy(ABC):
 
     def __init__(self, **kwargs) -> None:
         # Reference scheduler's request pool
-        self.request_pool : List[Dict[int, 'ResolutionRequestQueue']] = kwargs.pop("request_pool")
+        self.request_pool : 'WorkerRequestPool' = kwargs.pop("request_pool")
 
     
     @abstractmethod

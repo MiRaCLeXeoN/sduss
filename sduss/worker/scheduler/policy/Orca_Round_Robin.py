@@ -2,11 +2,10 @@ import time
 
 from typing import Dict, List, TYPE_CHECKING, Optional
 
-from sduss.dispatcher.wrappers import ResolutionRequestQueue, ReqStatus
-
 from .policy import Policy
 from ..wrappers import SchedulerOutput
 from ..utils import convert_list_to_res_dict
+from ...wrappers import WorkerReqStatus
 
 if TYPE_CHECKING:
     from sduss.dispatcher import Request
@@ -26,17 +25,17 @@ class OrcaRoundRobin(Policy):
         super().__init__(**kwargs)
 
         # All resolutions
-        self.resolutions = sorted(list(self.request_pool.keys()))
+        self.resolutions = sorted(self.request_pool.support_resolutions)
 
         # Set afterwards
         self._prev_res = None
 
 
     def _choose_resolution(self) -> Optional[int]:
-        """If no reqs to schedule, this will return None."""
+        """If no possible choice, None will be returned."""
         if self._prev_res is None:
             for res in self.resolutions:
-                if self.request_pool[res].get_num_unfinished_normal_reqs() > 0:
+                if len(self.request_pool.get_unfinished_req_ids_by_res(res)) > 0:
                     self._prev_res = res
                     return res
             self._prev_res = None
@@ -48,7 +47,7 @@ class OrcaRoundRobin(Policy):
 
             # Check next resolution
             res = self.resolutions[idx]
-            if self.request_pool[res].get_num_unfinished_normal_reqs() > 0:
+            if len(self.request_pool.get_unfinished_req_ids_by_res(res)) > 0:
                 self._prev_res = res
                 return res
             idx = (idx + 1) % len(self.resolutions)
@@ -56,7 +55,7 @@ class OrcaRoundRobin(Policy):
             # Iterate until a resolution is found or we step back to last_idx
             while idx != last_idx:
                 res = self.resolutions[idx]
-                if self.request_pool[res].get_num_unfinished_normal_reqs() > 0:
+                if len(self.request_pool.get_unfinished_req_ids_by_res(res)) > 0:
                     self._prev_res = res
                     return res
                 idx = (idx + 1) % len(self.resolutions)
@@ -64,44 +63,31 @@ class OrcaRoundRobin(Policy):
             self._prev_res = None
             return None
     
-    
-    def _flatten_all_reqs(self) -> List['Request']:
-        reqs = []
-        for resolution_queue in self.request_pool.values():
-            reqs.extend(resolution_queue.get_all_unfinished_normal_reqs())
-        return reqs
-    
 
     def schedule_requests(self, max_num: int) -> SchedulerOutput:
         """Schedule requests for next iteration."""
         # 1. Pick a resolution to run
         # Also Update running resolution if no reqs in this resolution
         res = self._choose_resolution()
-        if res is None:
-            # No reqs to schedule
-            return SchedulerOutput(
-                scheduled_requests={},
-                status=ReqStatus.EMPTY,
-            )
     
         # 2. Get reqs in this resolution to run
-        resolution_queue = self.request_pool[res]
         # 2.1 Schedule non-denoising reqs if avaiable
-        for status in [ReqStatus.WAITING, ReqStatus.PREPARE, ReqStatus.POSTPROCESSING]:
-            scheduled_reqs = resolution_queue.get_all_reqs_by_status(status)
+        for status in [WorkerReqStatus.PREPARE, WorkerReqStatus.POSTPROCESSING]:
+            scheduled_reqs = self.request_pool.get_reqs_by_complex(status=status, resolution=res)
             if len(scheduled_reqs) > 0:
                 scheduled_status = status
                 return SchedulerOutput(
                     scheduled_requests=convert_list_to_res_dict(scheduled_reqs),
                     status=scheduled_status,
                 )
+
         # 2.2 Otherwise schedule denoising reqs.
         now = time.time()
-        scheduled_reqs = resolution_queue.get_all_reqs_by_status(ReqStatus.DENOISING)
+        scheduled_reqs = self.request_pool.get_reqs_by_complex(status=WorkerReqStatus.DENOISING, resolution=res)
         # Always schedule the oldest reqs
         scheduled_reqs.sort(key=lambda req: now - req.arrival_time, reverse=True)
         scheduled_reqs = scheduled_reqs[:max_num]  # It's OK to be OOR(out of range)
-        status = ReqStatus.DENOISING
+        status = WorkerReqStatus.DENOISING
         
         return SchedulerOutput(
             scheduled_requests=convert_list_to_res_dict(scheduled_reqs),

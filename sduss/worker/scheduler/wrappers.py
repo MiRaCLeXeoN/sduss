@@ -29,7 +29,7 @@ class SchedulerOutput:
     
     def __init__(
         self,
-        scheduled_requests: SchedulerOutputReqsType = None,
+        scheduled_requests: SchedulerOutputReqsType = {},
         status: WorkerReqStatus = None,
         abort_req_ids: List[int] = None,
         **kwargs,

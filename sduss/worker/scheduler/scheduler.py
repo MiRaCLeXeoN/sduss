@@ -75,10 +75,13 @@ class Scheduler:
         if isinstance(request_ids, int):
             request_ids = [request_ids]
         
-        return self.request_pool.remove_requests(request_ids)
+        aborted_reqs = self.request_pool.remove_requests(request_ids)
+        for req in aborted_reqs:
+            req.status = WorkerReqStatus.FINISHED_ABORTED
+        return aborted_reqs
 
 
-    def has_finished_requests(self) -> bool:
+    def has_unfinished_requests(self) -> bool:
         return self.request_pool.has_unfinished_reqs()
     
 
@@ -88,7 +91,9 @@ class Scheduler:
         prev_output: 'RunnerOutput',
     ) -> List[WorkerRequest]:
         """Process the output of previous round. If any requests are finished,
-        output will be placed inside accordingly and removed from tracking.
+        output will be placed inside accordingly.
+
+        Finihsed reqs will be returned and automatically removed from request pool
 
         Args:
             prev_sche_output (SchedulerOutput): Scheduler output in previous round
@@ -133,6 +138,10 @@ class Scheduler:
         """
         # To ensure consistency, reqs in this round must be updated.
         sche_status = scheduler_output.status
+        if sche_status == WorkerReqStatus.EMPTY:
+            # Nothing to update
+            return 
+
         cur_reqs = self.request_pool.get_by_ids(scheduler_output.get_req_ids())
         next_status = self._get_next_status(sche_status)
 
@@ -186,8 +195,12 @@ class Scheduler:
         return denoising_complete_reqs
     
     
+    def get_log_status_str(self):
+        res = f"Scheduler cycle {self.cycle_counter}\n"
+        res += self.request_pool.get_log_status_str()
+        return res
+    
+    
     def log_status(self):
         logger.debug(f"Scheduler cycle {self.cycle_counter}")
-        for res in self.request_pool:
-            resolution_queue = self.request_pool[res]
-            logger.debug(resolution_queue.log_status(return_str=True))
+        self.request_pool.log_status()
