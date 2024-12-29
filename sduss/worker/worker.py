@@ -1,23 +1,22 @@
 import os
 import time
 
-from typing import Optional, List, Dict, Union, TYPE_CHECKING, Any
+from typing import Optional, List, Dict, Union, TYPE_CHECKING, Any, Tuple
 
 import torch
 import torch.distributed as dist
 
 from sduss.dispatcher import Request
 from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig, EngineConfig
-from sduss.model_executor import set_random_seed, get_pipeline_cls
-from sduss.model_executor.parallel_utils.parallel_state import initialize_model_parallel
+from sduss.model_executor import get_pipeline_cls
 from sduss.logger import init_logger
 
-from .scheduler import Scheduler
-from .model_runner import ModelRunner
-from .wrappers import WorkerOutput, WorkerRequest
+from .scheduler import Scheduler, SchedulerOutput
+from .runner.model_runner import ModelRunner
+from .wrappers import WorkerOutput, WorkerRequest, WorkerReqStatus
 
 if TYPE_CHECKING:
-    from .wrappers import WorkerRequestDictType
+    from .runner.wrappers import RunnerOutput
 
 logger = init_logger(__name__)
 
@@ -54,18 +53,11 @@ class Worker:
         self.engine_config = engine_config
         self.rank = rank
         self.device_num = device
-        self.device = None
         self.is_prepare_worker = is_prepare_worker
         self.distributed_init_method = distributed_init_method
 
         self.use_esymred = pipeline_config.use_esymred
         self.use_mixed_precision = scheduler_config.use_mixed_precision
-
-        # Updated and maintained by `execute_model` method
-        self.request_pool: Dict[int, WorkerRequest] = {} 
-
-        self.model_runner = ModelRunner(pipeline_config, parallel_config, scheduler_config, is_prepare_worker)
-        self.scheduler: Scheduler = Scheduler()
 
         # compute local_rank, rank wrt current machine
         num_gpus = torch.cuda.device_count()
@@ -74,271 +66,114 @@ class Worker:
         else:
             raise NotImplementedError("Cross-node distribution is not supported yet!")
 
+        self.pipeline_cls = get_pipeline_cls(self.pipeline_config)
+        self.model_runner = ModelRunner(pipeline_config, parallel_config, 
+                                        scheduler_config, is_prepare_worker,
+                                        rank=rank,
+                                        device_num=device,
+                                        distributed_init_method=distributed_init_method,
+                                        local_rank=self.local_rank)
+        self.scheduler = Scheduler(self.scheduler_config, 
+                                   self.engine_config, 
+                                   self.pipeline_cls.SUPPORT_RESOLUTIONS)
+
+
+        # Set afterwards
+        self.device = None
+        self.prev_task = None
+        self.prev_sche_output = None
+
         # global logger
         # if self.is_prepare_worker:
         #     logger = init_logger(__name__, to_file_name="./outputs/prepare_worker")
         # else:
         #     logger = init_logger(__name__, to_file_name="./outputs/gpu_worker")
-        
     
+
     def init_dis_env(self) -> None:
-        """Initialize model on designated device."""
-        # torch.distributed.all_reduce does not free the input tensor until
-        # the synchronization point. This causes the memory usage to grow
-        # as the number of all_reduce calls increases. This env var disables
-        # this behavior.
-        # Related issue:
-        # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
-
-        # Check up
-        assert self.is_prepare_worker == False
-
-        os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
-        # ? This env var set by Ray causes exceptions with graph building
-        os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
-        
-        self.device = torch.device(f"cuda:{self.device_num}")
-        torch.cuda.set_device(self.device)
-
-        _init_distributed_environment(self.parallel_config, self.rank, 
-                                      self.distributed_init_method)
-        
-        set_random_seed(self.pipeline_config.seed)
-
-        logger.debug(f"Worker rank={self.rank} local_rank={self.local_rank} complete initialization")
+        self.model_runner.execute_method_sync("init_dis_env")
     
     
     def init_prepare(self) -> None:
-        assert self.is_prepare_worker
-        # rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
-        # local_rank = int(os.getenv("LOCAL_RANK"))
-        # logger.debug(f"rank={self.rank}, local_rank={local_rank}")
-        set_random_seed(self.pipeline_config.seed)
+        self.model_runner.execute_method_sync("init_prepare")
+        
     
-
-    def load_model(self):
-        self.model_runner.load_model()
-        self.scheduler = Dispatcher(self.scheduler_config, self.parallel_config, 
-                                   self.engine_config, self.model_runner.pipeline.SUPPORT_RESOLUTIONS)
+    def load_model(self) -> None:
+        self.model_runner.execute_method_sync("load_model")
                                 
     
-    def step(self) -> Optional[WorkerOutput]:
-        pass
+    def step(self) -> Tuple[WorkerOutput, bool]:
+        # 1. Schedule
+        scheduler_output = self.scheduler.schedule()
+        
+        # 2. Wait for results from previous round
+        prev_output = None
+        if self.prev_task:
+            prev_output = ModelRunner.get_result(self.prev_task)
+
+        # 3. Issue task of this round
+        task = self._issue_task(scheduler_output)
+        
+        # 4. Process output and update requests status
+        self._update_reqs(scheduler_output)
+        finished_reqs = self._process_prev_output(prev_output, self.prev_sche_output)
+        
+        self.prev_task = task
+        self.prev_sche_output = scheduler_output
+
+        worker_output = WorkerOutput(finished_reqs)
+        has_unfinished_reqs = self.scheduler.has_finished_requests()
+
+        return worker_output, has_unfinished_reqs
+    
+    
+    def _issue_task(self, scheduler_output: 'SchedulerOutput') -> None:
+        status = scheduler_output.status
+        if status == WorkerReqStatus.PREPARE:
+            reqs = scheduler_output.get_reqs_as_list()
+            req_ids = []
+            req_sps = []
+            for req in reqs:
+                req_ids.append(req.request_id)
+                req_sps.append(req.sampling_params)
+            task = self.model_runner.execute_method_async("exec_prepare_stage", need_res=True, 
+                                                          req_ids=req_ids, req_sps=req_sps)
+        elif status == WorkerReqStatus.DENOISING:
+            task = self.model_runner.execute_method_sync("exec_denoising_stage", need_res=True,
+                                                         req_ids=scheduler_output.get_req_ids(),
+                                                         is_sliced=scheduler_output.is_sliced,
+                                                         patch_size=scheduler_output.patch_size,)
+        elif status == WorkerReqStatus.POSTPROCESSING:
+            task = self.model_runner.execute_method_async("exec_post_stage", need_res=True,
+                                                          req_ids=scheduler_output.get_req_ids(),)
+        else:
+            raise RuntimeError(f"Unexpected {status=} from scheduler.")
+        
+        return task
+    
+    
+    def _process_prev_output(self, prev_output: 'RunnerOutput', 
+                             prev_sche_output: 'SchedulerOutput') -> List[WorkerRequest]:
+        return self.scheduler.process_output(prev_sche_output, prev_output)
+        
+    
+    def _update_reqs(self, scheduler_output: 'SchedulerOutput'):
+        # 1. update status of reqs in this round to new status to ensure consistency
+        self.scheduler.update_reqs_status()
     
 
     def add_requests(self, req_ids: List[int], req_sps: List[Any]):
-        pass
+        reqs = []
+        for req_id, req_sp in zip(req_ids, req_sps):
+            reqs.append(WorkerRequest(request_id=req_id, sampling_params=req_sp))
+        self.scheduler.add_requests(reqs)
     
     
-    def remove_requests_by_id(self, req_ids: Union[int, List[int]]):
+    def abort_requests(self, req_ids: Union[int, List[int]]):
         if isinstance(req_ids, int):
             req_ids = [req_ids]
-        for req_id in req_ids:
-            del self.request_pool[req_id]
+        self.scheduler.abort_requests(req_ids)
     
     
-    def receive_prepare_output(self, prepare_output: WorkerOutput):
-        """Receive prepare output from engine."""
-        start_time = time.time()
-        self._process_prepare_output(prepare_output=prepare_output)
-        end_time = time.time()
-        return WorkerOutput(
-            start_time=start_time,
-            end_time=end_time
-        )
-        
-    
-    def exec_prepare_stage(
-        self,
-        scheduler_reqs: List[Request],
-        use_mixed_precision: bool,
-        prepare_output: WorkerOutput = None,
-    ) -> None:
-        """Execute prepare stage inference.
-        
-        At this stage, mixed precision doesn't matter at all.
-
-        Args:
-            scheduler_reqs (List[Request]): _description_
-        """
-        # 0. Store prepare results
-        if prepare_output is not None:
-            self._process_prepare_output(prepare_output)
-
-        # 1. Create WorkerRequests to track reqs.
-        worker_reqs: "WorkerRequestDictType" = {}
-        for sche_req in scheduler_reqs:
-            wr = WorkerRequest(sche_req)
-            # Only register when prepare stage is not overlapped
-            if not self.is_prepare_worker:
-                self.request_pool[wr.request_id] = wr
-            
-            res = wr.sampling_params.resolution
-            if res not in worker_reqs:
-                worker_reqs[res] = [wr]
-            else:
-                worker_reqs[res].append(wr)
-        
-        # 2. Execute
-        start_time = time.time()
-        self.model_runner.exec_prepare_stage(worker_reqs)
-        end_time = time.time()
-
-        # 3. Create return wrapper
-        return WorkerOutput(
-            worker_reqs=worker_reqs, 
-            status=ReqStatus.PREPARE,
-            start_time=start_time,
-            end_time=end_time,
-            is_from_prepare_worker=self.is_prepare_worker,
-        )
-        
-    
-    def exec_denoising_stage(
-        self,
-        req_ids: List[int],
-        use_mixed_precision: bool,
-        is_sliced: bool,
-        patch_size: int,
-        prepare_output: WorkerOutput = None,
-    ):
-        """Execute denoising stage.
-
-        Requests that finishes denoising stage don't need to be returned. Scheduelr
-        can track requests' status according to its data duplicates.
-
-        Args:
-            req_ids (List[int]): IDs of requests to execute one iteration.
-        """
-        # 0. Store prepare results
-        if prepare_output is not None:
-            self._process_prepare_output(prepare_output)
-        
-        # 1. Collect requests and wrap as dict
-        worker_reqs: "WorkerRequestDictType" = {}
-        for req_id in req_ids:
-            wq = self.request_pool[req_id]
-            res = wq.sampling_params.resolution
-            if res not in worker_reqs:
-                worker_reqs[res] = [wq]
-            else:
-                worker_reqs[res].append(wq)
-
-        # 2. Execute
-        start_time = time.time()
-        self.model_runner.exec_denoising_stage(worker_reqs, is_sliced, patch_size)
-        end_time = time.time()
-
-        return WorkerOutput(
-            start_time=start_time,
-            end_time=end_time,
-        )
-    
-    
-    def exec_post_stage(
-        self,
-        req_ids: List[int],
-        use_mixed_precision: bool,
-        prepare_output: WorkerOutput = None,
-    ) -> WorkerOutput:
-        # 0. Store prepare results
-        if prepare_output is not None:
-            self._process_prepare_output(prepare_output)
-
-        # 1. Collect requests and wrap as dict
-        worker_reqs_dict: "WorkerRequestDictType" = {}
-        for req_id in req_ids:
-            wq = self.request_pool[req_id]
-            res = wq.sampling_params.resolution
-            if res not in worker_reqs_dict:
-                worker_reqs_dict[res] = [wq]
-            else:
-                worker_reqs_dict[res].append(wq)
-
-        start_time = time.time()
-        self.model_runner.exec_post_stage(worker_reqs_dict)
-        end_time = time.time()
-
-        # Create output
-        output = WorkerOutput(
-            worker_reqs=worker_reqs_dict, 
-            status=ReqStatus.POSTPROCESSING,
-            start_time=start_time,
-            end_time=end_time,
-        )
-
-        # Remove finished requests
-        self.remove_requests_by_id(req_ids)
-
-        return output
-
-
-    def _process_prepare_output(self, prepare_output: WorkerOutput) -> None:
-        """Process prepare output.
-        
-        Register worker requests from prepare stage.
-
-        Args:
-            prepare_output (WorkerOutput): Output.
-        """
-        # now = time.time()
-        worker_reqs = prepare_output.worker_reqs
-        for worker_req_list in worker_reqs.values():
-            for wr in worker_req_list:
-                self.add_request(wr.request_id, wr)
-                wr.to_tensor()
-                # Move tensors to current device
-                wr.to_device(self.device)
-                wr.to_dtype(self.pipeline_config.kwargs["torch_dtype"])
-        # logger.info(f"Unpack overlapped prepare output: {time.time() - now}")
-
-        
-    def warm_up_model(self) -> None:
-        """Capture the model and set seeds"""
-        if not self.pipeline_config.enforce_eager:
-            self.model_runner.capture_model(self.gpu_cache)
-        # Reset the seed to ensure that the random state is not affected by
-        # the model initialization and profiling.
-        set_random_seed(self.pipeline_config.seed)
-    
-    
-    def clear(self) -> None:
-        dist.destroy_process_group()
-
-    
-def _init_distributed_environment(
-    parallel_config: ParallelConfig,
-    rank: int,
-    distributed_init_method: Optional[str] = None,
-) -> None:
-    """"Initialize the distributed environment"""
-    
-    if torch.distributed.is_initialized():
-        torch_world_size = torch.distributed.get_world_size()
-        if torch_world_size != parallel_config.world_size:
-            raise RuntimeError(
-                "torch.distributed is already initialized but the torch world "
-                "size does not match parallel_config.world_size "
-                f"({torch_world_size} vs. {parallel_config.world_size})."
-            )
-    elif not distributed_init_method:
-        raise ValueError(
-            "distributed_init_method must be set if torch.distributed "
-            "is not already initialized"
-        )
-    else:
-        torch.distributed.init_process_group(
-            backend="nccl",
-            world_size=parallel_config.world_size,
-            rank=rank,
-            init_method=distributed_init_method
-        )
-    
-    # warmup
-    # tensor = torch.ones(1) * rank
-    # tensor = tensor.cuda()
-    # print(f"[Rank {rank}, device {torch.cuda.current_device()}] Before allreduce: {tensor.item()}")
-    # torch.distributed.all_reduce(tensor)
-    # print(f"[Rank {rank}, device {torch.cuda.current_device()}] After allreduce: {tensor.item()}")
-    # initialize_model_parallel(parallel_config.tensor_parallel_size,
-    #                           parallel_config.pipeline_parallel_size)
+    def shutdown(self) -> None:
+        self.model_runner.execute_method_sync("shutdown")
