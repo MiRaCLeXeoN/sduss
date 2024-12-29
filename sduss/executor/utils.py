@@ -24,7 +24,6 @@ class Task:
         self.kwargs = kwargs
         self.id = uuid.uuid4().int
         self.need_res = need_res
-        self.is_finished = False
         self.output = None
 
 

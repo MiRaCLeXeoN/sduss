@@ -37,7 +37,13 @@ class MpExecutor:
             self.thread_pool = thread_pool
         else:
             self.thread_pool = ThreadPoolExecutor(max_workers=1)
-        self.task_pool: Dict[int, Task] = {}
+        self.task_pool: 'Dict[int, Tuple[Task, asyncio.Event]]' = {}
+
+        # Used by background processing loop thread
+        self.background_loop = threading.Thread(target=self._process_task_output, name=f"Background taskoutput loop {self.rank}")
+        self.wait_task_smp = threading.Semaphore(value=0)
+        self.shutdown = False
+        self.task_exception = None
 
     
     def init_worker(self, worker_init_fn) -> None:
@@ -53,6 +59,35 @@ class MpExecutor:
         )
         self.process.start()
     
+    
+    def _process_task_output(self):
+        while True:
+            self.wait_task_smp.acquire(blocking=True)
+            if self.shutdown:
+                break
+
+            task_output = self.task_res_queue.get()
+            # If method failed
+            if task_output.exception is not None:
+                # ! Since it's run in another thread, main thread cannot automatically detect it
+                # ! So we must store it, instead of raising it.
+                # We store it here, even if the corresponding task is not awaited,
+                # it will be detected by other following tasks.
+                self.task_exception = task_output.exception
+
+            task_id = task_output.id
+            target_task, event = self.task_pool[task_id]
+            # Whichever the task is, we put result of it into the corresponding task
+            target_task.output = task_output.output
+            del self.task_pool[task_id]
+            event.set()
+    
+    
+    def _end_background_loop(self):
+        self.shutdown = True
+        self.wait_task_smp.release(n=1)
+        self.background_loop.join()
+    
 
     def _add_task(self, method_name, need_res: bool, method_args = [], method_kwargs = {}) -> 'Task':
         task = Task(method_name, need_res, *method_args, **method_kwargs)
@@ -60,72 +95,19 @@ class MpExecutor:
         # We only track a task if it need results
         # Exceptions cause by this task will be detected by other coroutines, no need to worry
         if task.need_res:
-            self.task_pool[task.id] = task
-        return task
-
-
-    def _wait_task_res_sync(self, task: Task) -> Any:
-        if task.is_finished:
-            return task.output
+            event = asyncio.Event()
+            self.task_pool[task.id] = (task, event)
+            self.wait_task_smp.release(n=1)
         else:
-            # Process the res until the target is found
-            while not task.is_finished:
-                task_output = self.task_res_queue.get()
-                # If method failed
-                if task_output.exception is not None:
-                    raise task_output.exception
-                task_id = task_output.id
-                # Whichever the task is, we put result of it into the corresponding task
-                target_task = self.task_pool[task_id]
-                target_task.output = task_output.output
-                target_task.is_finished = True
-            # Get the result we want
-            del self.task_pool[task.id]
-            return task.output
-    
-    
-    def execute_method_sync(
-        self,
-        method: str,
-        *method_args, 
-        **method_kwargs,
-    ):
-        """Execute the method and block the whole thread until result is returned.
+            event = None
+        return task, event
 
-        Args:
-            method (str): method name
 
-        Warn:
-            This call will block the whole process!
-        """
-        # Sync method must use need_res=True
-        task = self._add_task(method, True, method_args, method_kwargs)
-        # Then we explicitly wait until the result is returned, this will block the whole routine!
-        return self._wait_task_res_sync(task)
-    
-    
-    async def _wait_task_res_async(self, task: Task) -> Any:
-        # * Since all coroutines are run within the same thread, we dont have to
-        # * worry about race conditions!
-        # * Only one coroutine will modify shared varaibles concurrently
-
-        if task.is_finished:
-            return task.output
-        else:
-            # Process the res until the target is found
-            while not task.is_finished:
-                task_output = await asyncio.get_event_loop().run_in_executor(self.thread_pool, self.task_res_queue.get)
-                # If method failed
-                if task_output.exception is not None:
-                    raise task_output.exception
-                task_id = task_output.id
-                # Whichever the task is, we put result of it into the corresponding task
-                target_task = self.task_pool[task_id]
-                target_task.output = task_output.output
-                target_task.is_finished = True
-            # Get the result we want
-            del self.task_pool[task.id]
-            return task.output
+    async def _wait_task_res_async(self, task: Task, event) -> Any:
+        event.wait()
+        if self.task_exception is not None:
+            raise self.task_exception
+        return task.output
 
 
     def execute_method_async(
@@ -141,10 +123,10 @@ class MpExecutor:
             method (str): method name
             need_res (bool): If set false, no handlers will be returned
         """
-        task = self._add_task(method, need_res, method_args, method_kwargs)
+        task, event = self._add_task(method, need_res, method_args, method_kwargs)
         # Then we explicitly wait until the result is returned, this will block the whole routine!
         if need_res:
-            return asyncio.get_event_loop().create_task(self._wait_task_res_async(task))
+            return asyncio.get_event_loop().create_task(self._wait_task_res_async(task, event))
         else:
             return None
     
@@ -161,6 +143,8 @@ class MpExecutor:
         logger.info(f"Worker {self.name} shutdown start.")
         self.task_queue.put(Task(method_name="shutdown"))
         self.process.join()
+
+        self._end_background_loop()
 
         logger.info(f"Worker {self.name} shutdown complete.")
 
