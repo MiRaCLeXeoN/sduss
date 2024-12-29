@@ -9,7 +9,7 @@ from diffusers.utils.torch_utils import randn_tensor
 from .utils import BatchSupportScheduler, BaseSchedulerStates
 
 if TYPE_CHECKING:
-    from sduss.worker import WorkerRequest
+    from sduss.worker.runner.wrappers import RunnerRequest
 
 class EulerDiscreteSchedulerStates(BaseSchedulerStates):
     """Scheduler states wrapper to store scheduler states of each request."""
@@ -71,13 +71,13 @@ class EulerDiscreteSchedulerStates(BaseSchedulerStates):
 class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportScheduler):
     def batch_set_timesteps(
         self,
-        worker_reqs: List["WorkerRequest"],
+        worker_reqs: List["RunnerRequest"],
         device: torch.device,
     ):
         """Set timesteps method with batch support
 
         Args:
-            worker_reqs (List[WorkerRequest]): Requests to set timesteps
+            worker_reqs (List[RunnerRequest]): Requests to set timesteps
         """
         # 1. sort the reqs according to num_inference_steps
         worker_reqs = sorted(worker_reqs, key=lambda req: req.sampling_params.num_inference_steps, reverse=False)
@@ -114,7 +114,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
 
     def _batch_index_for_timestep(
         self, 
-        req: "WorkerRequest",
+        req: "RunnerRequest",
     ):
         """Batch compatible version method.
         
@@ -140,7 +140,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
 
     def _batch_init_step_index(
         self, 
-        worker_reqs_with_same_total_steps: List["WorkerRequest"],
+        worker_reqs_with_same_total_steps: List["RunnerRequest"],
     ):
         """Batch compatible version method.
 
@@ -150,7 +150,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
         This method must be called at the prepare stage!
 
         Args:
-            worker_reqs_with_same_total_steps (List[WorkerRequest]): _description_
+            worker_reqs_with_same_total_steps (List[RunnerRequest]): _description_
             timestep (Union[float, torch.FloatTensor]): _description_
         """
         example_req = worker_reqs_with_same_total_steps[0]
@@ -161,7 +161,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
     
     def batch_scale_model_input(
         self,
-        worker_reqs: List["WorkerRequest"],
+        worker_reqs: List["RunnerRequest"],
         samples: torch.Tensor,
         timestep_list: torch.Tensor,
     ) -> torch.Tensor:
@@ -187,7 +187,7 @@ class EulerDiscreteScheduler(DiffusersEulerDiscreteScheduler, BatchSupportSchedu
     
     def batch_step(
         self,
-        worker_reqs: List["WorkerRequest"],
+        worker_reqs: List["RunnerRequest"],
         model_outputs: torch.Tensor,
         timestep_list: torch.Tensor,
         samples: torch.Tensor,

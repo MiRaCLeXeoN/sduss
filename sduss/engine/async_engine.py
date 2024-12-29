@@ -245,7 +245,7 @@ class AsyncEngine:
             **kwargs
         )
 
-        self.engine.execute_method_sync("engine_is_ready", True)
+        self.engine.execute_method_sync("engine_is_ready")
 
         # Asyncio loop
         # We need to keep a reference to unshielded
@@ -290,17 +290,14 @@ class AsyncEngine:
         await self.engine.execute_method_async("add_requests", False, new_requsts_params)
         
         # Peek at output if there is any
-        engine_output = await self.engine.execute_method_async("step", True).output
+        request_outputs, has_unfinished_reqs = await self.engine.execute_method_async("step", True)
             
         # Only process the output when we have valid ones
-        request_outputs = engine_output.request_outputs
         if request_outputs is not None:
             # Put the outputs into the corresponding streams.
             for request_output in request_outputs:
                 self._request_tracker.process_request_output(
                     request_output, verbose=self.engine_config.log_requests)
-
-        has_unfinished_reqs = engine_output.has_unfinished_reqs
 
         return has_unfinished_reqs
     

@@ -51,7 +51,7 @@ class RequestPool:
             }
 
 
-    def remove_requests(self, request_ids: Iterable[int]):
+    def remove_requests(self, request_ids: Iterable[int]) -> List[Request]:
         """Remove a request from the pool by its id."""
         if isinstance(request_ids, int):
             request_ids = [request_ids]
@@ -112,3 +112,7 @@ class RequestPool:
 
             # The following colums don't change, no need to update
             # resolution
+    
+    
+    def has_unfinished_reqs(self) -> bool:
+        return len(self.req_mapping) > 0

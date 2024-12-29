@@ -19,10 +19,9 @@ from .pipeline_stable_diffusion_xl_esymred_utils import (
     StableDiffusionXLEsymredPipelineSamplingParams)
 
 from sduss.model_executor.modules.resnet import SplitModule
-from sduss.worker import WorkerRequest
 
 if TYPE_CHECKING:
-    from sduss.worker import WorkerRequestDictType
+    from sduss.worker.runner.wrappers import RunnerRequestDictType, RunnerRequest
 
 class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BasePipeline):
     SUPPORT_MIXED_PRECISION = True
@@ -56,7 +55,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
     @torch.inference_mode()
     def prepare_inference(
         self,
-        worker_reqs: "WorkerRequestDictType" = None,
+        worker_reqs: "RunnerRequestDictType" = None,
         denoising_end: Optional[float] = None,
         guidance_scale: float = 5.0,
         eta: float = 0.0,
@@ -79,7 +78,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         resolution_list.sort()
     
         # 0. Collect args
-        worker_reqs_list: List[WorkerRequest] = []
+        worker_reqs_list: "List[RunnerRequest]" = []
         prompt = []
         prompt_2 = []
         negative_prompt = []
@@ -259,7 +258,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
     @torch.inference_mode()
     def denoising_step(
         self,
-        worker_reqs: Dict[str, List[WorkerRequest]],
+        worker_reqs: "Dict[str, List[RunnerRequest]]",
         do_classifier_free_guidance: bool = True,
         guidance_rescale: float = 0.0,
         guidance_scale: float = 5.0,
@@ -400,7 +399,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
     @torch.inference_mode()
     def post_inference(
         self,
-        worker_reqs: "WorkerRequestDictType",
+        worker_reqs: "RunnerRequestDictType",
         output_type: str = "pil",
     ) -> None:
         latent_dict: Dict[str, torch.Tensor] = {}

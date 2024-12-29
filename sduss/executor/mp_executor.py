@@ -64,9 +64,9 @@ class MpExecutor:
         return task
 
 
-    def _wait_task_res_sync(self, task) -> Any:
+    def _wait_task_res_sync(self, task: Task) -> Any:
         if task.is_finished:
-            return task.ouput
+            return task.output
         else:
             # Process the res until the target is found
             while not task.is_finished:
@@ -104,13 +104,13 @@ class MpExecutor:
         return self._wait_task_res_sync(task)
     
     
-    async def _wait_task_res_async(self, task) -> Any:
+    async def _wait_task_res_async(self, task: Task) -> Any:
         # * Since all coroutines are run within the same thread, we dont have to
         # * worry about race conditions!
         # * Only one coroutine will modify shared varaibles concurrently
 
         if task.is_finished:
-            return task.ouput
+            return task.output
         else:
             # Process the res until the target is found
             while not task.is_finished:

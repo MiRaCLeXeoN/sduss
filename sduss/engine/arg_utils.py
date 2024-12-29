@@ -29,7 +29,6 @@ class EngineArgs:
         self.num_cpus_cpu_worker = kwargs.pop("num_cpus_cpu_worker", 8)
         self.num_cpus_gpu_worker = kwargs.pop("num_cpus_gpu_worker", 4)
         self.num_cpu_workers = kwargs.pop("num_cpu_workers", 1)
-        self.max_parallel_loading_workers = kwargs.pop("max_parallel_loading_workers", None)
         self.gpus = parse_ranges(kwargs.pop("gpus", "[0]"))
         # Scheduler configs
         self.max_batchsize = kwargs.pop("max_batchsize", 32)
@@ -38,7 +37,7 @@ class EngineArgs:
         self.overlap_prepare = kwargs.pop("overlap_prepare", False)
         # Engine configs
         self.disable_log_status = kwargs.pop("disable_log_status", False)
-        self.non_blocking_step = kwargs.pop("non_blocking_step", False)
+        self.dispatcher_policy = kwargs.pop("dispatcher_policy", "greedy")
         # kwargs for `from_pretrained`
         self.kwargs = kwargs
 
@@ -138,13 +137,6 @@ class EngineArgs:
 
         # Scheduler configs
         parser.add_argument(
-            '--max_parallel_loading_workers', 
-            default=None,
-            type=int,
-            help="Maximum number of workers working at the same time. Useful for ray "
-                 "environment only. ", 
-        )
-        parser.add_argument(
             '--max_batchsize', 
             default=16,
             type=int,
@@ -161,16 +153,11 @@ class EngineArgs:
             default="fcfs_mixed",
             help="Name of the pocily to use for scheduling.", 
         )
+
         parser.add_argument(
             '--overlap_prepare', 
             action='store_true',
             help="Whether to overlap prepare stage.", 
-        )
-        parser.add_argument(
-            '--max_overlapped_prepare_reqs', 
-            default=32,
-            type=int,
-            help="Maximum prepare-stage requests to be scheduled for overlapping.", 
         )
 
         # Engine configs
@@ -180,12 +167,6 @@ class EngineArgs:
             action='store_true',
             help="Disable system's logging.", 
         )
-        parser.add_argument(
-            '--non_blocking_step', 
-            default=False,
-            action='store_true',
-            help="Use non blocking paradigm for engine execution.", 
-        )
 
         # kwargs
         parser.add_argument(
@@ -194,6 +175,11 @@ class EngineArgs:
             choices=[torch.float16, torch.float32],
             type=get_torch_dtype_from_string,
             help="Use non blocking paradigm for engine execution.", 
+        )
+        parser.add_argument(
+            '--dispatcher_policy', 
+            default="greedy",
+            help="Name of the policy for dispatcher.", 
         )
 
         return parser
@@ -225,7 +211,6 @@ class EngineArgs:
             num_cpu_workers=self.num_cpu_workers,
             worker_use_ray=self.worker_use_ray,
             worker_use_mp=self.worker_use_mp,
-            max_parallel_loading_workers=self.max_parallel_loading_workers,
             gpus=self.gpus,
         )
     
@@ -240,7 +225,7 @@ class EngineArgs:
     def get_engine_config(self) -> EngineConfig:
         return EngineConfig(
             log_status=not self.disable_log_status,
-            non_blocking_step=self.non_blocking_step
+            dispatcher_policy=self.dispatcher_policy,
         )
         
     
@@ -267,7 +252,6 @@ class AsyncEngineArgs(EngineArgs):
     def get_engine_config(self) -> EngineConfig:
         return EngineConfig(
             log_status=not self.disable_log_status,
-            non_blocking_step=self.non_blocking_step,
             engine_use_ray=self.engine_use_ray,
             engine_use_mp=self.engine_use_mp,
             log_requests=not self.disable_log_requests,

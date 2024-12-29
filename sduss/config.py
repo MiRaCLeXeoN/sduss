@@ -66,7 +66,6 @@ class ParallelConfig:
         num_cpu_workers: int,
         worker_use_ray: bool,
         worker_use_mp: bool,
-        max_parallel_loading_workers: Optional[int],
         gpus: List[int],
     ) -> None:
         """Configuration for the distributed execution.
@@ -83,7 +82,6 @@ class ParallelConfig:
         self.data_parallel_size = data_parallel_size
         self.worker_use_ray = worker_use_ray
         self.worker_use_mp = worker_use_mp
-        self.max_parallel_loading_workers = max_parallel_loading_workers
 
         self.world_size = pipeline_parallel_size * tensor_parallel_size * data_parallel_size
 
@@ -152,13 +150,13 @@ class EngineConfig:
     def __init__(
         self,
         log_status: bool,
-        non_blocking_step: bool,
+        dispatcher_policy: str,
         engine_use_ray: bool = False,
         engine_use_mp: bool = False,
         log_requests: bool = False,
     ) -> None:
         self.log_status = log_status
-        self.non_blocking_step = non_blocking_step
+        self.dispatcher_policy = dispatcher_policy
         self.engine_use_ray = engine_use_ray
         self.engine_use_mp = engine_use_mp
         self.log_requests = log_requests

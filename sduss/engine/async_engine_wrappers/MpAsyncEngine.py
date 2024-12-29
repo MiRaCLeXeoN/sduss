@@ -10,8 +10,7 @@ from functools import partial
 from sduss.engine.engine import Engine
 from sduss.entrypoints.wrappers import ReqOutput
 
-from .wrappers import EngineOutput
-from .utils import Task, EngineMainLoop
+from .utils import Task, TaskOutput, EngineMainLoop
 
 class _MpAsyncEngine:
     def __init__(
@@ -24,7 +23,7 @@ class _MpAsyncEngine:
 
         self.task_queue: 'mp.Queue[Task]' = mp.Queue()
         # Output queue is used for holding request outputs only
-        self.output_queue: 'mp.Queue[EngineOutput]' = mp.Queue()
+        self.output_queue: 'mp.Queue[TaskOutput]' = mp.Queue()
 
         # Set afterwards    
         self.engine = mp.Process(
@@ -47,7 +46,7 @@ class _MpAsyncEngine:
         return task
 
     
-    def _wait_task_output(self, task) -> 'EngineOutput':
+    def _wait_task_output(self, task: Task) -> Any:
         """Wait until the task is finished, and return its result.
         
         Warn:
@@ -55,24 +54,21 @@ class _MpAsyncEngine:
             how they are launched. Otherwise, the results will be in a mess.
         """
         # Wait for task to complete
-        return self.output_queue.get()
+        while True:
+            task_output = self.output_queue.get()
+            if task_output.exception is not None:
+                raise task_output.exception
+            if task_output.id == task.id:
+                # Discard all other results
+                return task_output.output
     
-    
-    def get_output_nowait(self) -> 'Optional[EngineOutput]':
-        try:
-            output = self.output_queue.get_nowait()
-        except queue.Empty:
-            output = None
-        return output
-
 
     def execute_method_sync(
         self, 
         method: str,
-        need_res: bool,
         *method_args, 
         **method_kwargs,
-    ) -> 'Optional[EngineOutput]':
+    ) -> 'Optional[Any]':
         """Execute method, blocking the whole thread until the result is returned.
 
         Args:
@@ -80,12 +76,10 @@ class _MpAsyncEngine:
             need_res (bool): need result or not
 
         """
-        task = self._add_task(method, need_res, method_args, method_kwargs)
-        if need_res:
-            # Then we explicitly wait until the result is returned
-            return self.output_queue.get()
-        else:
-            return None
+        task = self._add_task(method, True, method_args, method_kwargs)
+        # Then we explicitly wait until the result is returned
+        # No matter we need result or not
+        return self._wait_task_output(task)
 
         
     async def execute_method_async(
@@ -94,7 +88,7 @@ class _MpAsyncEngine:
         need_res: bool,
         *method_args, 
         **method_kwargs,
-    ) -> 'Optional[EngineOutput]':
+    ) -> 'Optional[Any]':
         """Execute the method and return the handler.
 
         Args:

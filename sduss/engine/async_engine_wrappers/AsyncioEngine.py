@@ -59,7 +59,7 @@ class _AsyncEngine(Engine):
         else:
             raise RuntimeError(f"Unexpected status {scheduler_output.status}.")
         
-        output = self._process_output(scheduler_output=scheduler_output,
+        output = self._process_outputs(scheduler_output=scheduler_output,
                                        req_ids=req_ids,
                                        output=output,)
 

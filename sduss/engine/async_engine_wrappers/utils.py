@@ -4,8 +4,6 @@ import asyncio
 from typing import TYPE_CHECKING
 from concurrent.futures import ThreadPoolExecutor
 
-from .wrappers import EngineOutput
-
 if TYPE_CHECKING:
     import torch.multiprocessing as mp
 
@@ -23,6 +21,21 @@ class Task:
         self.kwargs = kwargs
         self.id = uuid.uuid4().int
         self.need_res = need_res
+
+
+class TaskOutput:
+
+    def __init__(
+        self, 
+        task_id = None, 
+        output = None,
+        success = None,
+        exception = None,
+    ):
+        self.id = task_id
+        self.output = output
+        self.success = success
+        self.exception = exception
 
 
 class EngineMainLoop:
@@ -62,9 +75,9 @@ class EngineMainLoop:
             try:
                 handler = getattr(self.engine, method_name)
                 output = handler(*task.args, **task.kwargs)
-                engine_output = EngineOutput(task.id, output, True, None)
+                engine_output = TaskOutput(task.id, output, True, None)
             except Exception as e:
-                engine_output = EngineOutput(task.id, None, False, e)
+                engine_output = TaskOutput(task.id, None, False, e)
 
             if task.need_res:
                 self.output_queue.put(engine_output)

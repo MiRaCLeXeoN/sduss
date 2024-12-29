@@ -10,7 +10,6 @@ from typing import Optional, Union, List, Any, Tuple, Dict, TYPE_CHECKING, Itera
 from functools import partial
 
 from sduss.dispatcher import Dispatcher, Request, DispatcherResultType
-from sduss.worker import WorkerOutput
 from sduss.logger import init_logger
 from sduss.entrypoints.wrappers import ReqOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
@@ -25,6 +24,7 @@ from .utils import SmUtilMonitor
 if TYPE_CHECKING:
     from ray.util.placement_group import PlacementGroup
     from sduss.model_executor.diffusers import BasePipeline
+    from sduss.worker import WorkerOutput
 
 logger = init_logger(__name__)
 
@@ -86,8 +86,8 @@ class Engine:
         
         # FIXME: For experiment
         self.collect_data = os.getenv("SDUSS_COLLECT_DATA")
-        if self.collect_data:
-            self._prepare_collect_data()
+        # if self.collect_data:
+        #     self._prepare_collect_data()
 
 
     @classmethod
@@ -184,13 +184,15 @@ class Engine:
         return self.dispatcher.abort_requests(request_ids)
 
     
-    def step(self) -> List[ReqOutput]:
+    def step(self) -> Tuple[List[ReqOutput], bool]:
         """One step consists of scheduling and execution of requests."""
         self._step_counter += 1
         try:
             reqs_by_dp: Dict[int, Request] = self.dispatcher.dispatch()
             self._dispatch_reqs(reqs_by_dp)
-            outputs = self._get_outputs_nowait()
+            worker_outputs = self._get_outputs_nowait()
+            req_outputs = self._process_outputs(worker_outputs)
+            return req_outputs, self.has_unfinished_requests()
         except Exception as e:
             print(e)
             traceback.print_exc()
@@ -218,42 +220,20 @@ class Engine:
         Returns:
             List[WorkerOutput]: _description_
         """
-        outputs = []
+        worker_outputs = []
         for worker in self.workers:
-            outputs.extend(worker.get_output_nowait())
+            worker_outputs.extend(worker.get_output_nowait())
 
-        return outputs
+        return worker_outputs
 
     
-    def _process_output(
+    def _process_outputs(
         self,
-        outputs: List[WorkerOutput],
+        worker_outputs: 'List[WorkerOutput]',
     ) -> List[ReqOutput]:
         """Update requests status and prepare return result if available."""
-        
-        # Update the scheduled sequence groups with the model outputs
-        self.dispatcher.update_reqs_status(scheduler_output=scheduler_output,
-                                          output=output,
-                                          req_ids=req_ids)
-        # collect finished reqs
-        finished_reqs = self.dispatcher.get_finished_requests()
-
-        # abort reqs
-        if scheduler_output.abort_req_ids:
-            self.abort_requests(scheduler_output.abort_req_ids)
-
-        # Create output wrappers
-        ret = []
-        for req in finished_reqs:
-            ret.append(ReqOutput(req))
-        
-        if self.collect_data:
-            self._collect_data(scheduler_output, ret, output)
-        
-        # free finished reqs
-        self.dispatcher.free_finished_requests(finished_reqs)
-        
-        return ret
+        finished_reqs =  self.dispatcher.process_worker_outputs(worker_outputs)
+        return [ReqOutput(req) for req in finished_reqs]
 
 
     def _wait_handlers(self, handlers_dict: 'Dict[MpExecutor, asyncio.Task]') -> 'Dict[MpExecutor, Any]':
@@ -336,28 +316,11 @@ class Engine:
             return output_dict
         else:
             return handlers_dict
-        
-    
-    def get_pipeline_config(self) -> PipelineConfig:
-        """Gets the model configuration."""
-        return self.pipeline_config
 
 
-    def get_num_unfinished_requests(self) -> int:
-        """Gets the number of unfinished requests."""
-        return self.dispatcher.get_num_unfinished_normal_reqs()
-
-
-    def has_unfinished_normal_requests(self) -> bool:
+    def has_unfinished_requests(self) -> bool:
         """Returns True if there are unfinished requests."""
-        return self.dispatcher.has_unfinished_normal_requests(is_nonblocking=self.engine_config.non_blocking_step)
-
-    
-    def _log_system_states(
-        self,
-    ) -> None:
-        pass
-        sys.stdout.flush()
+        return self.dispatcher.has_unfinished_reqs()
 
 
     def engine_is_ready(self) -> bool:
@@ -381,9 +344,9 @@ class Engine:
     
     def _collect_data(
         self,
-        scheduler_output: 'SchedulerOutput',
+        scheduler_output,
         req_outputs: List[ReqOutput],
-        worker_output: WorkerOutput,
+        worker_output: 'WorkerOutput',
     ) -> None:
         self.sm_monitor.checkpoint()
         # Request data
