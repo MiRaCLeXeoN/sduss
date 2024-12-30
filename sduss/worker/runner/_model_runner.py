@@ -10,12 +10,11 @@ from collections import defaultdict
 from sduss.logger import init_logger
 from sduss.model_executor import set_random_seed
 from .wrappers import RunnerRequest, RunnerRequestDictType, RunnerOutput, InferenceStage
+from sduss.model_executor import get_pipeline
 
 if TYPE_CHECKING:
     from sduss.model_executor.diffusers import BasePipeline
     from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig
-    from sduss.model_executor import get_pipeline
-    from ..wrappers import WorkerRequest
 
 logger = init_logger(__name__)
 
@@ -31,9 +30,9 @@ class _ModelRunner:
     """
     def __init__(
         self,
-        pipeline_config: PipelineConfig,
-        parallel_config: ParallelConfig,
-        scheduler_config: SchedulerConfig,
+        pipeline_config: "PipelineConfig",
+        parallel_config: "ParallelConfig",
+        scheduler_config: "SchedulerConfig",
         is_prepare_worker: bool,
         rank: int,
         device_num: int,
@@ -48,6 +47,13 @@ class _ModelRunner:
         self.rank = rank
         self.device_num = device_num
         self.distributed_init_method = distributed_init_method
+
+        # compute local_rank, rank wrt current machine
+        num_gpus = torch.cuda.device_count()
+        if parallel_config.world_size <= num_gpus:
+            self.local_rank = self.rank
+        else:
+            raise NotImplementedError("Cross-node distribution is not supported yet!")
 
         self.req_mapping: 'Dict[int, RunnerRequest]' = {}
 
@@ -83,14 +89,13 @@ class _ModelRunner:
         
         set_random_seed(self.pipeline_config.seed)
 
-        logger.debug(f"Worker rank={self.rank} local_rank={self.local_rank} complete initialization")
+        logger.info(f"Worker rank={self.rank} local_rank={self.local_rank} complete initialization")
     
     
     def init_prepare(self) -> None:
         assert self.is_prepare_worker
         # rank = self.rank if self.rank is not None else int(os.getenv("RANK", "-1"))
         # local_rank = int(os.getenv("LOCAL_RANK"))
-        # logger.debug(f"rank={self.rank}, local_rank={local_rank}")
         set_random_seed(self.pipeline_config.seed)
 
 
@@ -103,10 +108,10 @@ class _ModelRunner:
         self.utils_cls = self.pipeline.get_sampling_params_cls().utils_cls
 
         if self.is_prepare_worker:
-            logger.debug(f"pipeline to cpu")
+            logger.info(f"pipeline to cpu")
             self.pipeline.to("cpu")
         else:
-            logger.debug(f"pipeline to cuda:{torch.cuda.current_device()}")
+            logger.info(f"pipeline to cuda:{torch.cuda.current_device()}")
             self.pipeline.to(torch.cuda.current_device())
 
         return None
@@ -308,7 +313,7 @@ class _ModelRunner:
 
 
 def _init_distributed_environment(
-    parallel_config: ParallelConfig,
+    parallel_config: 'ParallelConfig',
     rank: int,
     distributed_init_method: Optional[str] = None,
 ) -> None:

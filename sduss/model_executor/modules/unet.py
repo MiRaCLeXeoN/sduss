@@ -382,8 +382,8 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
         sample = self.model.conv_in(sample, 
                                     is_sliced=is_sliced, padding_idx=padding_idx,
                                     )
-        print(self.model.conv_in)
-        print("after split", sample.shape)
+        # print(self.model.conv_in)
+        # print("after split", sample.shape)
         # 2.5 GLIGEN position net
         if cross_attention_kwargs is not None and cross_attention_kwargs.get("gligen", None) is not None:
             cross_attention_kwargs = cross_attention_kwargs.copy()
@@ -440,8 +440,8 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                                                        )
                 if is_adapter and len(down_intrablock_additional_residuals) > 0:
                     sample += down_intrablock_additional_residuals.pop(0)
-            print("sample shape", sample.shape)
-            print("res_samples shape", res_samples[0].shape)
+            # print("sample shape", sample.shape)
+            # print("res_samples shape", res_samples[0].shape)
             down_block_res_samples += res_samples
 
         if is_controlnet:
@@ -548,7 +548,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
         sample = self.model.conv_out(sample, 
                                      is_sliced=is_sliced, padding_idx=padding_idx, is_padding=False
                                      )
-        print(sample.shape)
+        # print(sample.shape)
         start = time.time()
         if is_sliced:
             sample = (self.concat_sample(patch_size, sample, latent_offset["cpu"]), )

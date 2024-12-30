@@ -168,17 +168,18 @@ class RequestTracker:
             self._request_streams_mapping.pop(request_id, None)
 
         # Start new reqs
-        while not self._new_requests.empty():
-            stream, new_request_param = self._new_requests.get_nowait()
-            if stream.request_id in finished_request_ids:
-                # The request has already been aborted.
-                stream.finish()
-                continue
-            # Keep a reference to stream
-            self._request_streams_mapping[stream.request_id] = stream
-            new_requests_params.append(new_request_param)
+        if not self._new_requests.empty():
+            while not self._new_requests.empty():
+                stream, new_request_param = self._new_requests.get_nowait()
+                if stream.request_id in finished_request_ids:
+                    # The request has already been aborted.
+                    stream.finish()
+                    continue
+                # Keep a reference to stream
+                self._request_streams_mapping[stream.request_id] = stream
+                new_requests_params.append(new_request_param)
 
-        self.new_requests_event.clear()
+            self.new_requests_event.clear()
 
         return new_requests_params, finished_request_ids
     
@@ -255,8 +256,8 @@ class AsyncEngine:
 
         self._request_tracker = RequestTracker()
 
-        if self.start_engine_loop:
-            self.start_background_loop()
+        # if self.start_engine_loop:
+        #     self.start_background_loop()
 
         if self.engine_config.log_requests:
             logger.info("AsyncEngine initialization done. System Ready.")
@@ -287,17 +288,16 @@ class AsyncEngine:
             self._request_tracker.get_new_and_finished_requests())
         
         # Add requests
-        await self.engine.execute_method_async("add_requests", False, new_requsts_params)
+        if len(new_requsts_params) > 0:
+            await self.engine.execute_method_async("add_requests", False, new_requsts_params)
         
         # Peek at output if there is any
         request_outputs, has_unfinished_reqs = await self.engine.execute_method_async("step", True)
             
-        # Only process the output when we have valid ones
-        if request_outputs is not None:
-            # Put the outputs into the corresponding streams.
-            for request_output in request_outputs:
-                self._request_tracker.process_request_output(
-                    request_output, verbose=self.engine_config.log_requests)
+        # Put the outputs into the corresponding streams.
+        for request_output in request_outputs:
+            self._request_tracker.process_request_output(
+                request_output, verbose=self.engine_config.log_requests)
 
         return has_unfinished_reqs
     
@@ -324,6 +324,7 @@ class AsyncEngine:
             partial(_raise_exception_on_finish,
                     request_tracker=self._request_tracker))
         self.background_loop = asyncio.shield(self._background_loop_unshielded)
+        logger.info("Background loop initialization done.")
     
     
     async def add_request(
@@ -335,6 +336,9 @@ class AsyncEngine:
         if self.engine_config.log_requests:
             logger.info(f"Received new request {request_id}")
         
+        if not self.is_running:
+            self.start_background_loop()
+
         stream = self._request_tracker.add_request(
             request_id=request_id,
             sampling_params=sampling_params,

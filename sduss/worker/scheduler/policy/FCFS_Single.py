@@ -3,7 +3,7 @@ import time
 from typing import List, TYPE_CHECKING
 
 from .policy import Policy
-from ..wrappers import SchedulerOutput, WorkerReqStatus
+from ..wrappers import SchedulerOutput
 
 if TYPE_CHECKING:
     from sduss.dispatcher import Request

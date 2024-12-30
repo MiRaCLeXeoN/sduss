@@ -15,7 +15,6 @@ class DispatchPolicy(ABC):
     def dispatch_requests(self) -> 'Dict[int, List[Request]]':
         """Dispatch reqs to different dp ranks
 
-
         Returns:
             The dict may not include all dp ranks.
         """

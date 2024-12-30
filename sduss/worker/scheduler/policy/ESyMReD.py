@@ -5,7 +5,6 @@ import numpy as np
 
 from typing import List, TYPE_CHECKING, Dict, Tuple
 
-from sduss.dispatcher.wrappers import ResolutionRequestQueue
 from sduss.utils import get_os_env
 from sduss.logger import init_logger
 

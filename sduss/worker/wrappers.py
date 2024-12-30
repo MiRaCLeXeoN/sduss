@@ -3,11 +3,6 @@ import time
 
 from typing import List, Dict, TYPE_CHECKING, Optional, Union
 
-import torch
-
-from sduss.dispatcher import ReqStatus, Request
-from sduss.model_executor.utils import BaseOutput
-
 from .scheduler.esymred_utils import (DISCARD_SLACK, DENOISING_DDL, POSTPROCESSING_DDL, STANDALONE,
                             Hyper_Parameter)
 
@@ -15,6 +10,7 @@ if TYPE_CHECKING:
     from sduss.model_executor.sampling_params import BaseSamplingParams
     from sduss.model_executor.diffusers import BasePipelinePrepareOutput
     from sduss.model_executor.diffusers import BaseSchedulerStates
+    from sduss.dispatcher import Request
 
 
 class WorkerReqStatus(enum.IntEnum):
@@ -95,8 +91,6 @@ class WorkerRequest:
         self.finish_time = None
         self.output = None
 
-        self._initialize_sampling_params()
-    
 
     def is_finished(self):
         return WorkerReqStatus.is_finished(self.status)

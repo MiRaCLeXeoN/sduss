@@ -9,8 +9,11 @@ from functools import partial
 
 from sduss.engine.engine import Engine
 from sduss.entrypoints.wrappers import ReqOutput
+from sduss.logger import init_logger
 
 from .utils import Task, TaskOutput, EngineMainLoop
+
+logger = init_logger(__name__)
 
 class _MpAsyncEngine:
     def __init__(
@@ -99,6 +102,6 @@ class _MpAsyncEngine:
         task = self._add_task(method, need_res, method_args, method_kwargs)
         if need_res:
             # Then we explicitly wait until the result is returned
-            return await asyncio.get_event_loop().run_in_executor(self.thread_executor, self._wait_task_output(task))
+            return await asyncio.get_event_loop().run_in_executor(self.thread_executor, partial(self._wait_task_output, task))
         else:
             return None

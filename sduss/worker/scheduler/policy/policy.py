@@ -13,11 +13,6 @@ class Policy(ABC):
 
     
     @abstractmethod
-    def add_request(self, req) -> None:
-        raise NotImplementedError("You must implemente this method in the derived class.")
-
-    
-    @abstractmethod
     def schedule_requests(self, max_num: int) -> 'SchedulerOutput':
         """Schedule requests for next iteration.
 

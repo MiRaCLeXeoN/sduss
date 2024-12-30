@@ -125,11 +125,6 @@ class Engine:
             worker = MpExecutor(f"sduss_gpu_worker{i}", rank=i, device=self.parallel_config.gpus[i], is_prepare_worker=False)
             self.workers.append(worker)
 
-        self.prepare_workers: 'List[MpExecutor]' = []
-        for i in range(self.parallel_config.num_cpu_workers):
-            worker = MpExecutor(f"sduss_cpu_worker{i}", rank=i, device=self.parallel_config.gpus[i], is_prepare_worker=True)
-            self.prepare_workers.append(worker)
-        
         # init_torch_dist_process_group(self.workers, backend="nccl")
         model_config = copy.deepcopy(self.pipeline_config)
         parallel_config = copy.deepcopy(self.parallel_config)
@@ -140,27 +135,15 @@ class Engine:
         for i, worker in enumerate(self.workers):
             worker.init_worker(worker_init_fn=partial(worker_init_fn, model_config, parallel_config, 
                                                       scheduler_config, engine_config, rank=i, 
-                                                      device=worker.device, is_prepare_worker=False,
+                                                      device=worker.device_num, is_prepare_worker=False,
                                                       distributed_init_method=distributed_init_method))
         method_dict = {w:([], {}) for i, w in enumerate(self.workers)}
         self._run_workers("init_dis_env", method_dict, blocking=True)
 
-        if self.scheduler_config.overlap_prepare:
-            for i, worker in enumerate(self.prepare_workers):
-                worker.init_worker(worker_init_fn=partial(worker_init_fn, model_config, parallel_config, 
-                                                            scheduler_config, engine_config, rank=i, device=-1, 
-                                                            is_prepare_worker=True,
-                                                            distributed_init_method=distributed_init_method))
-            method_dict = {w:([], {}) for i, w in enumerate(self.prepare_workers)}
-            self._run_workers("init_prepare", method_dict, blocking=True)
         
         # Load model
-        if self.scheduler_config.overlap_prepare:
-            method_dict = {w:([], {}) for i, w in enumerate(self.prepare_workers + self.workers)}
-            self._run_workers("load_model", method_dict, blocking=True)
-        else:
-            method_dict = {w:([], {}) for i, w in enumerate(self.workers)}
-            self._run_workers("load_model", method_dict, blocking=True)
+        method_dict = {w:([], {}) for i, w in enumerate(self.workers)}
+        self._run_workers("load_model", method_dict, blocking=True)
 
 
     def add_requests(
@@ -171,7 +154,7 @@ class Engine:
         reqs = []
         for req_param_dict in new_requests_params:
             req = Request(**req_param_dict)
-            reqs.append[req]
+            reqs.append(req)
         self.dispatcher.add_requests(reqs)
 
     
@@ -189,7 +172,9 @@ class Engine:
         self._step_counter += 1
         try:
             reqs_by_dp: Dict[int, Request] = self.dispatcher.dispatch()
-            self._dispatch_reqs(reqs_by_dp)
+            if len(reqs_by_dp) > 0:
+                self._dispatch_reqs(reqs_by_dp)
+
             worker_outputs = self._get_outputs_nowait()
             req_outputs = self._process_outputs(worker_outputs)
             return req_outputs, self.has_unfinished_requests()
@@ -232,6 +217,8 @@ class Engine:
         worker_outputs: 'List[WorkerOutput]',
     ) -> List[ReqOutput]:
         """Update requests status and prepare return result if available."""
+        if len(worker_outputs) <= 0:
+            return []
         finished_reqs =  self.dispatcher.process_worker_outputs(worker_outputs)
         return [ReqOutput(req) for req in finished_reqs]
 
@@ -239,7 +226,7 @@ class Engine:
     def _wait_handlers(self, handlers_dict: 'Dict[MpExecutor, asyncio.Task]') -> 'Dict[MpExecutor, Any]':
         handlers = []
         workers = []
-        for w, h in handlers_dict:
+        for w, h in handlers_dict.items():
             workers.append(w)
             handlers.append(h)
 
@@ -328,19 +315,15 @@ class Engine:
     
 
     def clear(self):
-        if self.collect_data:
-            self.sm_monitor.end_monitor()
-            self.sm_monitor.log_result_to_file()
+        # if self.collect_data:
+        #     self.sm_monitor.end_monitor()
+        #     self.sm_monitor.log_result_to_file()
         sys.stdout.flush()
         sys.stderr.flush()
 
         for w in self.workers:
             w.end_worker()
         
-        if self.scheduler_config.overlap_prepare:
-            for w in self.prepare_workers:
-                w.end_worker()
-    
     
     def _collect_data(
         self,

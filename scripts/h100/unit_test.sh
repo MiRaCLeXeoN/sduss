@@ -16,11 +16,10 @@ fi
 python ./sduss/entrypoints/api_server.py \
     --model_name_or_pth ${MODEL_PATH} \
     --policy ${POLICY} \
+    --dispatcher_policy greedy \
     ${USE_MIXED_PRECISION} \
-    ${OVERLAP_PREPARE} \
-    ${NON_BLOCKING_STEP} \
     --use_esymred \
-    --max_batchsize 12 \
+    --max_batchsize 32 \
     --torch_dtype "float16" \
     --engine_use_mp \
     --worker_use_mp \

@@ -1,6 +1,10 @@
 import uuid
+import traceback
 
 from typing import TYPE_CHECKING
+from sduss.logger import init_logger
+
+logger = init_logger(__name__)
 
 if TYPE_CHECKING:
     import torch.multiprocessing as mp
@@ -74,6 +78,8 @@ class RunnerMainLoop:
                 engine_output = TaskOutput(task.id, output, True, None)
             except Exception as e:
                 engine_output = TaskOutput(task.id, None, False, e)
+                logger.error(traceback.format_exc())
+                raise e
 
             if task.need_res or engine_output.exception is not None:
                 self.output_queue.put(engine_output)

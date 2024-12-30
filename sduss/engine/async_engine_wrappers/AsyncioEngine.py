@@ -5,7 +5,6 @@ from functools import partial
 
 from sduss.entrypoints.wrappers import ReqOutput
 from sduss.dispatcher import ReqStatus
-from sduss.worker import WorkerOutput
 
 from ..engine import Engine
 

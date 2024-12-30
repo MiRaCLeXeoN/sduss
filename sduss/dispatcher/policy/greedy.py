@@ -16,6 +16,8 @@ class GreedyDispath(DispatchPolicy):
     def dispatch_requests(self) -> Dict[int, List[Request]]:
         # 1. Get all waiting reqs
         _waiting_req_ids = self.request_pool.get_ids_by_status(ReqStatus.WAITING)
+        if len(_waiting_req_ids) <= 0:
+            return {}
         waiting_reqs = self.request_pool.get_by_ids(_waiting_req_ids)
         # 2. Get the workload all ranks
         pixels_by_dp_rank = self.request_pool.get_pixels_all_dp_rank()

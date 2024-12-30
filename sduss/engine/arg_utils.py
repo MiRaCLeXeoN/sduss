@@ -34,7 +34,6 @@ class EngineArgs:
         self.max_batchsize = kwargs.pop("max_batchsize", 32)
         self.use_mixed_precisoin = kwargs.pop("use_mixed_precision", False)
         self.policy = kwargs.pop("policy", "fcfs_single")
-        self.overlap_prepare = kwargs.pop("overlap_prepare", False)
         # Engine configs
         self.disable_log_status = kwargs.pop("disable_log_status", False)
         self.dispatcher_policy = kwargs.pop("dispatcher_policy", "greedy")
@@ -154,18 +153,17 @@ class EngineArgs:
             help="Name of the pocily to use for scheduling.", 
         )
 
-        parser.add_argument(
-            '--overlap_prepare', 
-            action='store_true',
-            help="Whether to overlap prepare stage.", 
-        )
-
         # Engine configs
         parser.add_argument(
             '--disable_log_status', 
             default=False,
             action='store_true',
             help="Disable system's logging.", 
+        )
+        parser.add_argument(
+            '--dispatcher_policy', 
+            default="greedy",
+            help="Name of the policy for dispatcher.", 
         )
 
         # kwargs
@@ -175,11 +173,6 @@ class EngineArgs:
             choices=[torch.float16, torch.float32],
             type=get_torch_dtype_from_string,
             help="Use non blocking paradigm for engine execution.", 
-        )
-        parser.add_argument(
-            '--dispatcher_policy', 
-            default="greedy",
-            help="Name of the policy for dispatcher.", 
         )
 
         return parser
@@ -219,7 +212,6 @@ class EngineArgs:
             max_bathsize=self.max_batchsize,
             use_mixed_precision=self.use_mixed_precisoin,
             policy=self.policy,
-            overlap_prepare=self.overlap_prepare,
         )
     
     def get_engine_config(self) -> EngineConfig:
@@ -252,6 +244,7 @@ class AsyncEngineArgs(EngineArgs):
     def get_engine_config(self) -> EngineConfig:
         return EngineConfig(
             log_status=not self.disable_log_status,
+            dispatcher_policy=self.dispatcher_policy,
             engine_use_ray=self.engine_use_ray,
             engine_use_mp=self.engine_use_mp,
             log_requests=not self.disable_log_requests,

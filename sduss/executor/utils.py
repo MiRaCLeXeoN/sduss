@@ -1,14 +1,17 @@
 import uuid
 import asyncio
-import queue    
+import traceback
 
 from typing import TYPE_CHECKING
 from concurrent.futures import ThreadPoolExecutor
 
 from .wrappers import TaskOutput
+from sduss.logger import init_logger
 
 if TYPE_CHECKING:
     import torch.multiprocessing as mp
+
+logger = init_logger(__name__)
 
 class Task:
     def __init__(
@@ -62,7 +65,12 @@ class ExecutorMainLoop:
                 if not have_reqs:
                     await self.new_reqs_event.wait()
                 self.new_reqs_event.clear()
-                worker_output, have_reqs = self.worker.step()
+                try:
+                    worker_output, have_reqs = self.worker.step()
+                except Exception as e:
+                    self.output_queue.put(TaskOutput(None, None, False, e))
+                    logger.error(traceback.format_exc())
+                    raise e
                 if worker_output is not None:
                     self.output_queue.put(TaskOutput(None, worker_output, True, None))
                 await asyncio.sleep(0)
@@ -80,7 +88,9 @@ class ExecutorMainLoop:
             task_output = TaskOutput(task.id, output, True, None)
         except Exception as e:
             task_output = TaskOutput(task.id, None, False, e)
-        
+            logger.error(traceback.format_exc())
+            raise e
+
         if method_name == "add_requests":
             self.new_reqs_event.set()
         

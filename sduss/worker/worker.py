@@ -6,7 +6,7 @@ from sduss.config import PipelineConfig, ParallelConfig, SchedulerConfig, Engine
 from sduss.model_executor import get_pipeline_cls
 from sduss.logger import init_logger
 
-from .scheduler import Scheduler, SchedulerOutput
+from .scheduler.scheduler import Scheduler, SchedulerOutput
 from .runner.model_runner import ModelRunner
 from .wrappers import WorkerOutput, WorkerRequest, WorkerReqStatus
 
@@ -54,12 +54,6 @@ class Worker:
         self.use_esymred = pipeline_config.use_esymred
         self.use_mixed_precision = scheduler_config.use_mixed_precision
 
-        # compute local_rank, rank wrt current machine
-        num_gpus = torch.cuda.device_count()
-        if parallel_config.world_size <= num_gpus:
-            self.local_rank = self.rank
-        else:
-            raise NotImplementedError("Cross-node distribution is not supported yet!")
 
         self.pipeline_cls = get_pipeline_cls(self.pipeline_config)
         self.model_runner = ModelRunner(pipeline_config, parallel_config, 
@@ -67,8 +61,7 @@ class Worker:
                                         name=f"ModelRunner rank {self.rank}",
                                         rank=rank,
                                         device_num=device,
-                                        distributed_init_method=distributed_init_method,
-                                        local_rank=self.local_rank)
+                                        distributed_init_method=distributed_init_method,)
         self.scheduler = Scheduler(self.scheduler_config, 
                                    self.engine_config, 
                                    self.pipeline_cls.SUPPORT_RESOLUTIONS)
@@ -114,7 +107,7 @@ class Worker:
         # 2. Wait for results from previous round
         prev_output = None
         if self.prev_task:
-            prev_output = ModelRunner.get_result(self.prev_task)
+            prev_output = self.model_runner.get_result(self.prev_task)
 
         # 3. Issue task of this round
         task = self._issue_task(scheduler_output)
@@ -127,9 +120,11 @@ class Worker:
         self.prev_task = task
         self.prev_sche_output = scheduler_output
 
-        worker_output = WorkerOutput(finished_reqs)
-
-        return worker_output, has_unfinished_reqs
+        if len(finished_reqs) > 0:
+            worker_output = WorkerOutput(finished_reqs)
+            return worker_output, has_unfinished_reqs
+        else:
+            return None, has_unfinished_reqs
     
     
     def _issue_task(self, scheduler_output: 'SchedulerOutput') -> None:
@@ -147,7 +142,7 @@ class Worker:
             task = self.model_runner.execute_method_async("exec_prepare_stage", need_res=True, 
                                                           req_ids=req_ids, req_sps=req_sps)
         elif status == WorkerReqStatus.DENOISING:
-            task = self.model_runner.execute_method_sync("exec_denoising_stage", need_res=True,
+            task = self.model_runner.execute_method_async("exec_denoising_stage", need_res=True,
                                                          req_ids=scheduler_output.get_req_ids(),
                                                          is_sliced=scheduler_output.is_sliced,
                                                          patch_size=scheduler_output.patch_size,)
@@ -162,6 +157,9 @@ class Worker:
     
     def _process_prev_output(self, prev_output: 'RunnerOutput', 
                              prev_sche_output: 'SchedulerOutput') -> List[WorkerRequest]:
+        if not prev_output:
+            # First round, no output
+            return []
         return self.scheduler.process_output(prev_sche_output, prev_output)
         
     
@@ -173,7 +171,8 @@ class Worker:
     def add_requests(self, req_ids: List[int], req_sps: List[Any]):
         reqs = []
         for req_id, req_sp in zip(req_ids, req_sps):
-            reqs.append(WorkerRequest(request_id=req_id, sampling_params=req_sp))
+            req = WorkerRequest(request_id=req_id, sampling_params=req_sp)
+            reqs.append(req)
         self.scheduler.add_requests(reqs)
     
     

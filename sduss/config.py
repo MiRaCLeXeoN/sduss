@@ -129,19 +129,15 @@ class SchedulerConfig:
         max_bathsize: int,
         use_mixed_precision: bool, 
         policy: str,
-        overlap_prepare: bool,
     ) -> None:
 
         self.max_batchsize = max_bathsize
         self.use_mixed_precision = use_mixed_precision
         self.policy = policy
-        self.overlap_prepare = overlap_prepare
         
         self._verify_args()
         
     def _verify_args(self) -> None:
-        if self.overlap_prepare:
-            raise NotImplementedError(f"Overlap prepare stage is not supported yet!")
         if self.max_batchsize <= 0:
             raise ValueError(f"Invalid max bathsize={self.max_batchsize}")
 
@@ -176,5 +172,4 @@ class EngineConfig:
         # Currently we only support 2 combinations:
         # 1. blocking + non-overlapped
         # 2. nonblocking + overlapped
-        # assert self.non_blocking_step == scheduler_config.overlap_prepare
         pass

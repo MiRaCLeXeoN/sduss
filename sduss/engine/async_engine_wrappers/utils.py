@@ -4,6 +4,10 @@ import asyncio
 from typing import TYPE_CHECKING
 from concurrent.futures import ThreadPoolExecutor
 
+from sduss.logger import init_logger
+
+logger = init_logger(__name__)
+
 if TYPE_CHECKING:
     import torch.multiprocessing as mp
 
@@ -78,6 +82,7 @@ class EngineMainLoop:
                 engine_output = TaskOutput(task.id, output, True, None)
             except Exception as e:
                 engine_output = TaskOutput(task.id, None, False, e)
+                raise e
 
             if task.need_res:
                 self.output_queue.put(engine_output)

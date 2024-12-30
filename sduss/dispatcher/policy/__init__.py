@@ -16,7 +16,9 @@ class DispatchPolicyFactory:
 
         # Check mixed precision supportment
         use_mixed_precision = kwargs.pop("use_mixed_precision")
-        if cls._POLICY_REGISTRY[policy_name][1] != use_mixed_precision:
+        # Supoort mixed precision is downward-compatible
+        # Only for dispatcher!
+        if use_mixed_precision and not cls._POLICY_REGISTRY[policy_name][1]:
             raise ValueError(f"Your designated policy {policy_name} is incompatible with {use_mixed_precision=}")
 
         return cls._POLICY_REGISTRY[policy_name][0](**kwargs)

@@ -39,6 +39,7 @@ class ModelRunner:
     def _add_task(self, method_name, need_res: bool, method_args = [], method_kwargs = {}) -> 'Task':
         task = Task(method_name, need_res, *method_args, **method_kwargs)
         self.task_queue.put_nowait(task)
+        return task
 
     
     def get_result(self, task: Task) -> Any:
@@ -67,8 +68,9 @@ class ModelRunner:
             need_res (bool): if true, this method will block until the result is returned,
                 otherwise it will return immediately after the task is sent to the engine.
         """
-        self._add_task(method, True, method_args, method_kwargs)
-        return self.get_result()
+        task = self._add_task(method, True, method_args, method_kwargs)
+        res =  self.get_result(task)
+        return res
 
         
     def execute_method_async(
@@ -85,9 +87,9 @@ class ModelRunner:
             need_res (bool): if true, this method will block until the result is returned,
                 otherwise it will return immediately after the task is sent to the engine.
         """
-        self._add_task(method, need_res, method_args, method_kwargs)
+        task = self._add_task(method, need_res, method_args, method_kwargs)
         if need_res:
-            return self
+            return task
         else:
             return None
         

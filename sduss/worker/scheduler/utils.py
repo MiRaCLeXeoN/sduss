@@ -1,9 +1,8 @@
 from typing import Iterable, Dict, List, TYPE_CHECKING, Optional
 
-from .wrappers import Request
-
 if TYPE_CHECKING:
     from .wrappers import SchedulerOutputReqsType
+    from ..wrappers import WorkerRequest
 
 def find_gcd(resolutions: Iterable[int]):
 
@@ -22,7 +21,7 @@ def find_gcd(resolutions: Iterable[int]):
 
 
 def convert_list_to_res_dict(
-        reqs: List[Request],
+        reqs: 'List[WorkerRequest]',
         num: Optional[int] = None,
     ) -> 'SchedulerOutputReqsType':
     if num is None:
