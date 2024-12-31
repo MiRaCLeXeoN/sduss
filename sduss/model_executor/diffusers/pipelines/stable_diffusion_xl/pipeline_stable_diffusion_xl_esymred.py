@@ -269,7 +269,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         ip_adapter_image: Optional[PipelineImageInput] = None,
         ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = None,
         is_sliced: bool = False,
-        patch_size: int = 256,   
+        patch_size: int = 256
     ) -> None:
         # keep the iteration in fixed order
         resolution_list = list(worker_reqs.keys())
@@ -282,6 +282,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
         negative_pooled_prompt_embeds_dict: Dict[str, torch.Tensor] = {}
         timestep_dict: Dict[str, torch.Tensor] = {}
         add_time_ids_dict: Dict[str, torch.Tensor] = {}
+        input_index_dict: Dict[str, List[str]] = {}
 
         for res in resolution_list:
             local_latent_list = []
@@ -291,7 +292,9 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             local_negative_pooled_prompt_embeds_list = []
             local_timestep_list = []
             local_add_time_ids_list = []
+            local_request_ids = []
             for req in worker_reqs[res]:
+                local_request_ids.append(req.request_id)
                 local_latent_list.append(req.sampling_params.latents)
                 local_prompt_embeds_list.append(req.sampling_params.prompt_embeds)
                 local_negative_prompt_embeds_list.append(req.sampling_params.negative_prompt_embeds)
@@ -310,6 +313,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             timestep_dict[res] = torch.tensor(data=local_timestep_list, dtype=req.scheduler_states.timesteps.dtype,
                                               device=req.scheduler_states.timesteps.device)
             add_time_ids_dict[res] = torch.cat(local_add_time_ids_list, dim=0)
+            input_index_dict[res] = local_request_ids
         
         # We shoule preserve the lantent_dict as original
         latent_input_dict : Dict[str, torch.Tensor] = {}
@@ -322,6 +326,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             add_time_ids_list: List[torch.Tensor] = []
             for res in resolution_list:
                 latent_input_dict[res] = torch.cat([latent_dict[res]] * 2, dim=0)
+                input_index_dict[res] = [str(id) for id in input_index_dict[res]] + [f"{id}-1" for id in input_index_dict[res]]
                 prompt_embeds_list.append(negative_prompt_embeds_dict[res])
                 prompt_embeds_list.append(prompt_embeds_dict[res])
                 add_text_embeds_list.append(negative_pooled_prompt_embeds_dict[res])
@@ -371,6 +376,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             return_dict=False,
             is_sliced=is_sliced,
             patch_size=patch_size,
+            input_indices=input_index_dict,
         )[0]
 
         for res, res_split_noise in noise_pred.items():

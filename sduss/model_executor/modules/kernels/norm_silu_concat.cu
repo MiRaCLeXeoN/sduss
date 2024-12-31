@@ -89,6 +89,7 @@ __global__ void NormSiluConcatCUDAKernel(
     int num_groups, // gorups per batch
     int H,
     int W,
+    bool padding,
     torch::PackedTensorAccessor<T,1,torch::RestrictPtrTraits> mean,
     torch::PackedTensorAccessor<T,1,torch::RestrictPtrTraits> rstd,
     torch::PackedTensorAccessor<T,1,torch::RestrictPtrTraits> gamma,
@@ -159,6 +160,126 @@ __global__ void NormSiluConcatCUDAKernel(
       // T x = X[base_index + j * stride + offset + k] * scale + beta_data;
       // T x = (X[batch_idx][skip_channels + channel_in_group][rows][cols]);
       T x = (X[batch_idx][skip_channels + channel_in_group][rows][cols] * scale + beta_data);
+      if (padding) {
+        if (padding_batch_idx_top != -1 && rows == 0) {
+          result_value[channel_in_group * W + cols] = x;
+        } else if (padding_batch_idx_bottom != -1 && rows == H - 1) {
+          result_value[group * W + channel_in_group * W + cols] = x;
+        }
+        if (padding_batch_idx_left != -1 && cols == 0) {
+          result_value[group * W * 2 + channel_in_group * H + rows] = x;
+        } else if (padding_batch_idx_right != -1 && cols == W - 1) {
+          result_value[group * W * 2 + group * H + channel_in_group * H + rows] = x;
+        }
+        Y[batch_idx][skip_channels + channel_in_group][rows + 1][cols + 1] = x;
+      } else {
+        Y[batch_idx][skip_channels + channel_in_group][rows][cols] = x;
+      }
+      
+      // result_value[channel_in_group * HxW + k] = silu_tailer(x);
+      // result_value[j * stride + offset + k] = (x * ex) / (ex + 1);
+    }
+  }
+  if(padding) {
+    __syncthreads();
+    for (int32_t k = thread_index; k < group*W; k += blockDim.x) {
+      const int channel_in_group_idx = k / W;
+      const int id_in_row = k % W;
+      if (padding_batch_idx_top != -1) {
+        // Y[eles_per_batch * padding_batch_idx_top + offset_in_batch + channel_in_group_idx * new_HxW + id_in_row + 1] 
+        //   = result_value[channel_in_group_idx * HxW + id_in_row];
+        Y[padding_batch_idx_top][skip_channels + channel_in_group_idx][H + 1][id_in_row + 1]
+          = result_value[channel_in_group_idx * W + id_in_row];
+      }
+      if (padding_batch_idx_bottom != -1) {
+        // Y[eles_per_batch * padding_batch_idx_bottom + offset_in_batch + channel_in_group_idx * new_HxW +  + ((H + 1) * (W + 2)) + id_in_row + 1]
+        //   = result_value[channel_in_group_idx * HxW + (H - 1) * W + id_in_row];
+        Y[padding_batch_idx_bottom][skip_channels + channel_in_group_idx][0][id_in_row + 1]
+          = result_value[group * W + channel_in_group_idx * W + id_in_row];
+      }
+    }
+    for (int32_t k = thread_index; k < group*H; k += blockDim.x) {
+      const int channel_in_group_idx = k / H;
+      const int id_in_col = k % H;
+      if (padding_batch_idx_left != -1) {
+        // Y[eles_per_batch * padding_batch_idx_left + offset_in_batch + channel_in_group_idx * new_HxW + (id_in_col + 1) * (W + 2)] 
+        //   = result_value[channel_in_group_idx * HxW + id_in_col * W];
+        Y[padding_batch_idx_left][skip_channels + channel_in_group_idx][id_in_col + 1][W+1]
+          = result_value[group * W * 2 + channel_in_group_idx * H + id_in_col];
+        if (id_in_col == 0) {
+          // Y[eles_per_batch * padding_batch_idx_left + offset_in_batch + channel_in_group_idx * new_HxW] 
+          //   = result_value[channel_in_group_idx * HxW];
+          Y[padding_batch_idx_left][skip_channels + channel_in_group_idx][0][W+1] 
+            = result_value[group * W * 2 + channel_in_group_idx * H];
+        }
+        if (id_in_col == H - 1) {
+          // Y[eles_per_batch * padding_batch_idx_left + offset_in_batch + channel_in_group_idx * new_HxW + (id_in_col + 2) * (W + 2)] 
+          //   = result_value[channel_in_group_idx * HxW + id_in_col * W];
+          Y[padding_batch_idx_left][skip_channels + channel_in_group_idx][H+1][W+1] 
+            = result_value[group * W * 2 + channel_in_group_idx * H + id_in_col];
+        }
+      }
+      if (padding_batch_idx_right != -1) {
+        // Y[(H + 2) * (W + 2) * C * padding_batch_idx_right + offset_in_batch + channel_in_group_idx * new_HxW + (id_in_col + 1) * (W + 2) + (W + 1)] 
+        //   = result_value[channel_in_group_idx * HxW + id_in_col * W + (W - 1)];
+        Y[padding_batch_idx_right][skip_channels + channel_in_group_idx][id_in_col + 1][0]
+          = result_value[group * W * 2 + group * H + channel_in_group_idx * H + id_in_col];
+        if (id_in_col == 0) {
+          // Y[eles_per_batch * padding_batch_idx_right + offset_in_batch + channel_in_group_idx * new_HxW + (W + 1)] 
+          //   = result_value[channel_in_group_idx * HxW + (W - 1)];
+          Y[padding_batch_idx_right][skip_channels + channel_in_group_idx][0][0]
+            = result_value[group * W * 2 + group * H + channel_in_group_idx * H];
+        }
+        if (id_in_col == H - 1) {
+          // Y[eles_per_batch * padding_batch_idx_right + offset_in_batch + channel_in_group_idx * new_HxW + (id_in_col + 2) * (W + 2) + (W + 1)] 
+          //   = result_value[channel_in_group_idx * HxW + id_in_col * W + (W - 1)];
+          Y[padding_batch_idx_right][skip_channels + channel_in_group_idx][H + 1][0]
+            = result_value[group * W * 2 + group * H + channel_in_group_idx * H + id_in_col];
+        }
+      }
+    }
+
+  }
+}
+
+template <typename T>
+__global__ void MockNormSiluConcatCUDAKernel(
+    torch::PackedTensorAccessor<T,4,torch::RestrictPtrTraits> X,
+    int group, // channels per group
+    int num_groups, // gorups per batch
+    int H,
+    int W,
+    torch::PackedTensorAccessor<T,4,torch::RestrictPtrTraits> Y,
+    torch::PackedTensorAccessor<int,1,torch::RestrictPtrTraits> padding_idx) {
+  using T_ACC = at::acc_type<T, true>;
+  const int thread_index = threadIdx.x;
+  const int group_idx = blockIdx.x;
+  const int group_idx_in_batch = group_idx % num_groups; 
+  const int lane_idx = thread_index % WARP_SIZE;
+  const int warp_id = thread_index / WARP_SIZE;
+  const int channels_per_group = blockDim.x / WARP_SIZE; // channels one thread_block can process once
+  
+  extern __shared__ int sh[];
+
+  T* result_value = (T*)&sh;
+  const int batch_idx = group_idx / num_groups; 
+
+  // T full_mean = mean[group_idx];
+  // T full_rstd = rstd[group_idx];
+
+  const int skip_channels = group_idx_in_batch * group;
+  const int padding_batch_idx_top = padding_idx[batch_idx * 4];
+  const int padding_batch_idx_left = padding_idx[batch_idx * 4 + 1];
+  const int padding_batch_idx_bottom = padding_idx[batch_idx * 4 + 2];
+  const int padding_batch_idx_right = padding_idx[batch_idx * 4 + 3];
+  for (int32_t j = 0; j < (group / channels_per_group); j++) {
+    int channel_in_group = j * channels_per_group + warp_id;
+    for (int32_t k = lane_idx; k < H*W; k += WARP_SIZE) {
+      
+      int rows = k / W;
+      int cols = k % W;
+
+      T x = (X[batch_idx][skip_channels + channel_in_group][rows][cols]);
       if (padding_batch_idx_top != -1 && rows == 0) {
         result_value[channel_in_group * W + cols] = x;
       } else if (padding_batch_idx_bottom != -1 && rows == H - 1) {
@@ -323,6 +444,7 @@ void FuseGroupNormKernelImplInternal(
     int H,
     int W,
     int group,
+    bool padding,
     torch::Tensor& Y,
     torch::Tensor& mean,
     torch::Tensor& rstd,
@@ -346,7 +468,7 @@ void FuseGroupNormKernelImplInternal(
         const int shared_mem = group * W * sizeof(scalar_t) * 2 + group * H * sizeof(scalar_t) * 2;
         NormSiluConcatCUDAKernel<scalar_t><<<gridDim, blockDim, shared_mem, cuda_stream>>>(
             X.packed_accessor<scalar_t,4,torch::RestrictPtrTraits>(), 
-            G, D, H, W, 
+            G, D, H, W, padding,
             mean.packed_accessor<scalar_t,1,torch::RestrictPtrTraits>(), 
             rstd.packed_accessor<scalar_t,1,torch::RestrictPtrTraits>(), 
             gamma.packed_accessor<scalar_t,1,torch::RestrictPtrTraits>(),
@@ -354,6 +476,42 @@ void FuseGroupNormKernelImplInternal(
             Y.packed_accessor<scalar_t,4,torch::RestrictPtrTraits>(), 
             // latent_offset.packed_accessor<int,1,torch::RestrictPtrTraits>(), 
             // patch_map.packed_accessor<int,1,torch::RestrictPtrTraits>(), 
+            padding_idx.packed_accessor<int,1,torch::RestrictPtrTraits>());
+      }));
+  cudaDeviceSynchronize();
+  cudaError_t error = cudaGetLastError();
+  if (error != cudaSuccess) {
+    std::cerr << "NormSiluConcatCUDAKernel kernel error: " << cudaGetErrorString(error) << std::endl;
+  }
+}
+
+void MockFuseGroupNormKernelImplInternal(
+    const torch::Tensor& X,
+    int N,
+    int C,
+    int H,
+    int W,
+    int group,
+    torch::Tensor& Y,
+    torch::Tensor& padding_idx) {
+  const int HxW = H * W;
+  const int G = group;
+  const int D = C / G;
+  cudaStream_t cuda_stream = at::cuda::getCurrentCUDAStream();
+  const int num_threads = 512;
+  const int gridDim = D * N;
+  const int blockDim = 320;
+      AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::ScalarType::Half,
+      at::ScalarType::BFloat16,
+      X.scalar_type(),
+      "MockFuseGroupNormKernelImpl",
+      ([&] __global__  {
+        const int shared_mem = group * W * sizeof(scalar_t) * 2 + group * H * sizeof(scalar_t) * 2;
+        MockNormSiluConcatCUDAKernel<scalar_t><<<gridDim, blockDim, shared_mem, cuda_stream>>>(
+            X.packed_accessor<scalar_t,4,torch::RestrictPtrTraits>(), 
+            G, D, H, W, 
+            Y.packed_accessor<scalar_t,4,torch::RestrictPtrTraits>(), 
             padding_idx.packed_accessor<int,1,torch::RestrictPtrTraits>());
       }));
   cudaDeviceSynchronize();

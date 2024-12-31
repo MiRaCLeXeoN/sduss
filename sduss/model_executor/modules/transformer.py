@@ -35,41 +35,39 @@ class PatchTransformer2DModel(BaseModule):
         encoder_hidden_states=None,
         timestep=None,
         class_labels=None,
+        patch_map: dict = None,
         cross_attention_kwargs=None,
         return_dict: bool = True,
         latent_offset: dict = None,
         padding_idx: dict = None,
         is_sliced:bool = False,
-        left_batch_idx: torch.FloatTensor or None = None,
-        right_batch_idx: torch.FloatTensor or None = None,
-        patch_num_list: torch.FloatTensor or None = None,
-        right_idx: torch.FloatTensor or None = None,
-        past_batch: torch.FloatTensor or None = None,
         resolution_offset: dict = None,
+        mask: list = None,
+        input_indices: list = None,
     ):
         # 1. Input
         if self.module.is_input_continuous:
             batch, _, height, width = hidden_states.shape
             residual = hidden_states
 
-            hidden_states = self.module.norm(hidden_states, is_sliced=is_sliced, is_fused=False)
+            hidden_states = self.module.norm(hidden_states, is_sliced=is_sliced, is_fused=False, latent_offset=latent_offset["cuda"], padding_idx=padding_idx["cuda"], patch_map=patch_map["cuda"])
             if not self.module.use_linear_projection:
-                hidden_states = self.module.proj_in(hidden_states, is_sliced=is_sliced)
+                hidden_states = self.module.proj_in(hidden_states, is_sliced=is_sliced, input_indices=input_indices, mask=mask)
                 inner_dim = hidden_states.shape[1]
                 hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch, height * width, inner_dim)
             else:
                 inner_dim = hidden_states.shape[1]
                 hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(batch, -1, inner_dim)
-                hidden_states = self.module.proj_in(hidden_states)
+                hidden_states = self.module.proj_in(hidden_states, input_indices=input_indices, mask=mask)
         elif self.module.is_input_vectorized:
             hidden_states = self.module.latent_image_embedding(hidden_states)
         elif self.module.is_input_patches:
             hidden_states = self.module.pos_embed(hidden_states)
 
-        # if self.module.caption_projection is not None:
-        #     batch_size = hidden_states.shape[0]
-        #     encoder_hidden_states = self.module.caption_projection(encoder_hidden_states)
-        #     encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
+        if self.module.caption_projection is not None:
+            batch_size = hidden_states.shape[0]
+            encoder_hidden_states = self.module.caption_projection(encoder_hidden_states)
+            encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
 
         # 2. Blocks
         for block in self.module.transformer_blocks:
@@ -83,20 +81,17 @@ class PatchTransformer2DModel(BaseModule):
                 latent_offset=latent_offset,
                 is_sliced=is_sliced,
                 resolution_offset=resolution_offset,
-                left_batch_idx=left_batch_idx,
-                right_batch_idx=right_batch_idx,
-                right_idx=right_idx,
-                past_batch=past_batch,
-                patch_num_list=patch_num_list,
+                mask=mask,
+                input_indices=input_indices,
             )            
 
         # 3. Output
         if self.module.is_input_continuous:
             if not self.module.use_linear_projection:
                 hidden_states = hidden_states.reshape(batch, height, width, inner_dim).permute(0, 3, 1, 2).contiguous()
-                hidden_states = self.module.proj_out(hidden_states, is_sliced=is_sliced)
+                hidden_states = self.module.proj_out(hidden_states, is_sliced=is_sliced, input_indices=input_indices, mask=mask)
             else:
-                hidden_states = self.module.proj_out(hidden_states)
+                hidden_states = self.module.proj_out(hidden_states, input_indices=input_indices, mask=mask)
                 hidden_states = hidden_states.reshape(batch, height, width, inner_dim).permute(0, 3, 1, 2).contiguous()
 
             output = hidden_states + residual
@@ -181,12 +176,9 @@ class PatchBasicTransformerBlock(BaseModule):
         added_cond_kwargs: Optional[Dict[str, torch.Tensor]] = None,
         latent_offset: dict = None,
         is_sliced: bool = False,
-        left_batch_idx: torch.FloatTensor or None = None,
-        right_batch_idx: torch.FloatTensor or None = None,
-        patch_num_list: torch.FloatTensor or None = None,
-        right_idx: torch.FloatTensor or None = None,
-        past_batch: torch.FloatTensor or None = None,
         resolution_offset: dict = None,
+        mask:list = None,
+        input_indices: list = None,
     ):
         batch = hidden_states.shape[0]
         if self.module.norm_type == "ada_norm":
@@ -224,11 +216,8 @@ class PatchBasicTransformerBlock(BaseModule):
             latent_offset=latent_offset["cpu"],
             is_sliced=is_sliced,
             resolution_offset=resolution_offset["cpu"],
-            left_batch_idx=left_batch_idx,
-            right_batch_idx=right_batch_idx,
-            right_idx=right_idx,
-            past_batch=past_batch,
-            patch_num_list=patch_num_list,
+            mask=mask,
+            input_indices=input_indices,
             **cross_attention_kwargs,
         )
         # hidden_states = hidden_states.reshape(batch, height * width, -1)
@@ -264,6 +253,8 @@ class PatchBasicTransformerBlock(BaseModule):
                 attention_mask=attention_mask,
                 latent_offset=latent_offset["cpu"],
                 is_sliced=is_sliced,
+                mask=mask,
+                input_indices=input_indices,
                 **cross_attention_kwargs,
             )
             hidden_states = attn_output + hidden_states
@@ -285,7 +276,7 @@ class PatchBasicTransformerBlock(BaseModule):
             # "feed_forward_chunk_size" can be used to save memory
             ff_output = _chunked_feed_forward(self.module.ff, norm_hidden_states, self.module._chunk_dim, self.module._chunk_size)
         else:
-            ff_output = self.module.ff(norm_hidden_states)
+            ff_output = self.module.ff(norm_hidden_states, mask=mask)
 
         if self.module.norm_type == "ada_norm_zero":
             ff_output = gate_mlp.unsqueeze(1) * ff_output
