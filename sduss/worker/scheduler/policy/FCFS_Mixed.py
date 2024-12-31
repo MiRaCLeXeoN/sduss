@@ -66,6 +66,8 @@ class FCFS_Mixed(Policy):
             else:
                 is_sliced = False
                 patch_size = list(res_reqs_dict.keys())[0]
+        is_sliced = True
+        patch_size = 256
         
         return SchedulerOutput(
             scheduled_requests=res_reqs_dict,

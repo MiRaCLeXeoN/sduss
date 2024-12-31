@@ -26,7 +26,6 @@ class RunnerRequest:
         self.request_id = req_id
         # Status from new requests should be `waiting`
         # self.status = scheduler_req.status
-        # assert self.status == RequestStatus.WAITING
         self.sampling_params: "BaseSamplingParams" = req_sp
         # self.remain_steps: int = scheduler_req.remain_steps
 

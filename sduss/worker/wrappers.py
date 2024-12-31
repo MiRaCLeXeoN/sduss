@@ -120,7 +120,7 @@ class WorkerRequest:
         resolution = self.sampling_params.resolution
         status = self.status
         # Get ddl
-        if status == WorkerReqStatus.WAITING or status == WorkerReqStatus.PREPARE:
+        if status == WorkerReqStatus.PREPARE:
             self.slack = 1e5
             return 
         elif status == WorkerReqStatus.DENOISING:
@@ -147,7 +147,7 @@ class WorkerRequest:
         self.remain_time = ddl - current_running_time_cost - (time.time() - self.arrival_time)
 
     
-    def is_compatible_with(self, req: "Request") -> bool:
+    def is_compatible_with(self, req: "WorkerRequest") -> bool:
         return (self.status == req.status and
                 self.sampling_params.is_compatible_with(req.sampling_params))
 

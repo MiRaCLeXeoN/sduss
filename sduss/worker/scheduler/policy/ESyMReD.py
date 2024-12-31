@@ -9,13 +9,12 @@ from sduss.utils import get_os_env
 from sduss.logger import init_logger
 
 from .policy import Policy
-from ..wrappers import SchedulerOutput, WorkerReqStatus
+from ..wrappers import SchedulerOutput, WorkerRequest, WorkerReqStatus
 from ..utils import find_gcd, convert_list_to_res_dict
 from ..esymred_utils import Hyper_Parameter
 
 if TYPE_CHECKING:
-    from sduss.dispatcher import Request
-
+    pass
 logger = init_logger(__name__)
 
 class Predictor:
@@ -112,53 +111,38 @@ class ESyMReD_Scheduler(Policy):
                     self.postprocessing_exec_time[self.model_name][str(resolution)].append(float(elements[-1]))
         
 
-    def _flatten_all_reqs(self) -> List['Request']:
-        reqs = []
-        for resolution_queue in self.request_pool.values():
-            reqs.extend(resolution_queue.get_all_unfinished_normal_reqs())
-        return reqs
+    def _flatten_all_reqs(self) -> List['WorkerRequest']:
+        return self.request_pool.get_unfinished_reqs()
     
     
-    def _flatten_all_reqs_without_status(self, status: "WorkerReqStatus") -> List['Request']:
+    def _flatten_all_reqs_without_status(self, status: "WorkerReqStatus") -> List['WorkerRequest']:
         reqs = self._flatten_all_reqs()
         reqs = [req for req in reqs if req.status != status]
         return reqs
 
     
-    def _get_all_reqs_by_status(self, status: "WorkerReqStatus") -> List['Request']:
-        reqs = []
-        for resolution_queue in self.request_pool.values():
-            reqs.extend(resolution_queue.get_all_reqs_by_status(status))
-        return reqs
+    def _get_all_reqs_by_status(self, status: "WorkerReqStatus") -> List['WorkerRequest']:
+        return self.request_pool.get_reqs_by_complex(status=status)
 
     
     def schedule_requests(self, max_num: int) -> SchedulerOutput:
         """Schedule requests for next iteration."""
-        
-        flattened_reqs = self._flatten_all_reqs_without_status(WorkerReqStatus.WAITING)
+        flattened_reqs = self._flatten_all_reqs()
 
-        # If not reqs to schedule, return EMPTY
-        if len(flattened_reqs) == 0:
-            return SchedulerOutput(
-                scheduled_requests={},
-                status=WorkerReqStatus.EMPTY,
-                update_all_waiting_reqs=True,
-            )
-        
         # complete request as soon as we can
-        post_processing_queue = self._get_all_reqs_by_status(RequestStatus.POSTPROCESSING)
+        post_processing_queue = self._get_all_reqs_by_status(WorkerReqStatus.POSTPROCESSING)
 
         if len(post_processing_queue) > 0:
-            scheduled_status = RequestStatus.POSTPROCESSING
+            scheduled_status = WorkerReqStatus.POSTPROCESSING
             return SchedulerOutput(
                 scheduled_requests=convert_list_to_res_dict(post_processing_queue),
                 status=scheduled_status,
             )
 
-        prepare_processing_queue = self._get_all_reqs_by_status(RequestStatus.PREPARE)
+        prepare_processing_queue = self._get_all_reqs_by_status(WorkerReqStatus.PREPARE)
 
         if len(prepare_processing_queue) > 0:
-            scheduled_status = RequestStatus.PREPARE
+            scheduled_status = WorkerReqStatus.PREPARE
             return SchedulerOutput(
                 scheduled_requests=convert_list_to_res_dict(prepare_processing_queue),
                 status=scheduled_status,
@@ -176,7 +160,7 @@ class ESyMReD_Scheduler(Policy):
         target_res = target_req.sampling_params.resolution
         target_status = target_req.status
 
-        res_reqs_dict: Dict[int, Dict[int, Request]] = {}
+        res_reqs_dict: Dict[int, Dict[int, WorkerRequest]] = {}
         req_ids_to_abort: List[int] = []
         is_sliced = None
         patch_size = None
@@ -216,7 +200,7 @@ class ESyMReD_Scheduler(Policy):
                         break
                 num_to_collect -= 1
         elif target_status == WorkerReqStatus.DENOISING:
-            running_reqs_list: List['Request'] = list()
+            running_reqs_list: List['WorkerRequest'] = list()
             # Pick up running denoising reqs
             for req in flattened_reqs:
                 if req.start_denoising and req.status == WorkerReqStatus.DENOISING:
@@ -245,7 +229,8 @@ class ESyMReD_Scheduler(Policy):
                         # This is actually choosing the minimal resolution that has unfinifhsed reqs
                         best_tp_res = None
                         for res in self.resolution_list:
-                            reqs_list = self.request_pool[res].get_all_unfinished_normal_reqs()
+                            # reqs_list = self.request_pool[res].get_all_unfinished_normal_reqs()
+                            reqs_list = self.request_pool.get_unfinished_req_ids_by_res(res)
                             if len(reqs_list) != 0:
                                 find_best_tp_res = False
                                 for req in reqs_list:
@@ -420,8 +405,8 @@ class ESyMReD_Scheduler(Policy):
         res_candidate_dict: Dict[int, int],
         target_res: int,
         best_tp_res: int,
-        target_req: 'Request',
-        running_reqs_list: List['Request'],
+        target_req: 'WorkerRequest',
+        running_reqs_list: List['WorkerRequest'],
     ) -> Tuple[List, List, List]:
         # task_distribute_original: current distribution 
         # task_distribute_slo: distribution if the most urgent reqs is added
@@ -468,8 +453,8 @@ class ESyMReD_Scheduler(Policy):
         predict_time_original: List[float],
         predict_time_slo: List[float],
         predict_time_best_tp: List[float],
-        target_req: 'Request',
-        running_reqs_list: List['Request'],
+        target_req: 'WorkerRequest',
+        running_reqs_list: List['WorkerRequest'],
     ) -> Tuple[float, float, float, float]:
         # print(f"{predict_time_original=}")
         # print(f"{predict_time_slo=}")

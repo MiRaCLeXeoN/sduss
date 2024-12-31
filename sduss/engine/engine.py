@@ -219,7 +219,7 @@ class Engine:
         """Update requests status and prepare return result if available."""
         if len(worker_outputs) <= 0:
             return []
-        finished_reqs =  self.dispatcher.process_worker_outputs(worker_outputs)
+        finished_reqs = self.dispatcher.process_worker_outputs(worker_outputs)
         return [ReqOutput(req) for req in finished_reqs]
 
 
