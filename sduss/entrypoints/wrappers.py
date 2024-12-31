@@ -3,9 +3,9 @@ import datetime
 
 from typing import List, Optional, Type
 
-from sduss.scheduler import Request, RequestStatus
+from sduss.dispatcher.wrappers import Request, ReqStatus
 
-class RequestOutput:
+class ReqOutput:
     """The output wrapper of a request.
     
     Args:
@@ -23,8 +23,8 @@ class RequestOutput:
         self.output = request.output
         self.resolution = request.sampling_params.resolution
 
-        self.normal_finished = RequestStatus.is_normal_finished(request.status)
-        self.is_finished = RequestStatus.is_finished(request.status)
+        self.normal_finished = ReqStatus.is_normal_finished(request.status)
+        self.is_finished = ReqStatus.is_finished(request.status)
 
         self.start_datetime = datetime.datetime.fromtimestamp(request.arrival_time)
         self.finish_datetime = datetime.datetime.fromtimestamp(request.finish_time)
@@ -32,6 +32,8 @@ class RequestOutput:
 
         
     def __repr__(self) -> str:
-        return (f"start time={self.start_datetime}\n"
+        return (
+                f"req_id={self.request_id}\n"
+                f"start time={self.start_datetime}\n"
                 f"finish time={self.finish_datetime}\n"
                 f"time consumption={self.time_consumption:.3f}s")

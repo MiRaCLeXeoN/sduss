@@ -1,5 +1,5 @@
 from dataclasses import dataclass, fields, field
-from typing import Union, Optional, List, Dict, Callable, Any, Type
+from typing import Union, Optional, List, Dict, Callable, Any, Type, TYPE_CHECKING
 
 import PIL
 import numpy as np
@@ -11,7 +11,9 @@ from sduss.model_executor.utils import BaseOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.model_executor.diffusers.image_processor import PipelineImageInput
 from sduss.logger import init_logger
-from sduss.worker import WorkerRequest, WorkerRequestDictType
+
+if TYPE_CHECKING:
+    from sduss.worker.runner.wrappers import RunnerRequest, RunnerRequestDictType
 
 logger = init_logger(__name__)
 
@@ -19,12 +21,12 @@ logger = init_logger(__name__)
 class StableDiffusionEsymredPipelinePrepareInput:
     @staticmethod
     def prepare_prepare_input(
-        worker_reqs: WorkerRequestDictType,
+        worker_reqs: "RunnerRequestDictType",
         **kwargs,
     ) -> Dict:
         input_dict: Dict = {}
         # ! Here we convert dict to list. The resolution is not important during prepare stage.
-        worker_req_list: List[WorkerRequest] = []
+        worker_req_list: "List[RunnerRequest]" = []
         for res in worker_reqs:
             worker_req_list.extend(worker_reqs[res])
         input_dict["worker_reqs"] = worker_req_list
@@ -88,13 +90,13 @@ class StableDiffusionEsymredPipelinePrepareOutput(BasePipelinePrepareOutput):
 class StableDiffusionEsymredPipelineStepInput(BasePipelineStepInput):
     @staticmethod
     def prepare_step_input(
-        worker_reqs: WorkerRequestDictType,
+        worker_reqs: "RunnerRequestDictType",
         **kwargs,
     ) -> Dict: 
         """Prepare input parameters for denoising_step function.
 
         Args:
-            worker_reqs (List[WorkerRequest]): Reqs to be batched.
+            worker_reqs (List[RunnerRequest]): Reqs to be batched.
 
         Returns:
             Dict: kwargs dict as input.
@@ -139,13 +141,13 @@ class StableDiffusionEsymredPipelineStepOutput:
 class StableDiffusionEsymredPipelinePostInput(BasePipelinePostInput):
     @staticmethod
     def prepare_post_input(
-        worker_reqs: WorkerRequestDictType,
+        worker_reqs: "RunnerRequestDictType",
         **kwargs,
     ) -> Dict:
         """Prepare input parameters for post_inference function.
 
         Args:
-            worker_reqs (List[WorkerRequest]): Reqs to be batched.
+            worker_reqs (List[RunnerRequest]): Reqs to be batched.
 
         Returns:
             Dict: kwargs dict as input.

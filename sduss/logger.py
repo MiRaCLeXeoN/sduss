@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import os
 
 from typing import List
 
@@ -60,6 +61,8 @@ def init_logger(
         for handler in handlers:
             logger.addHandler(handler)
     if to_file_name:
+        dir_name = os.path.dirname(to_file_name)
+        os.makedirs(dir_name, exist_ok=True)
         handler = logging.FileHandler(to_file_name, mode='w')
         handler.setLevel(_DEFAULT_HANDLER_LEVEL)
         handler.setFormatter(NewLineFormatter(fmt=_FORMAT, datefmt=_DATE_FORMAT))

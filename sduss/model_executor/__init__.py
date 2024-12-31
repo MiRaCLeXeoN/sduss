@@ -1,2 +1,2 @@
-from sduss.model_executor.model_loader import get_pipeline
+from sduss.model_executor.model_loader import get_pipeline, get_pipeline_cls
 from sduss.model_executor.utils import set_random_seed

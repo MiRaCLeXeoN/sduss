@@ -1,5 +1,5 @@
 """All configuration classes """
-from typing import Optional, Union, Dict
+from typing import Optional, Union, Dict, List
 
 from sduss.logger import init_logger
 from sduss.utils import get_cpu_memory
@@ -63,9 +63,10 @@ class ParallelConfig:
         data_parallel_size: int,
         num_cpus_cpu_worker: int,
         num_cpus_gpu_worker: int,
+        num_cpu_workers: int,
         worker_use_ray: bool,
         worker_use_mp: bool,
-        max_parallel_loading_workers: Optional[int] = None,
+        gpus: List[int],
     ) -> None:
         """Configuration for the distributed execution.
 
@@ -81,30 +82,37 @@ class ParallelConfig:
         self.data_parallel_size = data_parallel_size
         self.worker_use_ray = worker_use_ray
         self.worker_use_mp = worker_use_mp
-        self.max_parallel_loading_workers = max_parallel_loading_workers
 
         self.world_size = pipeline_parallel_size * tensor_parallel_size * data_parallel_size
 
-        self.num_workers = self.world_size 
+        self.num_cpu_workers = num_cpu_workers
+        self.num_gpu_workers = self.world_size
         self.num_cpus_cpu_worker = num_cpus_cpu_worker
         self.num_cpus_gpu_worker = num_cpus_gpu_worker
+        self.gpus = gpus
         
+        # ! FIXME: We currently only supports mp for multi-devices
         if self.world_size > 1:
+            logger.info("World size > 1, forcing to use torch.multiprocessing.")
+            self.worker_use_ray = False
             self.worker_use_mp = True
         self._verify_args()
 
 
     def _verify_args(self) -> None:
-        if (self.pipeline_parallel_size > 1 or self.tensor_parallel_size > 1 
-            or self.data_parallel_size > 1):
+        if self.worker_use_ray:
+            raise NotImplementedError("Ray is not currently supported.")
+
+        if (self.pipeline_parallel_size > 1 or self.tensor_parallel_size > 1):
             raise NotImplementedError(
-                "Parallelism is not supported yet.")
+                "PP and TP is not supported yet.")
+        assert self.worker_use_ray != self.worker_use_mp, "Cannot use multiprocessing and ray at the same time."
+        assert self.worker_use_ray or self.worker_use_mp, "Either worker_use_ray or worker_use_mp must be set."
+        assert len(self.gpus) == self.world_size
     
     
     def update_params(self, scheduler_config: 'SchedulerConfig'):
-        if scheduler_config.overlap_prepare:
-            # 1 extra worker for prepare stage
-            self.num_workers += 1
+        pass
     
     
     def verify_with_scheduler_config(
@@ -121,15 +129,11 @@ class SchedulerConfig:
         max_bathsize: int,
         use_mixed_precision: bool, 
         policy: str,
-        overlap_prepare: bool,
-        max_overlapped_prepare_reqs: int,
     ) -> None:
 
         self.max_batchsize = max_bathsize
         self.use_mixed_precision = use_mixed_precision
         self.policy = policy
-        self.overlap_prepare = overlap_prepare
-        self.max_overlapped_prepare_reqs = max_overlapped_prepare_reqs
         
         self._verify_args()
         
@@ -142,21 +146,30 @@ class EngineConfig:
     def __init__(
         self,
         log_status: bool,
-        non_blocking_step: bool,
+        dispatcher_policy: str,
         engine_use_ray: bool = False,
         engine_use_mp: bool = False,
         log_requests: bool = False,
     ) -> None:
         self.log_status = log_status
-        self.non_blocking_step = non_blocking_step
+        self.dispatcher_policy = dispatcher_policy
         self.engine_use_ray = engine_use_ray
         self.engine_use_mp = engine_use_mp
         self.log_requests = log_requests
+
+        self._verify_args()
     
+    
+    def _verify_args(self):
+        if self.engine_use_ray:
+            raise NotImplementedError("Ray is not currently supported.")
+
+        assert self.engine_use_ray != self.engine_use_mp, "Cannot use multiprocessing and ray at the same time."
+        assert self.engine_use_ray or self.engine_use_mp, "Either engine_use_ray or engine_use_mp must be set."
+            
     
     def verify_with_scheduler_config(self, scheduler_config: SchedulerConfig):
         # Currently we only support 2 combinations:
         # 1. blocking + non-overlapped
         # 2. nonblocking + overlapped
-        # assert self.non_blocking_step == scheduler_config.overlap_prepare
         pass

@@ -1,5 +1,5 @@
 import inspect
-from typing import Optional, List, Tuple, Union, Dict, Any, Callable, Type
+from typing import Optional, List, Tuple, Union, Dict, Any, Callable, Type, TYPE_CHECKING
 
 import torch
 
@@ -11,12 +11,15 @@ from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import (
 from ..pipeline_utils import BasePipeline
 from ...image_processor import PipelineImageInput
 from sduss.model_executor.modules.resnet import SplitModule
-from sduss.worker import WorkerRequest, WorkerRequestDictType
 from .pipeline_stable_diffusion_esymred_utils import (
     StableDiffusionEsymredPipelinePrepareInput, StableDiffusionEsymredPipelinePrepareOutput,
     StableDiffusionEsymredPipelineStepInput, StableDiffusionEsymredPipelineStepOutput,
     StableDiffusionEsymredPipelinePostInput, StableDiffusionEsymredPipelineOutput,
     StableDiffusionEsymredPipelineSamplingParams)
+
+if TYPE_CHECKING:
+    from sduss.worker.runner.wrappers import RunnerRequest, RunnerRequestDictType
+    
 
 class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
     SUPPORT_MIXED_PRECISION = True
@@ -47,7 +50,7 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
     @torch.inference_mode()
     def prepare_inference(
         self,
-        worker_reqs: List[WorkerRequest] = None,
+        worker_reqs: "List[RunnerRequest]" = None,
         prompt: List[str] = None,
         negative_prompt: Optional[Union[str, List[str]]] = None,
         num_inference_steps: int = None,
@@ -202,7 +205,7 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
     @torch.inference_mode()
     def denoising_step(
         self,
-        worker_reqs: Dict[str, List[WorkerRequest]],
+        worker_reqs: "Dict[str, List[RunnerRequest]]",
         cross_attention_kwargs: Optional[Dict[str, Any]],
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]],
         callback_on_step_end_tensor_inputs: List[str],
@@ -303,7 +306,7 @@ class ESyMReDStableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipel
     @torch.inference_mode()
     def post_inference(
         self,
-        worker_reqs: Dict[int, List[WorkerRequest]],
+        worker_reqs: "Dict[int, List[RunnerRequest]]",
         output_type: str,
         device: torch.device,
         prompt_embeds_dtype: torch.dtype,

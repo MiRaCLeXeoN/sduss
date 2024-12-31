@@ -2,12 +2,15 @@ import enum
 import uuid
 import socket
 import os
-import multiprocessing
 
+from typing import TYPE_CHECKING
 from platform import uname
 
 import psutil
 import torch
+
+if TYPE_CHECKING:
+    import torch.multiprocessing as mp
 
 class Device(enum.Enum):
     GPU = enum.auto()
@@ -30,12 +33,16 @@ class Task:
     def __init__(
         self,
         method_name: str,
+        event,
         *args,
         **kwargs,
     ):
+        """When event is not None, the results are required to put back."""
         self.method = method_name
         self.args = args
         self.kwargs = kwargs
+        self.id = uuid.uuid4().int
+        self.event = event
 
 
 class MainLoop:
@@ -45,8 +52,8 @@ class MainLoop:
     """
     def __init__(
         self,
-        task_queue: multiprocessing.Queue,
-        output_queue: multiprocessing.Queue,
+        task_queue: 'mp.Queue',
+        output_queue: 'mp.Queue',
         worker_init_fn,
     ):
         self.task_queue = task_queue

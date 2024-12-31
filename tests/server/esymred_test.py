@@ -230,5 +230,6 @@ if __name__ == "__main__":
     # logger.info(f"Successful requests: {success_counter} / {args.num}")
 
     print("start server clear")
-    requests.post(url=base_url + f"clear")
-    print("finish server clear")
+    response = requests.get(url=base_url + "clear")
+    if response.status_code == 200:
+        print("finish server clear")

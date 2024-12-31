@@ -91,7 +91,6 @@ dependencies:
       - rpds-py==0.18.0
       - rsa==4.9
       - safetensors==0.4.2
-      - sduss==0.0.2
       - six==1.16.0
       - smart-open==7.0.2
       - sympy==1.12

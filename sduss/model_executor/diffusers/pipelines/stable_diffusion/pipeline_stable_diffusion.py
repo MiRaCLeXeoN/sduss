@@ -1,4 +1,4 @@
-from typing import overload, Union, Optional, List, Dict, Any, Callable, Type
+from typing import overload, Union, Optional, List, Dict, Any, Callable, Type, TYPE_CHECKING
 
 import torch
 
@@ -14,7 +14,8 @@ from .pipeline_stable_diffusion_utils import (
 from ..pipeline_utils import BasePipeline
 from ...image_processor import PipelineImageInput
 
-from sduss.worker import WorkerRequest
+if TYPE_CHECKING:
+    from sduss.worker.runner.wrappers import RunnerRequest
 
 
 class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
@@ -39,7 +40,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
     @torch.inference_mode()
     def prepare_inference(
         self,
-        worker_reqs: List[WorkerRequest] = None,
+        worker_reqs: "List[RunnerRequest]" = None,
         prompt: List[str] = None,
         negative_prompt: Optional[Union[str, List[str]]] = None,
         num_inference_steps: int = None,
@@ -280,7 +281,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
     @torch.inference_mode()
     def denoising_step(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: "List[RunnerRequest]",
         timestep_cond: torch.Tensor,
         added_cond_kwargs: Optional[Dict],
         extra_step_kwargs: Dict,
@@ -364,7 +365,7 @@ class StableDiffusionPipeline(DiffusersStableDiffusionPipeline, BasePipeline):
     
     def post_inference(
         self,
-        worker_reqs: List[WorkerRequest],
+        worker_reqs: "List[RunnerRequest]",
         output_type: str,
         device: torch.device,
         prompt_embeds_dtype: torch.dtype,

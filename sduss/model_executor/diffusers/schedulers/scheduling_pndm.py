@@ -10,7 +10,7 @@ from sduss.logger import init_logger
 from .utils import BatchSupportScheduler, BaseSchedulerStates
 
 if TYPE_CHECKING:
-    from sduss.worker import WorkerRequest
+    from sduss.worker.runner.wrappers import RunnerRequest
 
 logger = init_logger(__name__)
 
@@ -83,7 +83,7 @@ class PNDMSchedulerStates(BaseSchedulerStates):
 class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
     def batch_set_timesteps(
         self,
-        worker_reqs: List["WorkerRequest"],
+        worker_reqs: List["RunnerRequest"],
         device: torch.device,
     ) -> None:
         """Set timesteps method with batch support.
@@ -91,7 +91,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         set_timesteps don't need to take image size into consideration.
 
         Args:
-            worker_reqs (List[WorkerRequest]): Requests to set timesteps
+            worker_reqs (List[RunnerRequest]): Requests to set timesteps
         """
         # 1. sort the reqs according to num_inference_steps
         worker_reqs = sorted(worker_reqs, key=lambda req: req.sampling_params.num_inference_steps, reverse=False)
@@ -124,7 +124,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
 
     def batch_scale_model_input(
         self,
-        worker_reqs: List["WorkerRequest"],
+        worker_reqs: List["RunnerRequest"],
         samples: torch.Tensor,
         timestep_list: torch.Tensor,
     ):
@@ -141,7 +141,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
     
     def batch_step(
         self,
-        worker_reqs: List["WorkerRequest"],
+        worker_reqs: List["RunnerRequest"],
         model_outputs: torch.FloatTensor,
         timestep_list: torch.Tensor,
         samples: torch.Tensor,
@@ -149,10 +149,10 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
     ) -> torch.FloatTensor:
         """Batch-compatible step method.
 
-        WorkerRequest's latent must be updated before this method call.
+        RunnerRequest's latent must be updated before this method call.
 
         Args:
-            worker_reqs (List[WorkerRequest]): _description_
+            worker_reqs (List[RunnerRequest]): _description_
             model_outputs (List[torch.FloatTensor]): _description_
             timestep_list (List[int]): _description_
 
@@ -214,7 +214,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
    
     def batch_step_prk(
         self,
-        worker_reqs: List["WorkerRequest"],
+        worker_reqs: List["RunnerRequest"],
         model_outputs: List[torch.FloatTensor],
         samples: List[torch.FloatTensor],
         timestep_list: List[int],
@@ -225,7 +225,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         are likely to diverge and it's hard to batch.
 
         Args:
-            worker_reqs (List[WorkerRequest]): _description_
+            worker_reqs (List[RunnerRequest]): _description_
             model_outputs (List[torch.FloatTensor]): _description_
             timestep_list (List[int]): _description_
         """
@@ -264,7 +264,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
     
     def batch_step_plms(
         self,
-        worker_reqs: List["WorkerRequest"],
+        worker_reqs: List["RunnerRequest"],
         model_outputs: List[torch.FloatTensor],
         samples: List[torch.FloatTensor],
         timestep_list: List[int],
@@ -275,7 +275,7 @@ class PNDMScheduler(DiffusersPNDMScheduler, BatchSupportScheduler):
         are likely to diverge and it's hard to batch.
 
         Args:
-            worker_reqs (List[WorkerRequest]): _description_
+            worker_reqs (List[RunnerRequest]): _description_
             model_outputs (List[torch.FloatTensor]): _description_
             timestep_list (List[int]): _description_
         """

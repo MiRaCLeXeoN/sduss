@@ -2,7 +2,7 @@ import argparse
 import json
 import sys
 import os
-import multiprocessing as mp
+import torch.multiprocessing as mp
 from typing import AsyncGenerator, Dict
 
 from fastapi import FastAPI, Request
@@ -15,7 +15,7 @@ from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.model_executor.diffusers import BasePipeline
 from sduss.utils import random_uuid
 from sduss.model_executor.model_loader import get_pipeline_cls
-from sduss.entrypoints.outputs import RequestOutput
+from sduss.entrypoints.wrappers import ReqOutput
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 TIMEOUT_TO_PREVENT_DEADLOCK = 1  # seconds.
@@ -49,11 +49,11 @@ async def generate(request: Request) -> Response:
     results_generator = engine.generate(request_id=request_id, sampling_params=sampling_params)
 
     # Non-streaming case. Iterate only once.
-    final_output: RequestOutput = None
+    final_output: ReqOutput = None
     async for request_output in results_generator:
         if await request.is_disconnected():
             # Abort the request if the client disconnects.
-            await engine.abort_req(request_id)
+            await engine.abort_requests(request_id)
             return Response(status_code=499)
         final_output = request_output
     assert final_output is not None
@@ -66,7 +66,7 @@ async def generate(request: Request) -> Response:
     # Store result in server
     image_name = f"{request_id}.png"
     path = "./outputs/imgs/" + image_name
-    # final_output.output.images.save(path)
+    final_output.output.images.save(path)
     image_paths.append(path)
 
     response =  FileResponse(path, media_type="image/png")
@@ -76,9 +76,10 @@ async def generate(request: Request) -> Response:
     return response
 
 
-@app.post("/clear")
+@app.get("/clear")
 async def clear(request: Request) -> Response:
     """Clear data and ready to release."""
+    print("start engine clear")
     await engine.clear()
     
     for p in image_paths:
@@ -90,6 +91,7 @@ async def clear(request: Request) -> Response:
         
     sys.stdout.flush()
     sys.stderr.flush()
+    print("finish engine clear")
     return Response(status_code=200)
 
 

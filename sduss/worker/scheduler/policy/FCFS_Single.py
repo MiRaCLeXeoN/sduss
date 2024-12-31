@@ -3,33 +3,24 @@ import time
 from typing import List, TYPE_CHECKING
 
 from .policy import Policy
-from ..wrappers import SchedulerOutput, RequestStatus
+from ..wrappers import SchedulerOutput
 
 if TYPE_CHECKING:
-    from sduss.scheduler import Request
+    from sduss.dispatcher import Request
 
 class FCFS_Single(Policy):
     """First Come First Serve.
     
     FCFS always selects the oldest requests, and the find any other requests
-    that can be batched with it (A giant request will be split as many single
-    requests at the entrypoint. They can be processed together).
+    that can be batched with it. 
 
     FCFS features
         Supports:
             1. batch reqs of different timesteps
         Don't supports:
             2. mixed-precision shceduling
-
-    Don't support mixed precision.
     """
-    def _flatten_all_reqs(self) -> List['Request']:
-        reqs = []
-        for resolution_queue in self.request_pool.values():
-            reqs.extend(resolution_queue.get_all_unfinished_normal_reqs())
-        return reqs
-    
-    
+
     def schedule_requests(self, max_num: int) -> SchedulerOutput:
         """Schedule requests for next iteration.
 
@@ -39,16 +30,10 @@ class FCFS_Single(Policy):
         Returns:
             List[Request]: _description_
         """
-        flattened_reqs = self._flatten_all_reqs()
-
-        if len(flattened_reqs) == 0:
-            return SchedulerOutput(
-                scheduled_requests={},
-                status=RequestStatus.WAITING,
-            )
+        flattened_reqs = self.request_pool.get_unfinished_reqs()
 
         # Find the oldest request
-        now = time.monotonic()
+        now = time.time()
         flattened_reqs.sort(key = lambda req: now - req.arrival_time, reverse=True)
         target_req = flattened_reqs[0]
         target_status = target_req.status
@@ -58,11 +43,10 @@ class FCFS_Single(Policy):
         
         # Find compatible requests
         # 1. has the same status
-        res_queue = self.request_pool[target_res]
-        queue = res_queue.get_queue_by_status(target_status)
+        compatible_reqs = self.request_pool.get_reqs_by_complex(status=target_status, resolution=target_res)
         # 2. sampling params is compatible
         num_to_collect = max_num
-        for req in queue.values():
+        for req in compatible_reqs:
             if num_to_collect <= 0:
                 break
             if req.sampling_params.is_compatible_with(target_req.sampling_params): 
@@ -77,13 +61,3 @@ class FCFS_Single(Policy):
             scheduled_requests=ret,
             status=target_status,
         )
-
-
-    def scheduler_request_overlap_prepare(
-        self, 
-        max_num: int, 
-        max_overlapped_prepare_reqs: int,
-        accept_overlap_prepare_reqs: bool,
-    ) -> SchedulerOutput:
-        """Schedule requests with overlapped preapre stage."""
-        raise NotImplementedError

@@ -1,136 +1,163 @@
 import enum
+import time
 
-from typing import List, Dict, TYPE_CHECKING
+from typing import List, Dict, TYPE_CHECKING, Optional, Union
 
-import torch
-
-from sduss.scheduler import RequestStatus, Request
-from sduss.model_executor.utils import BaseOutput
+from .scheduler.esymred_utils import (DISCARD_SLACK, DENOISING_DDL, POSTPROCESSING_DDL, STANDALONE,
+                            Hyper_Parameter)
 
 if TYPE_CHECKING:
     from sduss.model_executor.sampling_params import BaseSamplingParams
     from sduss.model_executor.diffusers import BasePipelinePrepareOutput
     from sduss.model_executor.diffusers import BaseSchedulerStates
+    from sduss.dispatcher import Request
 
-class InferenceStage(enum.Enum):
-    PREPARE = enum.auto()
-    DENOISING = enum.auto()
-    POST = enum.auto()
+
+class WorkerReqStatus(enum.IntEnum):
+    """Status of a sequence."""
+    # Empty
+    EMPTY = enum.auto()             # No requests are scheduled
+                                    # This is to handle condition where very last req is 
+                                    # running post stage and resulting in no unfinished reqs
+    # Running
+    PREPARE = enum.auto()           # ready for prepare stage
+    DENOISING = enum.auto()         # ready for denoising stage
+    POSTPROCESSING = enum.auto()    # ready for postprocessing stage
+    # Finished
+    FINISHED_STOPPED = enum.auto()
+    FINISHED_ABORTED = enum.auto()
+
+    @staticmethod
+    def is_finished(status: "WorkerReqStatus") -> bool:
+        return status in [
+            WorkerReqStatus.FINISHED_STOPPED,
+            WorkerReqStatus.FINISHED_ABORTED,
+        ]
+    
+    
+    @staticmethod
+    def is_normal_finished(status: "WorkerReqStatus") -> bool:
+        return status in [
+            WorkerReqStatus.FINISHED_STOPPED,
+        ]
+
+
+    @staticmethod
+    def get_next_status(status: "WorkerReqStatus") -> Optional["WorkerReqStatus"]:
+        if status == WorkerReqStatus.PREPARE:
+            return WorkerReqStatus.DENOISING
+        elif status == WorkerReqStatus.DENOISING:
+            return WorkerReqStatus.POSTPROCESSING
+        elif status == WorkerReqStatus.POSTPROCESSING:
+            return WorkerReqStatus.FINISHED_STOPPED
+        else:
+            raise RuntimeError(f"We cannot decide next status for {status=}.")
+
+
+    @staticmethod
+    def get_finished_reason(status: "WorkerReqStatus") -> Union[str, None]:
+        if status == WorkerReqStatus.FINISHED_STOPPED:
+            finish_reason = "finished normally"
+        elif status == WorkerReqStatus.FINISHED_ABORTED:
+            finish_reason = "aborted"
+        else:
+            finish_reason = None
+        return finish_reason
 
 
 class WorkerRequest:
     """Schduler's request must be converted to worker's request."""
     def __init__(
         self,
-        scheduler_req: Request,
+        request_id: int,
+        sampling_params: "BaseSamplingParams",
     ) -> None:
-        self.request_id = scheduler_req.request_id
-        # Status from new requests should be `waiting`
-        # self.status = scheduler_req.status
-        # assert self.status == RequestStatus.WAITING
-        self.sampling_params: "BaseSamplingParams" = scheduler_req.sampling_params
-        # self.remain_steps: int = scheduler_req.remain_steps
+        self.request_id = request_id
+        self.sampling_params = sampling_params
+        self.arrival_time = time.time()
 
-        # Filled by inference procedure
-        self.scheduler_states: "BaseSchedulerStates" = None
-        self.prepare_output: "BasePipelinePrepareOutput" = None
-        self.step_output = None
+        # Used by scheduler
+        self.status = WorkerReqStatus.PREPARE
+        self.remain_steps = sampling_params.num_inference_steps
+
+        # Used by esymred
+        self.start_denoising = False
+        self.is_discard = False
+        ## Predict time indicates the time estimated to run until complete all
+        ## Unet iterations, with respect to the current workload.
+        self.predict_time = None
+
+        # Set when finishes
+        self.finish_time = None
         self.output = None
 
-        self._initialize_sampling_params()
-    
-    def _initialize_sampling_params(self) -> None:
-        if self.sampling_params.latents is not None:
-            self.sampling_params.latents = self.sampling_params.latents.to(torch.cuda.current_device())
-        
-        # TODO(MX): Other tensors are not examined.
-    
-    
-    def to_device(self, device):
-        # Sampling params
-        self.sampling_params.to_device(device)
-        # Scheduler states
-        self.scheduler_states.to_device(device)
-        # prepare_output
-        self.prepare_output.to_device(device)
-    
-    
-    def to_dtype(self, dtype: torch.dtype):
-        # Sampling params
-        self.sampling_params.to_dtype(dtype)
-        # Scheduler states
-        self.scheduler_states.to_dtype(dtype)
-        # prepare_output
-        self.prepare_output.to_dtype(dtype)
-    
-    
-    def to_numpy(self):
-        # Sampling params
-        self.sampling_params.to_numpy()
-        # Scheduler states
-        self.scheduler_states.to_numpy()
-        # prepare_output
-        self.prepare_output.to_numpy()
-    
-    
-    def to_tensor(self):
-        # Sampling params
-        self.sampling_params.to_tensor()
-        # Scheduler states
-        self.scheduler_states.to_tensor()
-        # prepare_output
-        self.prepare_output.to_tensor()
 
-        
-        
-# resolution -> List[request]
-WorkerRequestDictType = Dict[int, List[WorkerRequest]]
+    def is_finished(self):
+        return WorkerReqStatus.is_finished(self.status)
 
 
+    def update_predict_time(self, predict_time:float):
+        self.predict_time = predict_time
+    
+    
+    def abort(self):
+        self.status = WorkerReqStatus.FINISHED_ABORTED
+        self.finish_time = time.time()
+
+
+    def set_slack(
+        self, 
+        model_name : str, 
+        is_running : bool, 
+        current_running_time_cost : float,
+    ):
+        # If discarded, return directly
+        # TODO: Discard
+        if self.is_discard:
+            self.slack = DISCARD_SLACK
+            return
+
+        resolution = self.sampling_params.resolution
+        status = self.status
+        # Get ddl
+        if status == WorkerReqStatus.WAITING or status == WorkerReqStatus.PREPARE:
+            self.slack = 1e5
+            return 
+        elif status == WorkerReqStatus.DENOISING:
+            stage = "denoising"
+            ddl = DENOISING_DDL[model_name][str(resolution)]
+        elif status == WorkerReqStatus.POSTPROCESSING:
+            stage = "postprocessing"
+            ddl = POSTPROCESSING_DDL[model_name][str(resolution)]
+        
+        unit_unet_time = STANDALONE[model_name][stage][str(resolution)]
+        if stage == "postprocessing":
+            self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
+                            ) / (unit_unet_time * Hyper_Parameter[model_name][stage][str(resolution)])
+        elif stage == "denoising":
+            # print(f"{ddl=},{unit_unet_time=},{self.predict_time},{current_running_time_cost=},{(time.time() - self.arrival_time)}")
+            if is_running:
+                # Suppose we have started at least one round
+                self.slack = (ddl - self.predict_time - current_running_time_cost - (time.time() - self.arrival_time)
+                                ) / unit_unet_time
+            else:
+                # Denoising not started yet
+                self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
+                                ) / unit_unet_time
+        self.remain_time = ddl - current_running_time_cost - (time.time() - self.arrival_time)
+
+    
+    def is_compatible_with(self, req: "Request") -> bool:
+        return (self.status == req.status and
+                self.sampling_params.is_compatible_with(req.sampling_params))
+
+        
 class WorkerOutput:
     def __init__(
         self,
-        worker_reqs: WorkerRequestDictType = None,
-        status: RequestStatus = None,
-        start_time : float = None,
-        end_time : float = None,
-        is_from_prepare_worker : bool = False,
+        worker_reqs: List[WorkerRequest] = None,
     ) -> None:
         # Performance recording
-        self.start_time = start_time
-        self.end_time = end_time
-
-        self.is_from_prepare_worker = is_from_prepare_worker
-
-        if status == RequestStatus.POSTPROCESSING:
-            reqs_dict: Dict[int, BaseOutput] = {}
-            for res in worker_reqs:
-                for wr in worker_reqs[res]:
-                    reqs_dict[wr.request_id] = wr.output
-            
-            # req_id -> pipeline output cls
-            # pipeline output cls is assured to exist in CPU memory instead of on device
-            self.req_output_dict = reqs_dict
-        elif status == RequestStatus.PREPARE:
-            # Return all worker requests directly
-            # map: req_id -> inference steps
-            reqs_dict: Dict[int, int] = {}
-            for res in worker_reqs:
-                for wr in worker_reqs[res]:
-                    reqs_dict[wr.request_id] = len(wr.scheduler_states.timesteps)
-            self.reqs_steps_dict = reqs_dict
-            # If prepare stage is overlapped, we should return all worker_reqs directly
-            if is_from_prepare_worker:
-                for req_list in worker_reqs.values():
-                    for wr in req_list:
-                        wr.to_numpy()
-                self.worker_reqs = worker_reqs
-        elif status == RequestStatus.DENOISING:
-            pass
-    
-    
-    def __eq__(self, value: object) -> bool:
-        if isinstance(value, WorkerOutput):
-            return True
-        else:
-            return False
+        self.req_output_dict = {}
+        for req in worker_reqs:
+            self.req_output_dict[req.request_id] = req.output

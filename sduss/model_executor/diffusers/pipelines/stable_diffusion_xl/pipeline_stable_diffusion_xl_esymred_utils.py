@@ -1,5 +1,5 @@
 from dataclasses import dataclass, fields, field
-from typing import Union, Optional, List, Dict, Callable, Any, Type, Tuple
+from typing import Union, Optional, List, Dict, Callable, Any, Type, Tuple, TYPE_CHECKING
 
 import PIL
 import numpy as np
@@ -11,15 +11,16 @@ from sduss.model_executor.utils import BaseOutput
 from sduss.model_executor.sampling_params import BaseSamplingParams
 from sduss.model_executor.diffusers.image_processor import PipelineImageInput
 from sduss.logger import init_logger
-from sduss.worker import WorkerRequest, WorkerRequestDictType
 
 logger = init_logger(__name__)
 
+if TYPE_CHECKING:
+    from sduss.worker.runner.wrappers import RunnerRequestDictType
 
 class StableDiffusionXLEsymredPipelinePrepareInput:
     @staticmethod
     def prepare_prepare_input(
-        worker_reqs: WorkerRequestDictType,
+        worker_reqs: "RunnerRequestDictType",
         **kwargs,
     ) -> Dict:
         input_dict: Dict = {}
@@ -95,13 +96,13 @@ class StableDiffusionXLEsymredPipelinePrepareOutput(BasePipelinePrepareOutput):
 class StableDiffusionXLEsymredPipelineStepInput(BasePipelineStepInput):
     @staticmethod
     def prepare_step_input(
-        worker_reqs: WorkerRequestDictType,
+        worker_reqs: "RunnerRequestDictType",
         **kwargs,
     ) -> Dict: 
         """Prepare input parameters for denoising_step function.
 
         Args:
-            worker_reqs (List[WorkerRequest]): Reqs to be batched.
+            worker_reqs (List[RunnerRequestDictType]): Reqs to be batched.
 
         Returns:
             Dict: kwargs dict as input.
@@ -145,13 +146,13 @@ class StableDiffusionXLEsymredPipelineStepOutput:
 class StableDiffusionXLEsymredPipelinePostInput(BasePipelinePostInput):
     @staticmethod
     def prepare_post_input(
-        worker_reqs: WorkerRequestDictType,
+        worker_reqs: "RunnerRequestDictType",
         **kwargs,
     ) -> Dict:
         """Prepare input parameters for post_inference function.
 
         Args:
-            worker_reqs (List[WorkerRequest]): Reqs to be batched.
+            worker_reqs (List[RunnerRequestDictType]): Reqs to be batched.
         Returns:
             Dict: kwargs dict as input.
         """

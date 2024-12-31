@@ -8,7 +8,7 @@ from typing import Optional, Tuple
 from sduss.config import (PipelineConfig, ParallelConfig, SchedulerConfig,
                           EngineConfig)
 
-from .utils import get_torch_dtype_from_string
+from .utils import get_torch_dtype_from_string, parse_ranges
 
 class EngineArgs:
     """Arguments for the base class Engine
@@ -28,16 +28,15 @@ class EngineArgs:
         self.data_parallel_size = kwargs.pop("data_parallel_size", 1)
         self.num_cpus_cpu_worker = kwargs.pop("num_cpus_cpu_worker", 8)
         self.num_cpus_gpu_worker = kwargs.pop("num_cpus_gpu_worker", 4)
-        self.max_parallel_loading_workers = kwargs.pop("max_parallel_loading_workers", None)
+        self.num_cpu_workers = kwargs.pop("num_cpu_workers", 1)
+        self.gpus = parse_ranges(kwargs.pop("gpus", "[0]"))
         # Scheduler configs
         self.max_batchsize = kwargs.pop("max_batchsize", 32)
         self.use_mixed_precisoin = kwargs.pop("use_mixed_precision", False)
         self.policy = kwargs.pop("policy", "fcfs_single")
-        self.overlap_prepare = kwargs.pop("overlap_prepare", False)
-        self.max_overlapped_prepare_reqs = kwargs.pop("max_overlapped_prepare_reqs", 32)
         # Engine configs
         self.disable_log_status = kwargs.pop("disable_log_status", False)
-        self.non_blocking_step = kwargs.pop("non_blocking_step", False)
+        self.dispatcher_policy = kwargs.pop("dispatcher_policy", "greedy")
         # kwargs for `from_pretrained`
         self.kwargs = kwargs
 
@@ -122,15 +121,20 @@ class EngineArgs:
             type=int,
             help="Number of cpus for each gpu workers."
         )
+        parser.add_argument(
+            '--num_cpu_workers',
+            default=1,
+            type=int,
+            help="Number of cpu workers to use."
+        )
+        parser.add_argument(
+            '--gpus',
+            default="[0]",
+            type=str,
+            help="cuda devices to use, in form like [0-2, 4, 7-8]."
+        )
 
         # Scheduler configs
-        parser.add_argument(
-            '--max_parallel_loading_workers', 
-            default=None,
-            type=int,
-            help="Maximum number of workers working at the same time. Useful for ray "
-                 "environment only. ", 
-        )
         parser.add_argument(
             '--max_batchsize', 
             default=16,
@@ -148,17 +152,6 @@ class EngineArgs:
             default="fcfs_mixed",
             help="Name of the pocily to use for scheduling.", 
         )
-        parser.add_argument(
-            '--overlap_prepare', 
-            action='store_true',
-            help="Whether to overlap prepare stage.", 
-        )
-        parser.add_argument(
-            '--max_overlapped_prepare_reqs', 
-            default=32,
-            type=int,
-            help="Maximum prepare-stage requests to be scheduled for overlapping.", 
-        )
 
         # Engine configs
         parser.add_argument(
@@ -168,10 +161,9 @@ class EngineArgs:
             help="Disable system's logging.", 
         )
         parser.add_argument(
-            '--non_blocking_step', 
-            default=False,
-            action='store_true',
-            help="Use non blocking paradigm for engine execution.", 
+            '--dispatcher_policy', 
+            default="greedy",
+            help="Name of the policy for dispatcher.", 
         )
 
         # kwargs
@@ -209,9 +201,10 @@ class EngineArgs:
             data_parallel_size=self.data_parallel_size,
             num_cpus_cpu_worker=self.num_cpus_cpu_worker,
             num_cpus_gpu_worker=self.num_cpus_gpu_worker,
+            num_cpu_workers=self.num_cpu_workers,
             worker_use_ray=self.worker_use_ray,
             worker_use_mp=self.worker_use_mp,
-            max_parallel_loading_workers=self.max_parallel_loading_workers
+            gpus=self.gpus,
         )
     
     def get_scheduler_config(self) -> SchedulerConfig:
@@ -219,14 +212,12 @@ class EngineArgs:
             max_bathsize=self.max_batchsize,
             use_mixed_precision=self.use_mixed_precisoin,
             policy=self.policy,
-            overlap_prepare=self.overlap_prepare,
-            max_overlapped_prepare_reqs=self.max_overlapped_prepare_reqs,
         )
     
     def get_engine_config(self) -> EngineConfig:
         return EngineConfig(
             log_status=not self.disable_log_status,
-            non_blocking_step=self.non_blocking_step
+            dispatcher_policy=self.dispatcher_policy,
         )
         
     
@@ -237,8 +228,6 @@ class EngineArgs:
         parallel_config = self.get_parallel_config()
         scheduler_config = self.get_scheduler_config()
         engine_config = self.get_engine_config()
-        # Update parameters
-        parallel_config.update_params(scheduler_config=scheduler_config)
         return pipeline_config, parallel_config, scheduler_config, engine_config
 
 
@@ -255,7 +244,7 @@ class AsyncEngineArgs(EngineArgs):
     def get_engine_config(self) -> EngineConfig:
         return EngineConfig(
             log_status=not self.disable_log_status,
-            non_blocking_step=self.non_blocking_step,
+            dispatcher_policy=self.dispatcher_policy,
             engine_use_ray=self.engine_use_ray,
             engine_use_mp=self.engine_use_mp,
             log_requests=not self.disable_log_requests,
@@ -270,17 +259,18 @@ class AsyncEngineArgs(EngineArgs):
             '--engine_use_ray',
             action='store_true',
             help='Use Ray to start the Execution engine in a separate process '
-                'as the server process'
+                'as the server process.'
         )
         parser.add_argument(
             '--engine_use_mp',
             action='store_true',
-            help='Disable logging requests\' timeline'
+            help='Use multiprocessing to start the execution engine in a separate process'
+                'as the server process.'
         )
         parser.add_argument(
             '--disable_log_requests',
             action='store_true',
-            help='Disable logging requests\' timeline'
+            help='disable logging feature of each requests'
         )
         
         return parser
