@@ -4,6 +4,7 @@ import torch.nn as nn
 import sys, torch, os
 import numpy as np
 from sduss.utils import get_os_env
+import time
 upsample_predictor = joblib.load(get_os_env("ESYMRED_UPSAMPLE_PATH", check_none=True))
 downsample_predictor = joblib.load(get_os_env("ESYMRED_DOWNSAMPLE_PATH", check_none=True))
 
@@ -17,7 +18,7 @@ class CacheManager:
         self.mse_loss = nn.MSELoss(reduction='none')
 
     def save_and_get_block_states(self, new_indices, new_output, mask):
-        # return new_output
+        return new_output
         if mask.sum() == 0:
             output = torch.stack([self.cache[new_indices[index]] for index in range(len(new_indices))])
             self.cache = {new_indices[index] : output[index] for index in range(len(new_indices))}
@@ -27,7 +28,7 @@ class CacheManager:
             return new_output
         
     def save_and_get_block_tupple(self, new_indices, new_output, mask, output_num):
-        # return new_output
+        return new_output
         if mask.sum() == 0:
             output = tuple([torch.stack([self.cache[new_indices[index]][i] for index in range(len(new_indices))]) for i in range(output_num)])
             # for i in range(output_num):
@@ -41,7 +42,7 @@ class CacheManager:
             return new_output
 
     def update_and_return(self, new_indices, new_output, mask, output_num = 0):
-        # return new_output
+        return new_output
         output = torch.empty((len(new_indices), *new_output.shape[1:]), device="cuda", dtype=torch.float16)
         
         if mask.sum() != len(new_indices):
@@ -54,7 +55,8 @@ class CacheManager:
     
     def get_mask(self, new_indices, new_input, total_blocks, timestep, is_upsample, res_tuple=None):
         
-        # return np.array([1 for _ in range(new_input.shape[0])]) > 0.5
+        return np.array([1 for _ in range(new_input.shape[0])]) > 0.5
+        # start = time.time()
         common_keys = list(set(self.cache.keys()) & set(new_indices))
         if is_upsample:
             # mask[]
@@ -108,4 +110,5 @@ class CacheManager:
 
             self.previous_mask = {new_indices[index]:(0 if mask[index] == 1 or self.previous_mask[new_indices[index]] == 4 else self.previous_mask[new_indices[index]] + 1) for index in range(len(new_indices))}
         mask = np.array(mask) > 0.5
+        # print(f"find mask overhead = {time.time() - start}")
         return mask

@@ -160,15 +160,16 @@ class SplitLinear(SplitModule, nn.Linear):
         # else:
         #     print(f'linear {self.in_features}|{self.out_features} {input.shape[0]}|{input.shape[1]}')
         # torch.cuda.synchronize()
-        
+        return F.linear(input, self.weight, self.bias)
         if mask is not None:
             # start = time.time()
-            l = F.linear(input[mask], self.weight, self.bias)
+            l = F.linear(input, self.weight, self.bias)
             # if self.last_output is None:
             #     self.last_output = l
             # else:
             #     self.last_output[mask] = l
-            output = self.last_output.update_and_return(input_indices, l, mask)
+            # output = l
+            output = self.last_output.update_and_return(input_indices, l[mask], mask)
             # torch.cuda.synchronize()
             # end = time.time()
             # self.total_linear_time += (end - start)
@@ -324,7 +325,10 @@ class PatchUpsample2D(BaseModule):
         if self.module.use_conv:
             if self.module.name == "conv":
                 if is_sliced:
-                    output = self.module.conv(get_adjacency(hidden_states, padding_idx["cuda"])[mask], is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
+                    if mask.sum() / len(mask) < 1:
+                        output = self.module.conv(get_adjacency(hidden_states, padding_idx["cuda"])[mask].contiguous(), is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
+                    else:
+                        output = self.module.conv(get_adjacency(hidden_states, padding_idx["cuda"]), is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])[mask]
                 else:
                     output = self.module.conv(hidden_states)
                 # if self.output is None:
@@ -358,7 +362,11 @@ class PatchDownsample2D(BaseModule):
 
         assert hidden_states.shape[1] == self.module.channels
         if is_sliced:
-            output = self.module.conv(get_adjacency(hidden_states, padding_idx["cuda"])[mask], is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
+            if mask.sum() / len(mask) < 1:
+                output = self.module.conv(get_adjacency(hidden_states, padding_idx["cuda"])[mask].contiguous(), is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])
+            else:
+                output = self.module.conv(get_adjacency(hidden_states, padding_idx["cuda"]), is_sliced=is_sliced, is_padding=False, padding_idx=padding_idx["cpu"])[mask]
+                
         else:
             output = self.module.conv(hidden_states)
         # if self.output is None:
@@ -403,15 +411,12 @@ class PatchResnetBlock2D(BaseModule):
             input_tensor = self.module.downsample(input_tensor, is_sliced=is_sliced, latent_offset=latent_offset, padding_idx=padding_idx)
             hidden_states = self.module.downsample(hidden_states, is_sliced=is_sliced, latent_offset=latent_offset, padding_idx=padding_idx)
 
-        output = self.module.conv1(hidden_states[mask], is_sliced=is_sliced, padding_idx=padding_idx["cpu"], is_padding=False)
-        # print(output.shape)
-        # print(mask)
-        # if self.conv1_output is None:
-        #     self.conv1_output = output
-        # else:
-        #     self.conv1_output[mask] = output
-        # hidden_states = self.conv1_output
-        hidden_states = self.conv1_output.update_and_return(input_indices, output, mask)
+        if mask.sum() / len(mask) < 1:
+            output = self.module.conv1(hidden_states[mask].contiguous(), is_sliced=is_sliced, padding_idx=padding_idx["cpu"], is_padding=False)
+            hidden_states = self.conv1_output.update_and_return(input_indices, output, mask)
+        else:
+            output = self.module.conv1(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx["cpu"], is_padding=False)
+            hidden_states = self.conv1_output.update_and_return(input_indices, output[mask], mask)
         if temb is not None:
             temb = self.module.time_emb_proj(self.module.nonlinearity(temb))[:, :, None, None]
 
@@ -441,18 +446,15 @@ class PatchResnetBlock2D(BaseModule):
         hidden_states = self.module.nonlinearity(hidden_states)
 
         hidden_states = self.module.dropout(hidden_states)
-
-        output = self.module.conv2(hidden_states[mask], is_sliced=is_sliced, padding_idx=padding_idx["cpu"], is_padding=False)
-        # if self.conv2_output is None:
-        #     self.conv2_output = output
-        # else:
-        #     self.conv2_output[mask] = output
-        # hidden_states = self.conv2_output
-        hidden_states = self.conv2_output.update_and_return(input_indices, output, mask)
+        if mask.sum() / len(mask) < 1:
+            output = self.module.conv2(hidden_states[mask].contiguous(), is_sliced=is_sliced, padding_idx=padding_idx["cpu"], is_padding=False)
+            hidden_states = self.conv2_output.update_and_return(input_indices, output, mask)
+        else:
+            output = self.module.conv2(hidden_states, is_sliced=is_sliced, padding_idx=padding_idx["cpu"], is_padding=False)
+            hidden_states = self.conv2_output.update_and_return(input_indices, output[mask], mask)
         if self.module.conv_shortcut is not None:
             input_tensor = self.module.conv_shortcut(input_tensor, is_sliced=is_sliced, padding_idx=padding_idx["cpu"])
 
         output_tensor = (input_tensor + hidden_states) / self.module.output_scale_factor
 
         return output_tensor
-

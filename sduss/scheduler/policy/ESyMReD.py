@@ -26,7 +26,16 @@ class Predictor:
         # else:
         #     self.model.gamma = 2*1e-4
         #     self.model.C = 1e6
+        if "sdxl" in model_path:
+            self.latency = {
+                "512": 66.4,
+                "768": 76.6,
+                "1024": 79.8
+            }
     
+    def get_latency(self, resolution):
+        return self.latency[str(resolution)]
+
     def predict(self, task_distribute: List):
         task_distribute = np.array(task_distribute)
         if "sd1.5" in self.model_path:
@@ -34,7 +43,7 @@ class Predictor:
         else:
             data = task_distribute[:, :1] * 4 + task_distribute[:, 1:2] * 9 + task_distribute[:, 2:3] * 16
         data = np.concatenate((data, np.expand_dims(np.count_nonzero(task_distribute, axis=1), axis=0).T), axis=1)
-        return self.model.predict(data) / 1800
+        return self.model.predict(data) / 1000
     
     # def re_load(self):
     #     self.model = joblib.load(self.model_path)
@@ -143,6 +152,15 @@ class ESyMReD_Scheduler(Policy):
                 scheduled_requests=convert_list_to_res_dict(post_processing_queue),
                 status=scheduled_status,
             )
+
+        prepare_processing_queue = self._get_all_reqs_by_status(RequestStatus.PREPARE)
+
+        if len(prepare_processing_queue) > 0:
+            scheduled_status = RequestStatus.PREPARE
+            return SchedulerOutput(
+                scheduled_requests=convert_list_to_res_dict(prepare_processing_queue),
+                status=scheduled_status,
+            )
         # Set slack
         for req in flattened_reqs:
             req.set_slack(self.model_name, False, self.predict_time)
@@ -150,7 +168,8 @@ class ESyMReD_Scheduler(Policy):
         # Find the highest priority req
         now = time.time()
         index = 0
-        flattened_reqs.sort(key = lambda req: req.slack, reverse=False)
+        # 修改arrival time到slack
+        flattened_reqs.sort(key = lambda req: req.arrival_time, reverse=False)
         target_req = flattened_reqs[index]
         target_res = target_req.sampling_params.resolution
         target_status = target_req.status
@@ -206,9 +225,11 @@ class ESyMReD_Scheduler(Policy):
                     else:
                         res_reqs_dict[res][req.request_id] = req
                     running_reqs_list.append(req)
-            
-            num_to_collect = max_num
-            while True:
+            if len(running_reqs_list) == 0:
+                num_to_collect = max_num
+            else:
+                num_to_collect = 0
+            while num_to_collect > 0:
                 # Add new requests to start denoising
                 if not target_req.start_denoising:
                     if len(running_reqs_list) > 0:
@@ -264,19 +285,24 @@ class ESyMReD_Scheduler(Policy):
                         target_req.update_predict_time(target_req_pred_time)
                         target_req.set_slack(self.model_name, True, self.predict_time) 
 
-                        running_reqs_list.sort(key = lambda req: req.slack, reverse=False)
+                        running_reqs_list.sort(key = lambda req: abs(req.slack), reverse=False)
+                        # running_reqs_list.sort(key = lambda req: req.arrival_time, reverse=False)
                         # If we have low slack req, i.e., very urgent one, we don't add more reqs.
                         # TODO: A Hyper parameter here
-                        if running_reqs_list[0].slack < 0.1:
+                        # if running_reqs_list[0].slack < 0.1:
+                        if False:
                             print(f"esymred: req {running_reqs_list[0].request_id} has slack {running_reqs_list[0].slack}. Very Urgent. Stop adding more reqs.")
                             break
 
-                        if target_req.slack < 0:
+                        # if target_req.slack < 0:
+                        if False:
                             print(f"esymred: decide to abort request {target_req.request_id} with slack={target_req.slack}")
                             req_ids_to_abort.append(target_req.request_id)
                         else:
                             # 如果最紧急的请求依然不是特别紧急，则追求最大吞吐量，修改target_req为最小resolution的request
-                            if target_req.slack > 1:
+                            # if target_req.slack > 50:
+                            # if True:
+                            if False:
                                 is_get_best_tp = True
                                 for i in range(index, len(flattened_reqs)):
                                     req = flattened_reqs[i]
@@ -293,20 +319,22 @@ class ESyMReD_Scheduler(Policy):
                                 is_get_best_tp = False
                             # If some reqs are urgent, we prioritize satifying SLO.
                             if not is_get_best_tp:
-                                if target_res not in res_reqs_dict:
-                                    res_reqs_dict[target_res] = {target_req.request_id : target_req}
+                                if target_req_pred_time / (spend_time_original + self.predictor.get_latency(target_res) * target_req.remain_steps) < 0.95:
+                                    if target_res not in res_reqs_dict:
+                                        res_reqs_dict[target_res] = {target_req.request_id : target_req}
+                                    else:
+                                        res_reqs_dict[target_res][target_req.request_id] = target_req
+                                    target_req.start_denoising = True
+                                    num_to_collect -= 1
+                                    running_reqs_list.append(target_req)
+                                    print(f"esymred: We add req {target_req.request_id} to satisfy SLO.")
+                                    self.predict_time = predict_time_slo[0]
                                 else:
-                                    res_reqs_dict[target_res][target_req.request_id] = target_req
-                                target_req.start_denoising = True
-                                num_to_collect -= 1
-                                running_reqs_list.append(target_req)
-                                print(f"esymred: We add req {target_req.request_id} to satisfy SLO.")
-                                self.predict_time = predict_time_slo[0]
+                                    break
                             else:
                                 # Add this req for best throughput is it won't significantly 
                                 # TODO: A Hyper parameter here
-                                if spend_time_best_tp / (spend_time_original + self.predictor.predict(
-                                    [[1 if res == target_res else 0 for res in self.resolution_list]])[0] * target_req.remain_steps) < 0.95:
+                                if spend_time_best_tp / (spend_time_original + self.predictor.get_latency(target_res) * target_req.remain_steps) < 0.95:
                                     if target_res not in res_reqs_dict:
                                         res_reqs_dict[target_res] = {target_req.request_id : target_req}
                                     else:
@@ -335,7 +363,8 @@ class ESyMReD_Scheduler(Policy):
                         target_req.update_predict_time(self.predict_time * target_req.remain_steps)
                         target_req.set_slack(self.model_name, True, self.predict_time) 
 
-                        if target_req.slack < 0:
+                        # if target_req.slack < 0:
+                        if False:
                             print(f"esymred: decide to abort request {target_req.request_id} with slack={target_req.slack}")
                             req_ids_to_abort.append(target_req.request_id)
                         else:

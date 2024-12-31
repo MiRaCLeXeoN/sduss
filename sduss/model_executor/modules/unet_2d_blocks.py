@@ -379,6 +379,4 @@ class PatchUpBlock2D(BaseModule):
         # else:
         hidden_states = self.output.save_and_get_block_states(input_indices, hidden_states, mask)
         # self.output = hidden_states
-
-        
         return hidden_states

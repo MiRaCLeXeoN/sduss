@@ -64,10 +64,10 @@ class PatchCrossAttention(PatchAttention):
         # start = time.time()
         batch_size, sequence_length, _ = hidden_states.shape
         residual = hidden_states
-        query = self.module.to_q(hidden_states[mask])
+        query = self.module.to_q(hidden_states[mask].contiguous())
 
         encoder_hidden_states = encoder_hidden_states if encoder_hidden_states is not None else hidden_states
-        kv = self.to_kv(encoder_hidden_states[mask])
+        kv = self.to_kv(encoder_hidden_states[mask].contiguous())
         # value = attn.to_v(encoder_hidden_states)
         key, value = torch.split(kv, kv.shape[-1] // 2, dim=-1)
         inner_dim = key.shape[-1]
@@ -152,7 +152,7 @@ class PatchSelfAttention(PatchAttention):
 
                 batch_size = latent_offset[resolution_offset[resolution_index + 1]] - latent_offset[resolution_offset[resolution_index]]
                 sparse_ratio = mask[latent_offset[resolution_offset[resolution_index]] : latent_offset[resolution_offset[resolution_index + 1]]].sum() / batch_size
-                if sparse_ratio < 0.8:
+                if sparse_ratio < 0.5:
                     for latent_index in range(resolution_offset[resolution_index], resolution_offset[resolution_index + 1]):
                         query_mask = mask[latent_offset[latent_index] : latent_offset[latent_index + 1]]
                         if query_mask.sum() == 0:
