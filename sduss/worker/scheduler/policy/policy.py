@@ -10,6 +10,7 @@ class Policy(ABC):
     def __init__(self, **kwargs) -> None:
         # Reference scheduler's request pool
         self.request_pool : 'WorkerRequestPool' = kwargs.pop("request_pool")
+        self.support_resolutions : List[int] = kwargs.pop("support_resolutions")
 
     
     @abstractmethod

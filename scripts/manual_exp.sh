@@ -14,8 +14,8 @@ export QPS="0.4"
 export GPUS="[0-7]"
 ARRIVAL_DISTRI="gamma"
 
-export POLICY="fcfs_single"
-# export POLICY="esymred"
+# export POLICY="fcfs_single"
+export POLICY="esymred"
 
 export ESYMRED_PREDICTOR_PATH="./exp/$MODEL.pkl"
 export ESYMRED_EXEC_TIME_DIR="./exp/profile"

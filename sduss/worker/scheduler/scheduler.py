@@ -47,7 +47,8 @@ class Scheduler:
         # Scheduler policy
         self.policy = PolicyFactory.get_policy(policy_name=self.scheduler_config.policy,
                                                request_pool=self.request_pool,
-                                               use_mixed_precision=self.use_mixed_precision,)
+                                               use_mixed_precision=self.use_mixed_precision,
+                                               support_resolutions=self.support_resolutions)
         
         # Logs
         self.cycle_counter = 0

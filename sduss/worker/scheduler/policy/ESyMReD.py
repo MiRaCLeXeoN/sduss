@@ -69,7 +69,7 @@ class ESyMReD_Scheduler(Policy):
     """
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.resolution_list = sorted(list(self.request_pool.keys()))
+        self.resolution_list = sorted(self.support_resolutions)
 
         model_path: str = get_os_env("ESYMRED_PREDICTOR_PATH", check_none=True)
         postprocessing_exec_time_dir: str = get_os_env("ESYMRED_EXEC_TIME_DIR", check_none=True)
