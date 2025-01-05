@@ -19,6 +19,8 @@ class Policy(ABC):
 
         This method should be overwritten by derived policies.
 
+        The attributes of the requests should not be modified inside!
+
         Args:
             max_num (int): Number of requests to be scheduled at maximum.
 

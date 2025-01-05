@@ -2,7 +2,6 @@ import time
 import os
 
 import torch
-import torch.distributed as dist
 
 from typing import Any, Dict, List, Union, Tuple, Type, TYPE_CHECKING, Optional
 from collections import defaultdict
@@ -49,11 +48,12 @@ class _ModelRunner:
         self.distributed_init_method = distributed_init_method
 
         # compute local_rank, rank wrt current machine
-        num_gpus = torch.cuda.device_count()
-        if parallel_config.world_size <= num_gpus:
-            self.local_rank = self.rank
-        else:
-            raise NotImplementedError("Cross-node distribution is not supported yet!")
+        self.local_rank = self.rank
+        # num_gpus = torch.cuda.device_count()
+        # if parallel_config.world_size <= num_gpus:
+        #     self.local_rank = self.rank
+        # else:
+        #     raise NotImplementedError("Cross-node distribution is not supported yet!")
 
         self.req_mapping: 'Dict[int, RunnerRequest]' = {}
 
@@ -81,8 +81,13 @@ class _ModelRunner:
         # ? This env var set by Ray causes exceptions with graph building
         os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
         
-        self.device = torch.device(f"cuda:{self.device_num}")
+        # os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+        # self.device = torch.device("cuda")
+        self.device = torch.device(f"cuda:{0}")
         torch.cuda.set_device(self.device)
+
+        # Spare 16 extra cores
+        torch.set_num_threads((os.cpu_count() - 16) // self.parallel_config.data_parallel_size)
 
         _init_distributed_environment(self.parallel_config, self.rank, 
                                       self.distributed_init_method)
@@ -112,7 +117,9 @@ class _ModelRunner:
             self.pipeline.to("cpu")
         else:
             logger.info(f"pipeline to cuda:{torch.cuda.current_device()}")
-            self.pipeline.to(torch.cuda.current_device())
+            d = os.environ["CUDA_VISIBLE_DEVICES"]
+            logger.info(f"{d}, {torch.cuda.device_count()}")
+            self.pipeline.to("cuda")
 
         return None
 
@@ -218,6 +225,7 @@ class _ModelRunner:
 
 
     def shutdown(self) -> None:
+        import torch.distributed as dist
         dist.destroy_process_group()
         
 

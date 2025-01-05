@@ -1,7 +1,8 @@
 import uuid
 import traceback
+import os
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Tuple
 from sduss.logger import init_logger
 
 logger = init_logger(__name__)
@@ -55,12 +56,14 @@ class RunnerMainLoop:
         self,
         task_queue: 'mp.Queue',
         output_queue: 'mp.Queue',
-        worker_init_fn,
+        worker_init_fn_args: Tuple,
     ):
         self.task_queue = task_queue
         self.output_queue = output_queue
 
-        self.engine = worker_init_fn()
+        from ._model_runner import _ModelRunner
+
+        self.engine = _ModelRunner(*worker_init_fn_args[0], **worker_init_fn_args[1])
 
         # We must run the main loop in asyncio
         self._main_loop()

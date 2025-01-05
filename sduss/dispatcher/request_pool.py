@@ -116,3 +116,15 @@ class RequestPool:
     
     def has_unfinished_reqs(self) -> bool:
         return len(self.req_mapping) > 0
+    
+    
+    def get_num_unfinished_reqs(self) -> bool:
+        return len(self.req_mapping)
+
+    
+    def get_num_unfinished_reqs_by_dp_rank(self) -> Dict:
+        d = self.requests["dp_rank"].value_counts().to_dict()
+        for i in range(self.dp_size):
+            if i not in d:
+                d[i] = 0
+        return d

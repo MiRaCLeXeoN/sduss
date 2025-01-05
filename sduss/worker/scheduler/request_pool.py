@@ -116,10 +116,15 @@ class WorkerRequestPool:
     
     def get_unfinished_req_ids_by_res(self, resolution: int) -> List[int]:
         req_ids = self.requests.index[
-            (~self.requests["status"].apply(WorkerReqStatus.is_finished)
-             & self.requests["resolution"] == resolution)
+            ((~self.requests["status"].apply(WorkerReqStatus.is_finished))
+             & (self.requests["resolution"] == resolution))
         ].tolist()
         return req_ids
+    
+    
+    def get_unfinished_reqs_by_res(self, resolution: int) -> List[int]:
+        req_ids = self.get_unfinished_req_ids_by_res(resolution=resolution)
+        return self.get_by_ids(req_ids)
     
     
     def free_finished_reqs(self) -> List[WorkerRequest]:
@@ -150,11 +155,11 @@ class WorkerRequestPool:
         # Start with a default mask that includes all rows
         mask = pd.Series(True, index=self.requests.index)
 
-        if status:
+        if status is not None:
             mask = mask & (self.requests["status"] == status)
-        if resolution:
+        if resolution is not None:
             mask = mask & (self.requests["resolution"] == resolution)
-        if remain_steps:
+        if remain_steps is not None:
             mask = mask & (self.requests["remain_steps"] == remain_steps)
         
         return self.requests.index[mask].tolist()

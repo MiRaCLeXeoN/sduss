@@ -86,8 +86,8 @@ class Engine:
         
         # FIXME: For experiment
         self.collect_data = os.getenv("SDUSS_COLLECT_DATA")
-        # if self.collect_data:
-        #     self._prepare_collect_data()
+        if self.collect_data:
+            self._prepare_collect_data()
 
 
     @classmethod
@@ -177,6 +177,8 @@ class Engine:
 
             worker_outputs = self._get_outputs_nowait()
             req_outputs = self._process_outputs(worker_outputs)
+            if req_outputs and self.collect_data:
+                self._collect_data(req_outputs)
             return req_outputs, self.has_unfinished_requests()
         except Exception as e:
             print(e)
@@ -217,10 +219,10 @@ class Engine:
         worker_outputs: 'List[WorkerOutput]',
     ) -> List[ReqOutput]:
         """Update requests status and prepare return result if available."""
-        if len(worker_outputs) <= 0:
+        if len(worker_outputs) == 0:
             return []
-        finished_reqs = self.dispatcher.process_worker_outputs(worker_outputs)
-        return [ReqOutput(req) for req in finished_reqs]
+        finished_reqs, aborted_reqs = self.dispatcher.process_worker_outputs(worker_outputs)
+        return [ReqOutput(req) for req in finished_reqs + aborted_reqs]
 
 
     def _wait_handlers(self, handlers_dict: 'Dict[MpExecutor, asyncio.Task]') -> 'Dict[MpExecutor, Any]':
@@ -315,9 +317,6 @@ class Engine:
     
 
     def clear(self):
-        # if self.collect_data:
-        #     self.sm_monitor.end_monitor()
-        #     self.sm_monitor.log_result_to_file()
         sys.stdout.flush()
         sys.stderr.flush()
 
@@ -327,46 +326,31 @@ class Engine:
     
     def _collect_data(
         self,
-        scheduler_output,
         req_outputs: List[ReqOutput],
-        worker_output: 'WorkerOutput',
     ) -> None:
-        self.sm_monitor.checkpoint()
         # Request data
         for ro in req_outputs:
             self.request_logger.info(
                 f"{ro.request_id},{ro.normal_finished},{ro.start_datetime},{ro.finish_datetime},"
                 f"{ro.resolution},{ro.time_consumption}"
             )
-        # Schedule data
-        res_req_num = []
-        total = 0
-        for res in self.support_resolutions:
-            if res in scheduler_output.scheduled_requests:
-                num = len(scheduler_output.scheduled_requests[res])
-            else:
-                num = 0
-            res_req_num.append(num)
-            total += num
-        worker_step_time = (worker_output.end_time - worker_output.start_time) if worker_output is not None else None
-        self.schedule_logger.info(
-            f"{self._step_counter},{datetime.datetime.now()},{str(scheduler_output.status)},{total},"
-            f"{res_req_num[0]},{res_req_num[1]},"
-            f"{res_req_num[2]},{len(scheduler_output.get_prepare_reqs_as_list())},{worker_step_time}"
-        )
+        num_reqs_by_dp_rank = self.dispatcher.get_num_unfinished_reqs_by_dp_rank()
+        total = sum(list(num_reqs_by_dp_rank.values()))
+        # Dispatch data
+        row = f"{self._step_counter},{datetime.datetime.now()},{total},"
+        row += ",".join([str(num_reqs_by_dp_rank[i]) for i in range(len(self.workers))])
+        self.dispatch_logger.info(row)
     
     
     def _prepare_collect_data(self):
         model = os.getenv("MODEL")
-        distribution = os.getenv("DISTRIBUTION")
         qps = os.getenv("QPS")
         slo = os.getenv("SLO")
         policy = os.getenv("POLICY")
-        arrival_distri = os.getenv("ARRIVAL_DISTRI")
-        result_dir_path = f"./results/{model}/{arrival_distri}/{distribution}_{qps}_{slo}_{policy}"
-        os.makedirs(result_dir_path + "/imgs", exist_ok=True)
+        data_parallel_size = self.parallel_config.data_parallel_size
+        result_dir_path = f"./results/{model}/{qps}_{slo}_{policy}_{data_parallel_size}"
+        os.makedirs(result_dir_path, exist_ok=True)
 
-        sm_util_file_name = result_dir_path + "/sm_util.csv"
         request_data_file_name = result_dir_path + "/request_data.csv"
         schedule_data_file_name = result_dir_path + "/schedule.csv"
 
@@ -379,16 +363,11 @@ class Engine:
             local_logger.propagate = False
             return local_logger
 
+        # Req data
         self.request_logger = prepare_logger(request_data_file_name)
-        self.request_logger.info("request_id,is_finished,start_time,finish_time,resolution,time_consumption")
-        self.schedule_logger = prepare_logger(schedule_data_file_name)
-        self.schedule_logger.info(
-            f"step_count,timestamp,status,num_scheduled_reqs,num_req_of_{self.support_resolutions[0]},"
-            f"num_req_of_{self.support_resolutions[1]},num_req_of_{self.support_resolutions[2]},"
-            f"num_req_of_overlap_prepare,"
-            f"step_worker_time_consumption"
-        )
-
-        
-        self.sm_monitor = SmUtilMonitor(sm_util_file_name, interval=0.01)
-        self.sm_monitor.start_monitor()
+        self.request_logger.info("request_id,normal_finished,start_time,finish_time,resolution,time_consumption")
+        # Dispatch data
+        self.dispatch_logger = prepare_logger(schedule_data_file_name)
+        header = f"step_count,timestamp,total_running_reqs,"
+        header += ",".join([f"num_worker{i}_reqs" for i in range(len(self.workers))])
+        self.dispatch_logger.info(header)

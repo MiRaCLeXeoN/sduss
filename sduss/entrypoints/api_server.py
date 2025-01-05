@@ -60,7 +60,7 @@ async def generate(request: Request) -> Response:
     
     if not final_output.normal_finished:
         response = Response(status_code=400)
-        # response.headers["is_finished"] = str(final_output.normal_finished)
+        response.headers["request_id"] = str(request_id)
         return response
 
     # Store result in server

@@ -1,3 +1,4 @@
+import os
 import torch.multiprocessing as mp
 
 from typing import Any, Dict, List, Union, Tuple, Type, TYPE_CHECKING, Optional
@@ -6,7 +7,6 @@ from functools import partial
 from sduss.logger import init_logger
 
 from .utils import Task, TaskOutput, RunnerMainLoop
-from ._model_runner import _ModelRunner
 
 logger = init_logger(__name__)
 
@@ -18,19 +18,24 @@ class ModelRunner:
         **kwargs,
     ) -> None:
         self.name = name
+        self.device_num = kwargs.get("device_num")
 
         self.task_queue: 'mp.Queue[Task]' = mp.Queue(10)
         # Output queue is used for holding request outputs only
         self.output_queue: 'mp.Queue[TaskOutput]' = mp.Queue(5)
 
-        # Set afterwards    
+        # Set afterwards
+        # ! Set cuda visibility at the very beginning, before importing torch.
+        mp.set_start_method("spawn", force=True)
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(self.device_num)
+
         self.runner = mp.Process(
             target=RunnerMainLoop,
             name=self.name,
             kwargs={
                 "task_queue" : self.task_queue,
                 "output_queue" : self.output_queue,
-                "worker_init_fn" : partial(_ModelRunner, *args, **kwargs)
+                "worker_init_fn_args" : (args, kwargs),
             }
         )
         self.runner.start()

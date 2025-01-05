@@ -1,3 +1,4 @@
+import time
 import torch
 
 from typing import Optional, List, Dict, Union, TYPE_CHECKING, Any, Tuple
@@ -73,7 +74,7 @@ class Worker:
         self.prev_sche_output = None
 
         global logger
-        logger = init_logger(__name__, no_stdout=True, to_file_name=f"./outputs/gpu_worker_{self.rank}")
+        logger = init_logger(__name__, no_stdout=True, to_file_name=f"./outputs/gpu_worker_{self.rank}.log")
     
 
     def init_dis_env(self) -> None:
@@ -89,30 +90,45 @@ class Worker:
                                 
     
     def step(self) -> Tuple[WorkerOutput, bool]:
-        if self.engine_config.log_status:
-            self.log_status()
-
         # 1. Schedule
         ## ! We must check unfinished reqs before reqs get updated by this round
         ## ! Since in unblocking fashion, when the very last req is running post stage,
         ## ! it will be updated to finished status. So has_unfinished_reqs will be 0, even if
         ## ! one is still running.
         has_unfinished_reqs = self.scheduler.has_unfinished_requests()
+        t1 = time.time()
         if has_unfinished_reqs:
             scheduler_output = self.scheduler.schedule()
         else:
             # We have last reqs running post stage, no need to schedule
             scheduler_output = SchedulerOutput(status=WorkerReqStatus.EMPTY)
+        t2 = time.time()
         
-        # 2. Wait for results from previous round
+        # 2. Issue task of this round
+        # Issue task before getting result, overlapping more regions.
+        task = self._issue_task(scheduler_output)
+        t3 = time.time()
+
+        # 3. Wait for results from previous round
         prev_output = None
         if self.prev_task:
             prev_output = self.model_runner.get_result(self.prev_task)
+        t4 = time.time()
 
-        # 3. Issue task of this round
-        task = self._issue_task(scheduler_output)
+        # Log
+        if self.engine_config.log_status:
+            self.log_status(
+                schedule_time=t2 - t1,
+                get_result_time=t4 - t3,
+                scheduler_output=scheduler_output,
+                prev_output=prev_output,
+            )
         
         # 4. Process output and update requests status
+        if scheduler_output.abort_req_ids is not None:
+            aborted_reqs = self.abort_requests(scheduler_output.abort_req_ids)
+        else:
+            aborted_reqs = []
         self._update_reqs(scheduler_output)
         ## finished reqs are automatically removed from request pool by scheduler
         finished_reqs = self._process_prev_output(prev_output, self.prev_sche_output)
@@ -120,11 +136,11 @@ class Worker:
         self.prev_task = task
         self.prev_sche_output = scheduler_output
 
-        if len(finished_reqs) > 0:
-            worker_output = WorkerOutput(finished_reqs)
-            return worker_output, has_unfinished_reqs
-        else:
+        if len(finished_reqs) == 0 and len(aborted_reqs) == 0:
             return None, has_unfinished_reqs
+
+        worker_output = WorkerOutput(worker_reqs=finished_reqs, aborted_reqs=aborted_reqs)
+        return worker_output, has_unfinished_reqs
     
     
     def _issue_task(self, scheduler_output: 'SchedulerOutput') -> None:
@@ -179,11 +195,14 @@ class Worker:
     def abort_requests(self, req_ids: Union[int, List[int]]):
         if isinstance(req_ids, int):
             req_ids = [req_ids]
-        self.scheduler.abort_requests(req_ids)
+        return self.scheduler.abort_requests(req_ids)
     
 
-    def log_status(self):
+    def log_status(self, schedule_time, get_result_time, scheduler_output: 'SchedulerOutput', prev_output: 'RunnerOutput'):
         logger.debug(self.scheduler.get_log_status_str())
+        logger.debug(f"{schedule_time=}, {get_result_time=}")
+        if self.prev_sche_output and prev_output:
+            logger.debug(f"prev schedule status: {self.prev_sche_output.status}, prev exec time: {prev_output.end_time - prev_output.start_time}s")
     
     
     def shutdown(self) -> None:

@@ -7,6 +7,9 @@ from ..wrappers import SchedulerOutput
 from ..utils import convert_list_to_res_dict
 from ...wrappers import WorkerReqStatus
 
+from sduss.logger import init_logger
+
+logger = init_logger(__name__)
 
 class OrcaResByRes(Policy):
     """ Orca scheduling implementation.
@@ -51,6 +54,7 @@ class OrcaResByRes(Policy):
         # 1. Pick a resolution to run
         # Also Update running resolution if no reqs in this resolution
         res = self._choose_resolution()
+        assert res is not None
     
         # 2. Get reqs in this resolution to run
         # 2.1 Schedule non-denoising reqs if avaiable

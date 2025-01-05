@@ -89,7 +89,7 @@ async def get_image_from_session(
             else:
                 logger.info(metric.get_str(
                     index=index,
-                    request_id="None",
+                    request_id=response.headers.get("request_id"),
                     resolution=resolution,
                     step=num_inference_steps,
                     delay_time=delay_time,
@@ -125,20 +125,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--qps",
-    )
-    parser.add_argument(
-        "--distribution",
-        choices=['equal', 'small', 'mid', 'large']
+        type=float,
     )
     parser.add_argument(
         "--num",
-        default=100,
+        default=None,
         type=int,
-    )
-    parser.add_argument(
-        "--arrival_distri",
-        default="gamma",
-        type=str,
     )
     parser.add_argument(
         "--SLO",
@@ -147,19 +139,24 @@ if __name__ == "__main__":
     parser.add_argument(
         "--policy",
     )
+    parser.add_argument(
+        "--data_parallel_size",
+        type=int,
+    )
     parser.add_argument("--host", type=str, default="localhost")
     parser.add_argument("--port", type=int, default=8000)
 
     args = parser.parse_args()
 
     model = args.model
+    data_parallel_size = args.data_parallel_size
     qps = args.qps
-    distribution = args.distribution
     slo = args.SLO
     policy = args.policy
+    num_reqs = args.num
 
     # Create result dir
-    result_dir_path = f"./results/{model}/{args.arrival_distri}/{distribution}_{qps}_{slo}_{policy}"
+    result_dir_path = f"./results/{model}/{qps}_{slo}_{policy}_{data_parallel_size}"
     os.makedirs(result_dir_path + "/imgs", exist_ok=True)
 
     metric = Metrics()
@@ -194,7 +191,7 @@ if __name__ == "__main__":
     api_url = base_url + "generate"
 
     # Load data
-    time_csv_path = f"./exp/{args.model}/{args.arrival_distri}/distri_{args.distribution}/qps_{args.qps}.csv"
+    time_csv_path = f"./exp/{args.model}/qps_{args.qps}.csv"
     prompt_csv_path = f"./exp/0000.csv"
     time_csv = pandas.read_csv(time_csv_path)
     prompt_csv = pandas.read_csv(prompt_csv_path)
@@ -202,7 +199,11 @@ if __name__ == "__main__":
     async def main():
         async with aiohttp.ClientSession() as session:
             coros: List[asyncio.Future] = []
-            for i in range(args.num):
+            if num_reqs is None:
+                num = len(time_csv)
+            else:
+                num = num_reqs
+            for i in range(num):
                 delay_time = time_csv.iloc[i, 0]
                 resoluition = time_csv.iloc[i, 1]
                 prompt = prompt_csv.iloc[i, 1]
@@ -230,6 +231,6 @@ if __name__ == "__main__":
     # logger.info(f"Successful requests: {success_counter} / {args.num}")
 
     print("start server clear")
-    response = requests.get(url=base_url + "clear")
+    response = requests.get(url=base_url + "clear", timeout=60)
     if response.status_code == 200:
         print("finish server clear")

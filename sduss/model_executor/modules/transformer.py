@@ -64,10 +64,10 @@ class PatchTransformer2DModel(BaseModule):
         elif self.module.is_input_patches:
             hidden_states = self.module.pos_embed(hidden_states)
 
-        if self.module.caption_projection is not None:
-            batch_size = hidden_states.shape[0]
-            encoder_hidden_states = self.module.caption_projection(encoder_hidden_states)
-            encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
+        # if self.module.caption_projection is not None:
+        #     batch_size = hidden_states.shape[0]
+        #     encoder_hidden_states = self.module.caption_projection(encoder_hidden_states)
+        #     encoder_hidden_states = encoder_hidden_states.view(batch_size, -1, hidden_states.shape[-1])
 
         # 2. Blocks
         for block in self.module.transformer_blocks:

@@ -230,7 +230,7 @@ class ESyMReD_Scheduler(Policy):
                         best_tp_res = None
                         for res in self.resolution_list:
                             # reqs_list = self.request_pool[res].get_all_unfinished_normal_reqs()
-                            reqs_list = self.request_pool.get_unfinished_req_ids_by_res(res)
+                            reqs_list = self.request_pool.get_unfinished_reqs_by_res(resolution=res)
                             if len(reqs_list) != 0:
                                 find_best_tp_res = False
                                 for req in reqs_list:

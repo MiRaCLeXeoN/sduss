@@ -1,53 +1,42 @@
-# export USE_MIXED_PRECISION=""
-# export OVERLAP_PREPARE=""
-# export NON_BLOCKING_STEP=""
-# export USE_MIXED_PRECISION="--use_mixed_precision"
-# export OVERLAP_PREPARE="--overlap_prepare"
-# export NON_BLOCKING_STEP="--non_blocking_step"
-
-export DATA_PARALLEL_SIZE=8
-export SLO="5"
-export DISTRIBUTION="equal"
-export NUM=100
+export DATA_PARALLEL_SIZE=2
+export SLO="3"
 export MODEL="sdxl"
-export QPS="0.4"
-export GPUS="[0-7]"
-ARRIVAL_DISTRI="gamma"
+export QPS="2.0"
+export GPUS="[0-1]"
 
-# export POLICY="fcfs_single"
-export POLICY="esymred"
+export POLICY="orca_resbyres"
+# export POLICY="fcfs_mixed"
+# export POLICY="esymred"
 
 export ESYMRED_PREDICTOR_PATH="./exp/$MODEL.pkl"
 export ESYMRED_EXEC_TIME_DIR="./exp/profile"
 
-if [[ $POLICY == "esymred" ]]; then
+if [[ $POLICY == "esymred" || $POLICY == "fcfs_mixed" ]]; then
     export USE_MIXED_PRECISION="--use_mixed_precision"
-    export NON_BLOCKING_STEP="--non_blocking_step"
-elif [[ $POLICY == "fcfs_mixed" ]]; then
-    export USE_MIXED_PRECISION="--use_mixed_precision"
-    export NON_BLOCKING_STEP="--non_blocking_step"
+    export ESYMRED_USE_CACHE="TRUE"
+elif [[ $POLICY == "orca_resbyres" ]]; then
+    export ESYMRED_USE_CACHE="FALSE"
 else
     export USE_MIXED_PRECISION=""
-    export NON_BLOCKING_STEP="--non_blocking_step"
 fi
-folder_path="./results/${MODEL}/${ARRIVAL_DISTRI}/${DISTRIBUTION}_${QPS}_${SLO}_${POLICY}"
-if [ -d "${folder_path}" ]; then
-    find ${folder_path} -type f -delete
+result_dir_path="./results/${MODEL}/${QPS}_${SLO}_${POLICY}_${DATA_PARALLEL_SIZE}"
+if [ -d "${result_dir_path}" ]; then
+    find ${result_dir_path} -type f -delete
 fi
 bash ./scripts/h100/unit_test.sh > unit_test.log 2>&1 &
 # echo "Got job $job_num to run model=$MODEL, qps=$QPS, policy=$POLICY, distribution=$DISTRIBUTION, SLO=$SLO"
+echo "Start ${result_dir_path}"
 # Wait until server is ready
 sleep 60
 python ./tests/server/esymred_test.py \
     --model ${MODEL} \
     --qps ${QPS} \
-    --distribution ${DISTRIBUTION} \
     --SLO ${SLO} \
     --policy ${POLICY} \
     --host localhost \
     --port 8000 \
-    --num $NUM
-sleep 3
+    --data_parallel_size ${DATA_PARALLEL_SIZE}
+
 ps aux | grep sduss | grep -v grep | awk '{print $2}' | xargs kill -9
 # echo "cancelled job $job_num"
-# cp ./outputs/*$job_num.* ${folder_path}/
+# cp ./outputs/*$job_num.* ${result_dir_path}/

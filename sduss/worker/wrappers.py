@@ -156,8 +156,11 @@ class WorkerOutput:
     def __init__(
         self,
         worker_reqs: List[WorkerRequest] = None,
+        aborted_reqs: List[WorkerRequest] = None,
     ) -> None:
         # Performance recording
         self.req_output_dict = {}
         for req in worker_reqs:
             self.req_output_dict[req.request_id] = req.output
+        
+        self.aborted_reqs = aborted_reqs

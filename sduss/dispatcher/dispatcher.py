@@ -67,10 +67,16 @@ class Dispatcher:
         if isinstance(request_ids, int):
             request_ids = [request_ids]
         
+        if len(request_ids) == 0:
+            return []
+        
         aborted_reqs = self.request_pool.remove_requests(request_ids)
 
+        finish_time = time.time(0)
         for req in aborted_reqs:
+            req.output = None
             req.status = ReqStatus.ABORTED
+            req.finish_time = finish_time
 
         return aborted_reqs
         
@@ -87,25 +93,33 @@ class Dispatcher:
         # 1. flatten
         req_ids = []
         outputs = []
+        abort_req_ids = []
         for wo in worker_outputs:
+            abort_req_ids.extend(wo.aborted_reqs)
             for req_id, output in wo.req_output_dict.items():
                 req_ids.append(req_id)
                 outputs.append(output)
         
         # 2. Get reqs, assign output, update status
-        reqs = self.request_pool.remove_requests(req_ids)
+        finished_reqs = self.request_pool.remove_requests(req_ids)
         finish_time = time.time()
-        for req, output in zip(reqs, outputs):
+        for req, output in zip(finished_reqs, outputs):
             req.output = output
             req.status = ReqStatus.FINISHED
             req.finish_time = finish_time
         
-        return reqs
+        # 3. Abort reqs
+        aborted_reqs = self.abort_requests(abort_req_ids)
+        
+        return finished_reqs, aborted_reqs
     
     
     def has_unfinished_reqs(self) -> bool:
         return self.request_pool.has_unfinished_reqs()
     
+
+    def get_num_unfinished_reqs_by_dp_rank(self) -> Dict:
+        return self.request_pool.get_num_unfinished_reqs_by_dp_rank()
     
     def log_status(self):
         pass

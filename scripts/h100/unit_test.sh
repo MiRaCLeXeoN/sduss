@@ -21,7 +21,7 @@ python ./sduss/entrypoints/api_server.py \
     --dispatcher_policy greedy \
     ${USE_MIXED_PRECISION} \
     --use_esymred \
-    --max_batchsize 32 \
+    --max_batchsize 10 \
     --torch_dtype "float16" \
     --engine_use_mp \
     --worker_use_mp \
