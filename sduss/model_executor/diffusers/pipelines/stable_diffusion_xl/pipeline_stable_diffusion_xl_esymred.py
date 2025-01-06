@@ -120,6 +120,7 @@ class ESyMReDStableDiffusionXLPipeline(DiffusersStableDiffusionXLPipeline, BaseP
             self.cross_attention_kwargs.get("scale", None) if self.cross_attention_kwargs is not None else None
         )
 
+        # We pass None for prompt_2. This can be handled inside `encode_prompt`.
         (
             prompt_embeds,
             negative_prompt_embeds,

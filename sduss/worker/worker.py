@@ -199,10 +199,10 @@ class Worker:
     
 
     def log_status(self, schedule_time, get_result_time, scheduler_output: 'SchedulerOutput', prev_output: 'RunnerOutput'):
-        logger.debug(self.scheduler.get_log_status_str())
+        # logger.debug(self.scheduler.get_log_status_str())
         logger.debug(f"{schedule_time=}, {get_result_time=}")
         if self.prev_sche_output and prev_output:
-            logger.debug(f"prev schedule status: {self.prev_sche_output.status}, prev exec time: {prev_output.end_time - prev_output.start_time}s")
+            logger.debug(f"prev schedule status: {self.prev_sche_output.status}, batch size: {len(self.prev_sche_output.get_req_ids())}, prev exec time: {prev_output.end_time - prev_output.start_time}s")
     
     
     def shutdown(self) -> None:

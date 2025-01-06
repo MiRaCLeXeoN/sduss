@@ -18,7 +18,7 @@ logger = init_logger(__name__)
 if TYPE_CHECKING:
     from sduss.worker.runner.wrappers import RunnerRequestDictType
 
-class StableDiffusionXLEsymredPipelinePrepareInput:
+class StableDiffusion3EsymredPipelinePrepareInput:
     @staticmethod
     def prepare_prepare_input(
         worker_reqs: "RunnerRequestDictType",
@@ -28,38 +28,24 @@ class StableDiffusionXLEsymredPipelinePrepareInput:
         input_dict["worker_reqs"] =  worker_reqs
 
         # Get a example sampling params
-        sp: "StableDiffusionXLEsymredPipelineSamplingParams" = worker_reqs[next(iter(worker_reqs.keys()))][0].sampling_params
+        sp: "StableDiffusion3EsymredPipelineSamplingParams" = worker_reqs[next(iter(worker_reqs.keys()))][0].sampling_params
         # These variables are all set as default, we can use them across all reqs.
-        input_dict["denoising_end"] = sp.denoising_end
         input_dict["guidance_scale"] = sp.guidance_scale
-        input_dict["eta"] = sp.eta
         input_dict["generator"] = sp.generator
         input_dict["pooled_prompt_embeds"] = sp.pooled_prompt_embeds
         input_dict["negative_pooled_prompt_embeds"] = sp.negative_pooled_prompt_embeds
-        input_dict["ip_adapter_image"] = sp.ip_adapter_image
-        input_dict["ip_adapter_image_embeds"] = sp.ip_adapter_image_embeds
-        input_dict["output_type"] = sp.output_type
-        input_dict["return_dict"] = sp.return_dict
-        input_dict["cross_attention_kwargs"] = sp.cross_attention_kwargs
-        input_dict["guidance_rescale"] = sp.guidance_rescale
-        input_dict["crops_coords_top_left"] = sp.crops_coords_top_left
-        input_dict["negative_original_size"] = sp.negative_original_size
-        input_dict["negative_crops_coords_top_left"] = sp.negative_crops_coords_top_left
-        input_dict["negative_target_size"] = sp.negative_target_size
+        input_dict["joint_attention_kwargs"] = sp.joint_attention_kwargs
         input_dict["clip_skip"] = sp.clip_skip
-    
+        input_dict["max_sequence_length"] = sp.max_sequence_length
+        input_dict["skip_layer_guidance_scale"] = sp.skip_layer_guidance_scale
         return input_dict
         
 
 @dataclass
-class StableDiffusionXLEsymredPipelinePrepareOutput(BasePipelinePrepareOutput):
+class StableDiffusion3EsymredPipelinePrepareOutput(BasePipelinePrepareOutput):
     """Params that are same as sampling_params will not be stored here."""
     pooled_prompt_embeds : torch.Tensor
     negative_pooled_prompt_embeds : torch.Tensor
-    add_time_ids : torch.Tensor
-    negative_add_time_ids : torch.Tensor
-    timestep_cond: torch.Tensor
-    extra_step_kwargs: Dict
     device: torch.device
     do_classifier_free_guidance: bool
     # latents: torch.Tensor  # update to sampling_params
@@ -94,7 +80,7 @@ class StableDiffusionXLEsymredPipelinePrepareOutput(BasePipelinePrepareOutput):
         self.negative_add_time_ids = torch.from_numpy(self.negative_add_time_ids)
 
 
-class StableDiffusionXLEsymredPipelineStepInput(BasePipelineStepInput):
+class StableDiffusion3EsymredPipelineStepInput(BasePipelineStepInput):
     @staticmethod
     def prepare_step_input(
         worker_reqs: "RunnerRequestDictType",
@@ -116,18 +102,12 @@ class StableDiffusionXLEsymredPipelineStepInput(BasePipelineStepInput):
         input_dict["worker_reqs"] = worker_reqs_dict
         
         # params from sampling_params
-        sp: "StableDiffusionXLEsymredPipelineSamplingParams" = worker_reqs[res][0].sampling_params
-        input_dict["guidance_rescale"] = sp.guidance_rescale
+        sp: "StableDiffusion3EsymredPipelineSamplingParams" = worker_reqs[res][0].sampling_params
         input_dict["guidance_scale"] = sp.guidance_scale
-        input_dict["cross_attention_kwargs"] = sp.cross_attention_kwargs
-        input_dict["ip_adapter_image"] = sp.ip_adapter_image
-        input_dict["ip_adapter_image_embeds"] = sp.ip_adapter_image_embeds
 
         # params from prepare output
-        po: "StableDiffusionXLEsymredPipelinePrepareOutput" = worker_reqs[res][0].prepare_output
+        po: "StableDiffusion3EsymredPipelinePrepareOutput" = worker_reqs[res][0].prepare_output
         input_dict["do_classifier_free_guidance"] = po.do_classifier_free_guidance
-        input_dict["timestep_cond"] = po.timestep_cond
-        input_dict["extra_step_kwargs"] = po.extra_step_kwargs
 
         input_dict["is_sliced"] = kwargs.pop("is_sliced")
         input_dict["patch_size"] = kwargs.pop("patch_size")
@@ -136,7 +116,7 @@ class StableDiffusionXLEsymredPipelineStepInput(BasePipelineStepInput):
         
 
 @dataclass
-class StableDiffusionXLEsymredPipelineStepOutput:
+class StableDiffusion3EsymredPipelineStepOutput:
     """Step output class.
     
     For this pipeline, nothing should be stored.
@@ -144,7 +124,7 @@ class StableDiffusionXLEsymredPipelineStepOutput:
     pass
 
 
-class StableDiffusionXLEsymredPipelinePostInput(BasePipelinePostInput):
+class StableDiffusion3EsymredPipelinePostInput(BasePipelinePostInput):
     @staticmethod
     def prepare_post_input(
         worker_reqs: "RunnerRequestDictType",
@@ -161,14 +141,14 @@ class StableDiffusionXLEsymredPipelinePostInput(BasePipelinePostInput):
 
         input_dict["worker_reqs"] = worker_reqs
 
-        sp: "StableDiffusionXLEsymredPipelineSamplingParams" = worker_reqs[next(iter(worker_reqs.keys()))][0].sampling_params
+        sp: "StableDiffusion3EsymredPipelineSamplingParams" = worker_reqs[next(iter(worker_reqs.keys()))][0].sampling_params
         input_dict["output_type"] = sp.output_type
 
         return input_dict
 
 
 @dataclass
-class StableDiffusionXLEsymredPipelineOutput(BaseOutput):
+class StableDiffusion3EsymredPipelineOutput(BaseOutput):
     """
     Output class for Stable Diffusion pipelines.
 
@@ -176,51 +156,43 @@ class StableDiffusionXLEsymredPipelineOutput(BaseOutput):
         images (`List[PIL.Image.Image]` or `np.ndarray`)
             List of denoised PIL images of length `batch_size` or NumPy array of shape `(batch_size, height, width,
             num_channels)`.
-        nsfw_content_detected (`List[bool]`)
-            List indicating whether the corresponding generated image contains "not-safe-for-work" (nsfw) content or
-            `None` if safety checking could not be performed.
     """
-
     images: Union[List[PIL.Image.Image], np.ndarray]
-    nsfw_content_detected: Optional[List[bool]]
 
 
-class StableDiffusionXLEsymredPipelineSamplingParams(BaseSamplingParams):
+class StableDiffusion3EsymredPipelineSamplingParams(BaseSamplingParams):
     """Sampling parameters for StableDiffusionPipeline."""
     # Params that vary
     # Defined in BaseSampling Params
     volatile_params = {
-        "pooled_prompt_embeds" : None,
-        "negative_pooled_prompt_embeds" : None,
-        "timesteps" : None,
-        "denoising_end" : None,
-        "guidance_scale" : 5.0,
-        "eta" : 0.0,
-        "generator" : None,
-        "ip_adapter_image" : None,
-        "ip_adapter_image_embeds" : None,
-        "output_type" : "pil",
-        "return_dict" : True,
-        "cross_attention_kwargs" : None,
-        "guidance_rescale" : 0.0,
-        "original_size" : None,
-        "crops_coords_top_left" : (0, 0),
-        "target_size" : None,
-        "negative_original_size" : None,
-        "negative_crops_coords_top_left" : (0, 0),
-        "negative_target_size" : None,
-        "clip_skip" : None,
-        "callback_on_step_end" : None,
-        "callback_on_step_end_tensor_inputs" : ["latents"],
+        "sigmas": None,
+        "guidance_scale": 7.0,
+        "generator": None,
+        "pooled_prompt_embeds": None,
+        "negative_pooled_prompt_embeds": None,
+        "ip_adapter_image": None,
+        "ip_adapter_image_embeds": None,
+        "output_type": None,
+        "return_dict": True,
+        "joint_attention_kwargs": None,
+        "clip_skip": None,
+        "callback_on_step_end": None,
+        "callback_on_step_end_tensor_inputs": ["latents"],
+        "max_sequence_length": 256,
+        "skip_guidance_layers": None,
+        "skip_layer_guidance_scale": 2.8,
+        "skip_layer_guidance_stop": 0.2,
+        "skip_layer_guidance_start": 0.01,
+        "mu": None,
     }
     
     utils_cls = {
-        "prepare_input" : StableDiffusionXLEsymredPipelinePrepareInput,
-        "prepare_output" : StableDiffusionXLEsymredPipelinePrepareOutput,
-        "step_input" : StableDiffusionXLEsymredPipelineStepInput,
-        "step_output" : StableDiffusionXLEsymredPipelineStepOutput,
-        "post_input" : StableDiffusionXLEsymredPipelinePostInput,
-        "pipeline_output" : StableDiffusionXLEsymredPipelineOutput,
+        "prepare_input" : StableDiffusion3EsymredPipelinePrepareInput,
+        "prepare_output" : StableDiffusion3EsymredPipelinePrepareOutput,
+        "step_input" : StableDiffusion3EsymredPipelineStepInput,
+        "step_output" : StableDiffusion3EsymredPipelineStepOutput,
+        "post_input" : StableDiffusion3EsymredPipelinePostInput,
+        "pipeline_output" : StableDiffusion3EsymredPipelineOutput,
     }
 
     def __init__(self, **kwargs):
@@ -230,35 +202,35 @@ class StableDiffusionXLEsymredPipelineSamplingParams(BaseSamplingParams):
 
         # Specific params that can be mutable
         self.prompt_2: Optional[Union[str, List[str]]] = kwargs.pop("prompt_2", self.prompt)
+        self.prompt_3: Optional[Union[str, List[str]]] = kwargs.pop("prompt_3", self.prompt)
         self.negative_prompt_2: Optional[Union[str, List[str]]] = kwargs.pop("negative_prompt_2", self.negative_prompt)
+        self.negative_prompt_3: Optional[Union[str, List[str]]] = kwargs.pop("negative_prompt_3", self.negative_prompt)
 
-        self.original_size: Optional[Tuple[int, int]] = self._get_volatile_params_from_kwargs("original_size", kwargs)
+        # Volatiles ones
+        self.sigmas: Optional[List[float]] = self._get_volatile_params_from_kwargs("sigmas", kwargs)
+        self.guidance_scale: float = self._get_volatile_params_from_kwargs("guidance_scale", kwargs)
+        self.generator: Optional[Union[torch.Generator, List[torch.Generator]]] = self._get_volatile_params_from_kwargs("generator", kwargs)
         self.pooled_prompt_embeds: Optional[torch.FloatTensor] = self._get_volatile_params_from_kwargs("pooled_prompt_embeds", kwargs)
         self.negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = self._get_volatile_params_from_kwargs("negative_pooled_prompt_embeds", kwargs)
-        self.timesteps: List[int] = self._get_volatile_params_from_kwargs("timesteps", kwargs)
-        self.denoising_end: Optional[float] = self._get_volatile_params_from_kwargs("denoising_end", kwargs)
-        self.guidance_scale: float = self._get_volatile_params_from_kwargs("guidance_scale", kwargs)
-        self.eta: float = self._get_volatile_params_from_kwargs("eta", kwargs)
-        self.generator: Optional[Union[torch.Generator, List[torch.Generator]]] = self._get_volatile_params_from_kwargs("generator", kwargs)
         self.ip_adapter_image: Optional[PipelineImageInput] = self._get_volatile_params_from_kwargs("ip_adapter_image", kwargs)
-        self.ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = self._get_volatile_params_from_kwargs("ip_adapter_image_embeds", kwargs)
+        self.ip_adapter_image_embeds: Optional[torch.Tensor] = self._get_volatile_params_from_kwargs("ip_adapter_image_embeds", kwargs)
         self.output_type: Optional[str] = self._get_volatile_params_from_kwargs("output_type", kwargs)
         self.return_dict: bool = self._get_volatile_params_from_kwargs("return_dict", kwargs)
-        self.cross_attention_kwargs: Optional[Dict[str, Any]] = self._get_volatile_params_from_kwargs("cross_attention_kwargs", kwargs)
-        self.guidance_rescale: float = self._get_volatile_params_from_kwargs("guidance_rescale", kwargs)
-        self.crops_coords_top_left: Tuple[int, int] = self._get_volatile_params_from_kwargs("crops_coords_top_left", kwargs)
-        self.target_size: Optional[Tuple[int, int]] = self._get_volatile_params_from_kwargs("target_size", kwargs)
-        self.negative_original_size: Optional[Tuple[int, int]] = self._get_volatile_params_from_kwargs("negative_original_size", kwargs)
-        self.negative_crops_coords_top_left: Tuple[int, int] = self._get_volatile_params_from_kwargs("negative_crops_coords_top_left", kwargs)
-        self.negative_target_size: Optional[Tuple[int, int]] = self._get_volatile_params_from_kwargs("negative_target_size", kwargs)
+        self.joint_attention_kwargs: Optional[Dict[str, Any]] = self._get_volatile_params_from_kwargs("joint_attention_kwargs", kwargs)
         self.clip_skip: Optional[int] = self._get_volatile_params_from_kwargs("clip_skip", kwargs)
         self.callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = self._get_volatile_params_from_kwargs("callback_on_step_end", kwargs)
         self.callback_on_step_end_tensor_inputs: List[str] = self._get_volatile_params_from_kwargs("callback_on_step_end_tensor_inputs", kwargs)
+        self.max_sequence_length: int = self._get_volatile_params_from_kwargs("max_sequence_length", kwargs)
+        self.skip_guidance_layers: List[int] = self._get_volatile_params_from_kwargs("skip_guidance_layers", kwargs)
+        self.skip_layer_guidance_scale: float = self._get_volatile_params_from_kwargs("skip_layer_guidance_scale", kwargs)
+        self.skip_layer_guidance_stop: float = self._get_volatile_params_from_kwargs("skip_layer_guidance_stop", kwargs)
+        self.skip_layer_guidance_start: float = self._get_volatile_params_from_kwargs("skip_layer_guidance_start", kwargs)
+        self.mu: Optional[float] = self._get_volatile_params_from_kwargs("mu", kwargs)
 
         self._check_volatile_params()
 
 
-    def is_compatible_with(self, sampling_params: "StableDiffusionXLEsymredPipelineSamplingParams") -> bool:
+    def is_compatible_with(self, sampling_params: "StableDiffusion3EsymredPipelineSamplingParams") -> bool:
         is_compatible = True
         # Only volatile params are sure to influce the compatibility
         # But since we've fixed them, params must be compatible
