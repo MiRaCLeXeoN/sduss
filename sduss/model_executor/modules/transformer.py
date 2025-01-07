@@ -19,7 +19,7 @@ import torch.nn.functional as F
 from torch import nn
 from .base_module import BaseModule
 from diffusers.models.transformers.transformer_2d import Transformer2DModel, Transformer2DModelOutput
-from diffusers.models.attention import BasicTransformerBlock
+from diffusers.models.attention import BasicTransformerBlock, JointTransformerBlock
 from typing import Optional, List, Tuple, Union, Dict, Any
 
 class PatchTransformer2DModel(BaseModule):
@@ -288,4 +288,102 @@ class PatchBasicTransformerBlock(BaseModule):
             hidden_states = hidden_states.squeeze(1)
 
         return hidden_states
+
+class PatchJointTransformerBlock(BaseModule):
+    def __init__(
+        self,
+        module: JointTransformerBlock,
+    ):
+        super().__init__(module)
+
+    def forward(
+        self,
+        hidden_states: torch.FloatTensor,
+        encoder_hidden_states: torch.FloatTensor,
+        temb: torch.FloatTensor,
+        temb_latent: torch.FloatTensor,
+        joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        is_sliced: bool = False,
+        latent_offset: list = None,
+        resolution_offset: list = None,
+        state_mask: list = None,
+        input_indices: list = None,
+        encoder_indices: list = None,
+    ):
+        
+
+        joint_attention_kwargs = joint_attention_kwargs or {}
+        if self.module.use_dual_attention:
+            norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp, norm_hidden_states2, gate_msa2 = self.module.norm1(
+                hidden_states, emb=temb_latent
+            )
+        else:
+            norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.module.norm1(hidden_states, emb=temb_latent)
+
+        if self.module.context_pre_only:
+            norm_encoder_hidden_states = self.module.norm1_context(encoder_hidden_states, temb)
+        else:
+            norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.module.norm1_context(
+                encoder_hidden_states, emb=temb
+            )
+
+        # Attention.
+        attn_output, context_attn_output = self.module.attn(
+            hidden_states=norm_hidden_states,
+            encoder_hidden_states=norm_encoder_hidden_states,
+            is_sliced=is_sliced,
+            latent_offset=latent_offset["cpu"],
+            resolution_offset=resolution_offset["cpu"],
+            mask=state_mask,
+            input_indices=input_indices,
+            encoder_indices=encoder_indices,
+            **joint_attention_kwargs,
+        )
+
+        # Process attention outputs for the `hidden_states`.
+        attn_output = gate_msa.unsqueeze(1) * attn_output
+        hidden_states = hidden_states + attn_output
+
+        if self.module.use_dual_attention:
+            attn_output2 = self.module.attn2(hidden_states=norm_hidden_states2, 
+                                            is_sliced=is_sliced,
+                                            latent_offset=latent_offset["cpu"],
+                                            resolution_offset=resolution_offset["cpu"],
+                                            mask=state_mask,
+                                            input_indices=input_indices,
+                                            encoder_indices=encoder_indices,
+                                            **joint_attention_kwargs)
+            attn_output2 = gate_msa2.unsqueeze(1) * attn_output2
+            hidden_states = hidden_states + attn_output2
+
+        norm_hidden_states = self.module.norm2(hidden_states)
+        norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        if self.module._chunk_size is not None:
+            # "feed_forward_chunk_size" can be used to save memory
+            ff_output = _chunked_feed_forward(self.module.ff, norm_hidden_states, self.module._chunk_dim, self.module._chunk_size)
+        else:
+            ff_output = self.module.ff(norm_hidden_states)
+        ff_output = gate_mlp.unsqueeze(1) * ff_output
+
+        hidden_states = hidden_states + ff_output
+
+        # Process attention outputs for the `encoder_hidden_states`.
+        if self.module.context_pre_only:
+            encoder_hidden_states = None
+        else:
+            context_attn_output = c_gate_msa.unsqueeze(1) * context_attn_output
+            encoder_hidden_states = encoder_hidden_states + context_attn_output
+
+            norm_encoder_hidden_states = self.module.norm2_context(encoder_hidden_states)
+            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+            if self.module._chunk_size is not None:
+                # "feed_forward_chunk_size" can be used to save memory
+                context_ff_output = _chunked_feed_forward(
+                    self.module.ff_context, norm_encoder_hidden_states, self.module._chunk_dim, self.module._chunk_size
+                )
+            else:
+                context_ff_output = self.module.ff_context(norm_encoder_hidden_states)
+            encoder_hidden_states = encoder_hidden_states + c_gate_mlp.unsqueeze(1) * context_ff_output
+
+        return encoder_hidden_states, hidden_states
 

@@ -9,6 +9,7 @@ import cupy as cp
 
 upsample_predictor = None
 downsample_predictor = None
+transformer_predictor = None
 
 from sduss.logger import init_logger
 logger = init_logger(__name__)
@@ -27,12 +28,14 @@ class CacheManager:
         import joblib
         # torch.cuda.set_device(0)
 
-        global upsample_predictor, downsample_predictor
+        global upsample_predictor, downsample_predictor, transformer_predictor
         if upsample_predictor is None:
             upsample_predictor = joblib.load(get_os_env("ESYMRED_UPSAMPLE_PATH", check_none=True))
         if downsample_predictor is None:
             downsample_predictor = joblib.load(get_os_env("ESYMRED_DOWNSAMPLE_PATH", check_none=True))
-        
+        if transformer_predictor is None:
+            transformer_predictor = joblib.load(get_os_env("ESYMRED_TRANSFORMER_PATH", check_none=True))
+
         self.use_cache = get_os_env("ESYMRED_USE_CACHE", check_none=False)
         if self.use_cache == "TRUE":
             self.use_cache = True
@@ -66,8 +69,11 @@ class CacheManager:
             self.cache = {new_indices[index]:[res[index] for res in new_output] for index in range(len(new_indices))}
             return new_output
 
-    def update_and_return(self, new_indices, new_output, mask, output_num = 0):
+    def update_and_return(self, new_indices, new_output, mask, skip = True):
         if not self.use_cache:
+            return new_output
+        if skip == False:
+            self.cache = {k:v for k,v in zip(new_indices, new_output)}
             return new_output
         output = torch.empty((len(new_indices), *new_output.shape[1:]), device="cuda", dtype=torch.float16)
         
@@ -140,8 +146,37 @@ class CacheManager:
         # print(f"find mask overhead = {time.time() - start}")
         return mask
     
-    
+    def get_sd3_mask(self, new_indices, new_input, total_blocks, timestep):
+        # return np.array([1 for _ in range(new_input.shape[0])]) > 0.5
+        if not self.use_cache:
+            return np.array([1 for _ in range(new_input.shape[0])]) > 0.5
+        predictor = transformer_predictor
+        common_keys = list(set(self.cache.keys()) & set(new_indices))
+        C = torch.full((new_input.shape[0],), MAX, device="cuda")
+        if len(common_keys) != 0:
+            A_tensors = torch.stack([self.cache[k] for k in common_keys])
+            B_tensors = torch.stack([new_input[new_indices.index(k)] for k in common_keys])
+            mse_values = self.mse_loss(A_tensors.to(torch.float32), B_tensors.to(torch.float32)).mean(dim=(-1,-2)).to(dtype=torch.float32)
+            C[[k in self.cache for k in new_indices]] = mse_values
+        blocks = torch.full((new_input.shape[0], 1), int(total_blocks), device="cuda")
+        # print(blocks.shape)
+        # print(timesteps.shape)
+        # print(C.shape)
+        input_feature = torch.cat([blocks, timestep.reshape(-1, 1), C.reshape(-1, 1)], dim=1).cpu().numpy()
+        self.previous_mask = {new_indices[index] : (0 if new_indices[index] not in self.cache 
+        else self.previous_mask[new_indices[index]]) for index in range(len(new_indices)) }
+        mask = predictor.predict(np.array(input_feature))
+        self.cache = {new_indices[index]:new_input[index] for index in range(len(new_indices))}
+
+        # mask = [1 if mask[index] > 0.5 or (self.previous_mask[new_indices[index]] == 4) else 0 for index in range(len(new_indices))]
+        mask[[self.previous_mask[new_indices[index]] == 2 for index in range(len(new_indices))]] = 1
+
+        self.previous_mask = {new_indices[index]:(0 if mask[index] == 1 or self.previous_mask[new_indices[index]] == 2 else self.previous_mask[new_indices[index]] + 1) for index in range(len(new_indices))}
+        mask = np.array(mask) > 0.5
+        return mask
+
     def __del__(self):
         global upsample_predictor, downsample_predictor
         upsample_predictor = None
         downsample_predictor = None
+        transformer_predictor = None
