@@ -14,6 +14,10 @@ transformer_predictor = None
 from sduss.logger import init_logger
 logger = init_logger(__name__)
 
+MODEL = get_os_env("MODEL", check_none=True)
+
+counter = 0
+
 MAX = float(sys.maxsize)
 class CacheManager:
     def __init__(self):
@@ -28,19 +32,27 @@ class CacheManager:
         import joblib
         # torch.cuda.set_device(0)
 
+        # FIXME: This is hacky, we should pass parameter until here, instead of using os env
+
         global upsample_predictor, downsample_predictor, transformer_predictor
-        if upsample_predictor is None:
-            upsample_predictor = joblib.load(get_os_env("ESYMRED_UPSAMPLE_PATH", check_none=True))
-        if downsample_predictor is None:
-            downsample_predictor = joblib.load(get_os_env("ESYMRED_DOWNSAMPLE_PATH", check_none=True))
-        if transformer_predictor is None:
-            transformer_predictor = joblib.load(get_os_env("ESYMRED_TRANSFORMER_PATH", check_none=True))
+        if "sdxl" in MODEL:
+            if upsample_predictor is None:
+                upsample_predictor = joblib.load(get_os_env("ESYMRED_UPSAMPLE_PATH", check_none=True))
+            if downsample_predictor is None:
+                downsample_predictor = joblib.load(get_os_env("ESYMRED_DOWNSAMPLE_PATH", check_none=True))
+        elif "sd3" in MODEL:
+            if transformer_predictor is None:
+                transformer_predictor = joblib.load(get_os_env("ESYMRED_TRANSFORMER_PATH", check_none=True))
 
         self.use_cache = get_os_env("ESYMRED_USE_CACHE", check_none=False)
         if self.use_cache == "TRUE":
             self.use_cache = True
         else:
             self.use_cache = False
+        
+        # global counter counting active cache managers
+        global counter
+        counter += 1
 
 
     def save_and_get_block_states(self, new_indices, new_output, mask):
@@ -150,7 +162,9 @@ class CacheManager:
         # return np.array([1 for _ in range(new_input.shape[0])]) > 0.5
         if not self.use_cache:
             return np.array([1 for _ in range(new_input.shape[0])]) > 0.5
+        print(0, transformer_predictor)
         predictor = transformer_predictor
+        print(1, predictor)
         common_keys = list(set(self.cache.keys()) & set(new_indices))
         C = torch.full((new_input.shape[0],), MAX, device="cuda")
         if len(common_keys) != 0:
@@ -176,7 +190,9 @@ class CacheManager:
         return mask
 
     def __del__(self):
-        global upsample_predictor, downsample_predictor
-        upsample_predictor = None
-        downsample_predictor = None
-        transformer_predictor = None
+        global upsample_predictor, downsample_predictor, transformer_predictor, counter
+        counter -= 1
+        if counter == 0:
+            upsample_predictor = None
+            downsample_predictor = None
+            transformer_predictor = None

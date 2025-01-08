@@ -1,17 +1,23 @@
+import time
 import torch
-from diffusers.models.attention_processor import Attention
-from torch import nn
-from torch.nn import functional as F
+import math
+
+from typing import Optional
+
 import xformers
 import xformers.ops
+import numpy as np
+
+from torch import nn
+from torch.nn import functional as F
+from diffusers.models.attention_processor import Attention
+from torch.utils.cpp_extension import load
 # from distrifuser.modules.base_module import BaseModule
 # from distrifuser.utils import DistriConfig
+
 from .resnet import SplitLinear
 from .base_module import BaseModule
 from .cache_manager import CacheManager
-import math
-import time
-from torch.utils.cpp_extension import load
 
 
 class PatchAttention(BaseModule):
@@ -53,7 +59,7 @@ class PatchCrossAttention(PatchAttention):
     def forward(
         self,
         hidden_states: torch.FloatTensor,
-        encoder_hidden_states: torch.FloatTensor or None = None,
+        encoder_hidden_states: Optional[torch.FloatTensor] = None,
         scale: float = 1.0,
         mask: list = None,
         input_indices: list = None,
@@ -115,7 +121,7 @@ class PatchSelfAttention(PatchAttention):
     def forward(
         self,
         hidden_states: torch.FloatTensor,
-        encoder_hidden_states: torch.FloatTensor or None = None,
+        encoder_hidden_states: Optional[torch.FloatTensor] = None,
         scale: float = 1.0,
         is_sliced: bool = False,
         latent_offset: list = None,
@@ -235,7 +241,7 @@ class PatchSD3Attention(PatchAttention):
     def forward(
         self,
         hidden_states: torch.FloatTensor,
-        encoder_hidden_states: torch.FloatTensor or None = None,
+        encoder_hidden_states: Optional[torch.FloatTensor] = None,
         scale: float = 1.0,
         is_sliced: bool = False,
         latent_offset: list = None,

@@ -1,4 +1,5 @@
 from .scheduling_euler_discrete import EulerDiscreteScheduler
 from .scheduling_pndm import PNDMScheduler
+from .scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 
 from .utils import BaseSchedulerStates

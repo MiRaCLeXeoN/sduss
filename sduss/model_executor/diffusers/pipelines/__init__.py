@@ -13,6 +13,10 @@ from .stable_diffusion_xl import (
 )
 
 
+from .stable_diffusion_3 import (
+    ESyMReDStableDiffusion3Pipeline,
+)
+
 
 PipelneRegistry = {
     "StableDiffusionPipeline" : ("stable_diffusion", "StableDiffusionPipeline"),
@@ -22,4 +26,5 @@ PipelneRegistry = {
 EsyMReDPipelineRegistry = {
     "StableDiffusionPipeline" : ("stable_diffusion", "ESyMReDStableDiffusionPipeline"),
     "StableDiffusionXLPipeline" : ("stable_diffusion_xl", "ESyMReDStableDiffusionXLPipeline"),
+    "StableDiffusion3Pipeline" : ("stable_diffusion_3", "ESyMReDStableDiffusion3Pipeline"),
 }

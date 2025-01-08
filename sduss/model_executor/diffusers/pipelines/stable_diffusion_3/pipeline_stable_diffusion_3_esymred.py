@@ -23,15 +23,15 @@ class ESyMReDStableDiffusion3Pipeline(DiffusersStableDiffusion3Pipeline, BasePip
 
     @classmethod
     def instantiate_pipeline(cls, **kwargs):
-        # TODO
         sub_modules: Dict = kwargs.pop("sub_modules", {})
 
-        # unet = sub_modules.pop("unet", None)
+        transformer = sub_modules.pop("transformer", None)
+        assert transformer is not None
 
         # # Lazy import to avoid cuda extension building.
-        # from sduss.model_executor.modules.unet import PatchUNet
-        # unet = PatchUNet(unet)
-        # sub_modules["unet"] = unet
+        from sduss.model_executor.modules.SD3Transformer import PatchSD3Transformer2DModel
+        transformer = PatchSD3Transformer2DModel(transformer)
+        sub_modules["transformer"] = transformer
 
         return cls(**sub_modules)
     
@@ -48,7 +48,7 @@ class ESyMReDStableDiffusion3Pipeline(DiffusersStableDiffusion3Pipeline, BasePip
     @torch.inference_mode()
     def prepare_inference(
         self,
-        worker_reqs: "RunnerRequestDictType" = None,
+        runner_reqs: "RunnerRequestDictType" = None,
         guidance_scale: float = 7.0,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
@@ -60,7 +60,7 @@ class ESyMReDStableDiffusion3Pipeline(DiffusersStableDiffusion3Pipeline, BasePip
     ) -> None:
         # Other parameters are removed
 
-        resolution_list = list(worker_reqs.keys())
+        resolution_list = list(runner_reqs.keys())
         resolution_list.sort()
 
         # 0. Collect args
@@ -74,7 +74,7 @@ class ESyMReDStableDiffusion3Pipeline(DiffusersStableDiffusion3Pipeline, BasePip
         num_steps_list = []
 
         for res in resolution_list:
-            for req in worker_reqs[res]:
+            for req in runner_reqs[res]:
                 worker_reqs_list.append(req)
                 prompt_list.append(req.sampling_params.prompt)
                 prompt_2_list.append(req.sampling_params.prompt_2)
@@ -129,10 +129,10 @@ class ESyMReDStableDiffusion3Pipeline(DiffusersStableDiffusion3Pipeline, BasePip
             negative_prompt_2=negative_prompt_2_list,
             negative_prompt_3=negative_prompt_3_list,
             do_classifier_free_guidance=self.do_classifier_free_guidance,
-            prompt_embeds=prompt_embeds,
-            negative_prompt_embeds=negative_prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+            prompt_embeds=None,
+            negative_prompt_embeds=None,
+            pooled_prompt_embeds=None,
+            negative_pooled_prompt_embeds=None,
             device=device,
             clip_skip=self.clip_skip,
             num_images_per_prompt=1,
@@ -153,15 +153,15 @@ class ESyMReDStableDiffusion3Pipeline(DiffusersStableDiffusion3Pipeline, BasePip
         latent_list = []
         num_channels_latents = self.transformer.config.in_channels
         for res in resolution_list:
-            for req in worker_reqs[res]:
+            for req in runner_reqs[res]:
                 # We should ensure the consistency between different iteration
                 # of the dict, so that list has the correct index
                 if req.sampling_params.latents is None:
                     latent = self.prepare_latents(
                         1,
                         num_channels_latents,
-                        height=req.height,
-                        width=req.width,
+                        height=req.sampling_params.height,
+                        width=req.sampling_params.width,
                         dtype=prompt_embeds.dtype,
                         device=device,
                         generator=generator,
@@ -310,13 +310,16 @@ class ESyMReDStableDiffusion3Pipeline(DiffusersStableDiffusion3Pipeline, BasePip
 
 
         noise_pred = self.transformer(
-            hidden_states=latent_model_input,
-            timestep=timestep,
+            hidden_states=latent_input_dict,
+            timestep=t,
             encoder_hidden_states=prompt_embeds,
             pooled_projections=pooled_prompt_embeds,
             joint_attention_kwargs=self.joint_attention_kwargs,
             return_dict=False,
-        )
+            is_sliced=is_sliced,
+            patch_size=patch_size,
+            input_indices=input_index_dict,
+        )[0]
 
         # perform guidance
         for res, res_split_noise in noise_pred.items():
@@ -349,7 +352,7 @@ class ESyMReDStableDiffusion3Pipeline(DiffusersStableDiffusion3Pipeline, BasePip
             # Do scheduler step res by res, not in a whole
             # compute the previous noisy sample x_t -> x_t-1
             latent_dtype = latent_dict[res].dtype
-            latent_dict[res] = self.scheduler.step(runner_reqs=runner_reqs[res], 
+            latent_dict[res] = self.scheduler.batch_step(runner_reqs=runner_reqs[res], 
                                                    model_outputs=res_split_noise, 
                                                    samples=latent_dict[res],
                                                    timesteps=timestep_dict[res], 
@@ -358,7 +361,7 @@ class ESyMReDStableDiffusion3Pipeline(DiffusersStableDiffusion3Pipeline, BasePip
             if latent_dict[res].dtype != latent_dtype:
                 if torch.backends.mps.is_available():
                     # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
-                    latents = latents.to(latent_dtype)
+                    latent_dict[res] = latent_dict[res].to(latent_dtype)
 
         # if callback_on_step_end is not None:
         #     callback_kwargs = {}
@@ -399,8 +402,8 @@ class ESyMReDStableDiffusion3Pipeline(DiffusersStableDiffusion3Pipeline, BasePip
             latents = torch.cat(latent_list, dim=0)
 
             if output_type == "latent":
-                image = latents
                 raise ValueError("latent output is not supported!")
+                image = latents
             else:
                 latents = (latents / self.vae.config.scaling_factor) + self.vae.config.shift_factor
                 image = self.vae.decode(latents, return_dict=False)[0]

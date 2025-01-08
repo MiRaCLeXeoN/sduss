@@ -121,7 +121,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model",
-        choices=["sd1.5", "sdxl"],
+        choices=["sd1.5", "sdxl", "sd3"],
     )
     parser.add_argument(
         "--qps",

@@ -4,8 +4,10 @@
 export SDUSS_COLLECT_DATA=true
 export ESYMRED_PREDICTOR_PATH="./exp/$MODEL.pkl"
 export ESYMRED_EXEC_TIME_DIR="./exp/profile"
+
 export ESYMRED_UPSAMPLE_PATH="./exp/$MODEL-upsample-threshold0.01.pkl"
 export ESYMRED_DOWNSAMPLE_PATH="./exp/$MODEL-downsample-threshold0.01.pkl"
+export ESYMRED_TRANSFORMER_PATH="./exp/$MODEL-state-threshold0.01.pkl"
 
 export TORCH_INCLUDE_PATH="/root/miniconda3/envs/sduss/lib/python3.9/site-packages/torch/include"
 
@@ -13,6 +15,8 @@ if [ ${MODEL} == "sd1.5" ]; then
     export MODEL_PATH="/workspace/huggingface/hub/models--sd-legacy--stable-diffusion-v1-5/snapshots/f03de327dd89b501a01da37fc5240cf4fdba85a1"
 elif [ ${MODEL} == "sdxl" ]; then
     export MODEL_PATH="/workspace/huggingface/hub/models--stabilityai--stable-diffusion-xl-base-1.0/snapshots/462165984030d82259a11f4367a4eed129e94a7b"
+elif [ ${MODEL} == "sd3" ]; then
+    export MODEL_PATH="/workspace/huggingface/hub/models--stabilityai--stable-diffusion-3.5-medium/snapshots/b940f670f0eda2d07fbb75229e779da1ad11eb80"
 fi
 
 python ./sduss/entrypoints/api_server.py \

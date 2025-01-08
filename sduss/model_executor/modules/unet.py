@@ -1,4 +1,11 @@
+import math
+import time
+
+from typing import Optional, Union
+
+import torch.nn.functional as F
 import torch
+
 from diffusers.models.resnet import  ResnetBlock2D
 from diffusers.models.downsampling import Downsample2D
 from diffusers.models.upsampling import Upsample2D
@@ -7,18 +14,15 @@ from diffusers.models.attention import BasicTransformerBlock
 from diffusers.models.unets.unet_2d_blocks import UNetMidBlock2DCrossAttn, CrossAttnDownBlock2D, DownBlock2D, CrossAttnUpBlock2D, UpBlock2D
 from diffusers.models.unets.unet_2d_condition import UNet2DConditionModel
 from diffusers.models.unets.unet_2d_condition import UNet2DConditionOutput
+from diffusers.models.attention_processor import Attention
 from torch import distributed as dist, nn
 
-from diffusers.models.attention_processor import Attention
 from .resnet import SplitModule, SplitConv, SplitGroupnorm, SplitLinear, PatchConv, PatchUpsample2D, PatchDownsample2D, PatchResnetBlock2D
 from .base_module import BaseModel, BaseModule
 from .attention import  PatchCrossAttention, PatchSelfAttention
 from .groupnorm import PatchGroupNorm
 from .transformer import PatchTransformer2DModel, PatchBasicTransformerBlock
 from .unet_2d_blocks import PatchUNetMidBlock2DCrossAttn, PatchCrossAttnDownBlock2D, PatchDownBlock2D, PatchCrossAttnUpBlock2D, PatchUpBlock2D
-import math
-import time
-import torch.nn.functional as F
 
 class PatchUNet(BaseModel):  # for Patch Parallelism
     def __init__(self, model: UNet2DConditionModel):
@@ -199,17 +203,17 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
     def forward(
         self,
         sample,
-        timestep: torch.Tensor or float or int,
+        timestep: Union[torch.Tensor, float, int],
         encoder_hidden_states: torch.Tensor,
-        class_labels: torch.Tensor or None = None,
-        timestep_cond: torch.Tensor or None = None,
-        attention_mask: torch.Tensor or None = None,
-        cross_attention_kwargs: dict or None = None,
-        added_cond_kwargs: dict or None = None,
-        down_block_additional_residuals: tuple or None = None,
-        mid_block_additional_residual: torch.Tensor or None = None,
-        down_intrablock_additional_residuals: tuple or None = None,
-        encoder_attention_mask: torch.Tensor or None = None,
+        class_labels: Optional[torch.Tensor] = None,
+        timestep_cond: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        cross_attention_kwargs: Optional[dict] = None,
+        added_cond_kwargs: Optional[dict] = None,
+        down_block_additional_residuals: Optional[tuple] = None,
+        mid_block_additional_residual: Optional[torch.Tensor] = None,
+        down_intrablock_additional_residuals: Optional[tuple] = None,
+        encoder_attention_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
         record: bool = False,
         patch_size: int = None,

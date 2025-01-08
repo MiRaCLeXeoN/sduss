@@ -21,14 +21,14 @@ if TYPE_CHECKING:
 class StableDiffusion3EsymredPipelinePrepareInput:
     @staticmethod
     def prepare_prepare_input(
-        worker_reqs: "RunnerRequestDictType",
+        runner_reqs: "RunnerRequestDictType",
         **kwargs,
     ) -> Dict:
         input_dict: Dict = {}
-        input_dict["worker_reqs"] =  worker_reqs
+        input_dict["runner_reqs"] =  runner_reqs
 
         # Get a example sampling params
-        sp: "StableDiffusion3EsymredPipelineSamplingParams" = worker_reqs[next(iter(worker_reqs.keys()))][0].sampling_params
+        sp: "StableDiffusion3EsymredPipelineSamplingParams" = runner_reqs[next(iter(runner_reqs.keys()))][0].sampling_params
         # These variables are all set as default, we can use them across all reqs.
         input_dict["guidance_scale"] = sp.guidance_scale
         input_dict["generator"] = sp.generator
@@ -83,30 +83,30 @@ class StableDiffusion3EsymredPipelinePrepareOutput(BasePipelinePrepareOutput):
 class StableDiffusion3EsymredPipelineStepInput(BasePipelineStepInput):
     @staticmethod
     def prepare_step_input(
-        worker_reqs: "RunnerRequestDictType",
+        runner_reqs: "RunnerRequestDictType",
         **kwargs,
     ) -> Dict: 
         """Prepare input parameters for denoising_step function.
 
         Args:
-            worker_reqs (List[RunnerRequestDictType]): Reqs to be batched.
+            runner_reqs (List[RunnerRequestDictType]): Reqs to be batched.
 
         Returns:
             Dict: kwargs dict as input.
         """
         input_dict: Dict = {}
 
-        worker_reqs_dict = {}
-        for res in worker_reqs:
-            worker_reqs_dict[str(res)] = worker_reqs[res]
-        input_dict["worker_reqs"] = worker_reqs_dict
+        runner_reqs_dict = {}
+        for res in runner_reqs:
+            runner_reqs_dict[str(res)] = runner_reqs[res]
+        input_dict["runner_reqs"] = runner_reqs_dict
         
         # params from sampling_params
-        sp: "StableDiffusion3EsymredPipelineSamplingParams" = worker_reqs[res][0].sampling_params
+        sp: "StableDiffusion3EsymredPipelineSamplingParams" = runner_reqs[res][0].sampling_params
         input_dict["guidance_scale"] = sp.guidance_scale
 
         # params from prepare output
-        po: "StableDiffusion3EsymredPipelinePrepareOutput" = worker_reqs[res][0].prepare_output
+        po: "StableDiffusion3EsymredPipelinePrepareOutput" = runner_reqs[res][0].prepare_output
         input_dict["do_classifier_free_guidance"] = po.do_classifier_free_guidance
 
         input_dict["is_sliced"] = kwargs.pop("is_sliced")
@@ -127,21 +127,21 @@ class StableDiffusion3EsymredPipelineStepOutput:
 class StableDiffusion3EsymredPipelinePostInput(BasePipelinePostInput):
     @staticmethod
     def prepare_post_input(
-        worker_reqs: "RunnerRequestDictType",
+        runner_reqs: "RunnerRequestDictType",
         **kwargs,
     ) -> Dict:
         """Prepare input parameters for post_inference function.
 
         Args:
-            worker_reqs (List[RunnerRequestDictType]): Reqs to be batched.
+            runner_reqs (List[RunnerRequestDictType]): Reqs to be batched.
         Returns:
             Dict: kwargs dict as input.
         """
         input_dict: Dict = {}
 
-        input_dict["worker_reqs"] = worker_reqs
+        input_dict["runner_reqs"] = runner_reqs
 
-        sp: "StableDiffusion3EsymredPipelineSamplingParams" = worker_reqs[next(iter(worker_reqs.keys()))][0].sampling_params
+        sp: "StableDiffusion3EsymredPipelineSamplingParams" = runner_reqs[next(iter(runner_reqs.keys()))][0].sampling_params
         input_dict["output_type"] = sp.output_type
 
         return input_dict
@@ -172,7 +172,7 @@ class StableDiffusion3EsymredPipelineSamplingParams(BaseSamplingParams):
         "negative_pooled_prompt_embeds": None,
         "ip_adapter_image": None,
         "ip_adapter_image_embeds": None,
-        "output_type": None,
+        "output_type": "pil",
         "return_dict": True,
         "joint_attention_kwargs": None,
         "clip_skip": None,

@@ -45,6 +45,7 @@ def load_modules(pipeline_pth: str, json_dict: Dict[str, List], kwargs: Dict) ->
         module_name = l[0]
         if module_name == "stable_diffusion":
             module_name = "diffusers"
+
         class_name = l[1]
         import_pth = pkg_name + "." + module_name
         module = importlib.import_module(import_pth)

@@ -1,20 +1,26 @@
-from typing import Any, Dict, List, Optional, Tuple, Union
 import os
 import torch
+
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import torch.nn as nn
 import torch.nn.functional as F
-from .base_module import BaseModule, BaseModel
+
 from diffusers.models.transformers.transformer_2d import Transformer2DModel, Transformer2DModelOutput
 from diffusers.models.attention import BasicTransformerBlock, FeedForward
 from diffusers.models import SD3Transformer2DModel
+from diffusers.models.attention_processor import Attention
+from diffusers.models.embeddings import PatchEmbed
+from diffusers.models.attention import JointTransformerBlock
+from diffusers.utils import is_torch_version
+
+from .base_module import BaseModule, BaseModel
 from .transformer import PatchJointTransformerBlock
 from .attention import PatchSD3Attention
 from .utils import split_sample_sd3, concat_sample
 from .cache_manager import CacheManager
+
 # logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
-from diffusers.models.attention_processor import Attention
-from diffusers.models.embeddings import PatchEmbed
-from diffusers.models.attention import JointTransformerBlock
 
 class PatchSD3Transformer2DModel(BaseModel):
     def __init__(
