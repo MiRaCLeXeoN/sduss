@@ -130,7 +130,7 @@ class WorkerRequest:
             stage = "postprocessing"
             ddl = POSTPROCESSING_DDL[model_name][str(resolution)]
         
-        unit_unet_time = STANDALONE[model_name][stage][str(resolution)]
+        unit_unet_time = STANDALONE[model_name][stage][str(resolution)] * self.sampling_params.num_inference_steps
         if stage == "postprocessing":
             self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
                             ) / (unit_unet_time * Hyper_Parameter[model_name][stage][str(resolution)])
