@@ -33,17 +33,23 @@ class Predictor:
                 "768": 76.6,
                 "1024": 79.8
             }
+        else:
+            self.latency = {
+                "512": 111.1,
+                "768": 122.6,
+                "1024": 145.9
+            }
     
     def get_latency(self, resolution):
         return self.latency[str(resolution)]
 
     def predict(self, task_distribute: List):
         task_distribute = np.array(task_distribute)
-        if "sd1.5" in self.model_path:
+        if "sd3" in self.model_path:
             data = task_distribute[:, :1] + task_distribute[:, 1:2] * 4 + task_distribute[:, 2:3] * 9
         else:
             data = task_distribute[:, :1] * 4 + task_distribute[:, 1:2] * 9 + task_distribute[:, 2:3] * 16
-        data = np.concatenate((data, np.expand_dims(np.count_nonzero(task_distribute, axis=1), axis=0).T), axis=1)
+        data = np.concatenate((task_distribute, data, np.expand_dims(np.count_nonzero(task_distribute, axis=1), axis=0).T), axis=1)
         return self.model.predict(data) / 1000
     
     # def re_load(self):
@@ -155,7 +161,7 @@ class ESyMReD_Scheduler(Policy):
         now = time.time()
         index = 0
         # 修改arrival time到slack
-        flattened_reqs.sort(key = lambda req: req.arrival_time, reverse=False)
+        flattened_reqs.sort(key = lambda req: abs(req.slack), reverse=False)
         target_req = flattened_reqs[index]
         target_res = target_req.sampling_params.resolution
         target_status = target_req.status
@@ -287,9 +293,9 @@ class ESyMReD_Scheduler(Policy):
                             req_ids_to_abort.append(target_req.request_id)
                         else:
                             # 如果最紧急的请求依然不是特别紧急，则追求最大吞吐量，修改target_req为最小resolution的request
-                            # if target_req.slack > 50:
+                            if target_req.slack > 1.2:
                             # if True:
-                            if False:
+                            # if False:
                                 is_get_best_tp = True
                                 for i in range(index, len(flattened_reqs)):
                                     req = flattened_reqs[i]
@@ -315,7 +321,7 @@ class ESyMReD_Scheduler(Policy):
                                     num_to_collect -= 1
                                     running_reqs_list.append(target_req)
                                     print(f"esymred: We add req {target_req.request_id} to satisfy SLO.")
-                                    self.predict_time = predict_time_slo[0]
+                                    self.predict_time = predict_time_slo[0] * target_req.remain_steps
                                 else:
                                     break
                             else:
@@ -330,7 +336,7 @@ class ESyMReD_Scheduler(Policy):
                                     running_reqs_list.append(target_req)
                                     num_to_collect -= 1
                                     print(f"esymred: We add req {target_req.request_id} to get higher throughput.")
-                                    self.predict_time = predict_time_best_tp[0]
+                                    self.predict_time = predict_time_best_tp[0] * target_req.remain_steps
                                 else:
                                     print(f"esymred: Adding req {target_req.request_id} cannot get higher throughput. Stop adding more req.")
                                     break
@@ -345,7 +351,7 @@ class ESyMReD_Scheduler(Policy):
                                 task_distribute[0].append(1)
                             else:
                                 task_distribute[0].append(0)
-                        self.predict_time = self.predictor.predict(task_distribute)
+                        self.predict_time = self.predictor.predict(task_distribute) * target_req.remain_steps
 
                         target_req.update_predict_time(self.predict_time * target_req.remain_steps)
                         target_req.set_slack(self.model_name, True, self.predict_time) 
