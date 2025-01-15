@@ -56,14 +56,15 @@ class RequestPool:
         if isinstance(request_ids, int):
             request_ids = [request_ids]
 
-        # Remove from dataframe
-        self.requests.drop(request_ids, axis=0, inplace=True)
         # Remove from mapping
         reqs = []
         for req_id in request_ids:
             # Get the request
             req = self.req_mapping.pop(req_id)
             reqs.append(req)
+
+        # Remove from dataframe
+        self.requests.drop(request_ids, axis=0, inplace=True)
         
         return reqs
 

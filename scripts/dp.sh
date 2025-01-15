@@ -1,6 +1,5 @@
 export DATA_PARALLEL_SIZE=8
 export SLO="3"
-export MODEL="sdxl"
 
 export ESYMRED_PREDICTOR_PATH="./exp/$MODEL.pkl"
 export ESYMRED_EXEC_TIME_DIR="./exp/profile"

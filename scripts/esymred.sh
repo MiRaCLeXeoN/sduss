@@ -4,8 +4,8 @@ set -e
 # export NUM=""
 export NUM="--num 500"
 
-MODEL_LIST="sdxl"
-DP_LIST="1"
+MODEL_LIST="sd3"
+DP_LIST="8 4 2 1"
 # SDXL_QPS="0.1 0.2 0.3 0.4 0.5"
 # POLICY_LIST="esymred fcfs_mixed orca_resbyres"
 # POLICY_LIST="fcfs_mixed orca_resbyres esymred"
@@ -16,10 +16,12 @@ for dp_size in $DP_LIST; do
         export MODEL=${model}
         if [[ $MODEL == "sd3" ]]; then
             export SLO="5"
-            export QPS_LIST="0.1 0.2 0.3 0.4 0.5"
+            # export QPS_LIST="0.1 0.2 0.3 0.4 0.5"
+            export QPS_LIST="0.5 0.4 0.3 0.2"
         elif [[ $MODEL == "sdxl" ]]; then
             export SLO="3"
-            export QPS_LIST="0.6 0.7 0.8 0.9 1.0"
+            # export QPS_LIST="0.6 0.7 0.8 0.9 1.0"
+            export QPS_LIST="1.0 0.9 0.8 0.7 0.6"
         fi
 
         for qps in $QPS_LIST; do

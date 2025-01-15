@@ -87,7 +87,8 @@ class _ModelRunner:
         torch.cuda.set_device(self.device)
 
         # Spare 16 extra cores
-        torch.set_num_threads((os.cpu_count() - 16) // self.parallel_config.data_parallel_size)
+        avg_cpus = (os.cpu_count() - 16) // self.parallel_config.data_parallel_size
+        torch.set_num_threads(min(64, avg_cpus))
 
         _init_distributed_environment(self.parallel_config, self.rank, 
                                       self.distributed_init_method)

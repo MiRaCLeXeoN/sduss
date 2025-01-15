@@ -1,29 +1,25 @@
 set -e
 
-# export MODEL="sd3"
+export MODEL="sd3"
 # export NUM=""
 export NUM="--num 500"
 
-MODEL_LIST="sdxl"
-DP_LIST="1"
-# SDXL_QPS="0.1 0.2 0.3 0.4 0.5"
+DP_LIST="1 2 4 8"
+SDXL_QPS="0.1 0.2 0.3 0.4 0.5"
 # POLICY_LIST="esymred fcfs_mixed orca_resbyres"
-# POLICY_LIST="fcfs_mixed orca_resbyres esymred"
-export POLICY="esymred"
+POLICY_LIST="fcfs_mixed orca_resbyres esymred"
+
+if [[ $MODEL == "sd3" ]]; then
+    export SLO="5"
+elif [[ $MODEL == "sdxl" ]]; then
+    export SLO="3"
+fi
 
 for dp_size in $DP_LIST; do
-    for model in $MODEL_LIST; do
-        export MODEL=${model}
-        if [[ $MODEL == "sd3" ]]; then
-            export SLO="5"
-            export QPS_LIST="0.1 0.2 0.3 0.4 0.5"
-        elif [[ $MODEL == "sdxl" ]]; then
-            export SLO="3"
-            export QPS_LIST="0.6 0.7 0.8 0.9 1.0"
-        fi
-
-        for qps in $QPS_LIST; do
+    for policy_name in $POLICY_LIST; do 
+        for qps in $SDXL_QPS; do
             export QPS=$(awk "BEGIN {printf \"%.1f\", $qps * $dp_size}")
+            export POLICY=$policy_name
             export DATA_PARALLEL_SIZE=$dp_size
             # last_gpu=$(awk "BEGIN {printf $dp_size - 1}")
             # export GPUS="[0-${last_gpu}]"

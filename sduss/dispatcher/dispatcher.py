@@ -72,7 +72,7 @@ class Dispatcher:
         
         aborted_reqs = self.request_pool.remove_requests(request_ids)
 
-        finish_time = time.time(0)
+        finish_time = time.time()
         for req in aborted_reqs:
             req.output = None
             req.status = ReqStatus.ABORTED
@@ -95,7 +95,7 @@ class Dispatcher:
         outputs = []
         abort_req_ids = []
         for wo in worker_outputs:
-            abort_req_ids.extend(wo.aborted_reqs)
+            abort_req_ids.extend(wo.abort_req_ids)
             for req_id, output in wo.req_output_dict.items():
                 req_ids.append(req_id)
                 outputs.append(output)

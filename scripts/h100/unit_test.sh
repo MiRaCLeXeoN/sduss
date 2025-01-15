@@ -2,7 +2,7 @@
 # ulimit -n 4096
 
 export SDUSS_COLLECT_DATA=true
-export ESYMRED_PREDICTOR_PATH="./exp/$MODEL.pkl"
+export ESYMRED_PREDICTOR_PATH="./exp/schedule_predictor_$MODEL.pkl"
 export ESYMRED_EXEC_TIME_DIR="./exp/profile"
 
 export ESYMRED_UPSAMPLE_PATH="./exp/$MODEL-upsample-threshold0.01.pkl"

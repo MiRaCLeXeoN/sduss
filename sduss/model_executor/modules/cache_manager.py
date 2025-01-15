@@ -162,9 +162,9 @@ class CacheManager:
         # return np.array([1 for _ in range(new_input.shape[0])]) > 0.5
         if not self.use_cache:
             return np.array([1 for _ in range(new_input.shape[0])]) > 0.5
-        print(0, transformer_predictor)
+        #print(0, transformer_predictor)
         predictor = transformer_predictor
-        print(1, predictor)
+        #print(1, predictor)
         common_keys = list(set(self.cache.keys()) & set(new_indices))
         C = torch.full((new_input.shape[0],), MAX, device="cuda")
         if len(common_keys) != 0:
@@ -187,6 +187,7 @@ class CacheManager:
 
         self.previous_mask = {new_indices[index]:(0 if mask[index] == 1 or self.previous_mask[new_indices[index]] == 2 else self.previous_mask[new_indices[index]] + 1) for index in range(len(new_indices))}
         mask = np.array(mask) > 0.5
+        #print(f"mask ratio is {mask.sum() / mask.shape[0]}")
         return mask
 
     def __del__(self):

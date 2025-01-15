@@ -13,6 +13,9 @@ dist
 /results
 imgs/
 
+# tmp files
+*.swp
+*.swo
 
 # output files
 /outputs

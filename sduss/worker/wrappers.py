@@ -130,7 +130,9 @@ class WorkerRequest:
             stage = "postprocessing"
             ddl = POSTPROCESSING_DDL[model_name][str(resolution)]
         
-        unit_unet_time = STANDALONE[model_name][stage][str(resolution)] * self.sampling_params.num_inference_steps
+        unit_unet_time = STANDALONE[model_name][stage][str(resolution)]
+        if "sdxl" in model_name and stage == "denoising":
+            unit_unet_time = unit_unet_time * 0.7
         if stage == "postprocessing":
             self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
                             ) / (unit_unet_time * Hyper_Parameter[model_name][stage][str(resolution)])
@@ -138,11 +140,15 @@ class WorkerRequest:
             # print(f"{ddl=},{unit_unet_time=},{self.predict_time},{current_running_time_cost=},{(time.time() - self.arrival_time)}")
             if is_running:
                 # Suppose we have started at least one round
-                self.slack = (ddl - self.predict_time - current_running_time_cost - (time.time() - self.arrival_time)
+                #self.slack = (ddl - self.predict_time - current_running_time_cost - (time.time() - self.arrival_time)
+                #                ) / unit_unet_time
+                self.slack = (ddl - current_running_time_cost - (time.time() - self.arrival_time)
                                 ) / unit_unet_time
             else:
                 # Denoising not started yet
-                self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
+                #self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
+                #                ) / unit_unet_time
+                self.slack = (ddl - unit_unet_time - (time.time() - self.arrival_time)
                                 ) / unit_unet_time
         self.remain_time = ddl - current_running_time_cost - (time.time() - self.arrival_time)
 
@@ -163,4 +169,7 @@ class WorkerOutput:
         for req in worker_reqs:
             self.req_output_dict[req.request_id] = req.output
         
-        self.aborted_reqs = aborted_reqs
+        abort_req_ids = []
+        for req in aborted_reqs:
+            abort_req_ids.append(req.request_id)
+        self.abort_req_ids = abort_req_ids

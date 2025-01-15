@@ -1,20 +1,26 @@
-export DATA_PARALLEL_SIZE=2
-export SLO="3"
-export MODEL="sd3"
-export QPS="1.2"
-export GPUS="[6-7]"
+export MODEL="sdxl"
 export NUM=50
 
-# export POLICY="orca_resbyres"
-export POLICY="fcfs_mixed"
-# export POLICY="esymred"
+if [[ $MODEL == "sd3" ]]; then
+    export SLO="5"
+elif [[ $MODEL == "sdxl" ]]; then
+    export SLO="3"
+fi
 
-export ESYMRED_PREDICTOR_PATH="./exp/$MODEL.pkl"
-export ESYMRED_EXEC_TIME_DIR="./exp/profile"
+qps=0.9
+dp_size=1
+export GPUS="[7]"
+export DATA_PARALLEL_SIZE=${dp_size}
+export QPS=$(awk "BEGIN {printf \"%.1f\", $qps * $dp_size}")
+
+#export POLICY="orca_resbyres"
+#export POLICY="fcfs_mixed"
+export POLICY="esymred"
 
 if [[ $POLICY == "esymred" || $POLICY == "fcfs_mixed" ]]; then
     export USE_MIXED_PRECISION="--use_mixed_precision"
     export ESYMRED_USE_CACHE="TRUE"
+    # export ESYMRED_USE_CACHE="FALSE"
 elif [[ $POLICY == "orca_resbyres" ]]; then
     export USE_MIXED_PRECISION=""
     export ESYMRED_USE_CACHE="FALSE"
@@ -44,4 +50,4 @@ python ./tests/server/esymred_test.py \
 
 ps aux | grep sduss | grep -v grep | awk '{print $2}' | xargs kill -9
 # echo "cancelled job $job_num"
-# cp ./outputs/*$job_num.* ${result_dir_path}/
+cp -r "${result_dir_path}" /workspace/results/${MODEL}/
