@@ -142,8 +142,9 @@ class WorkerRequest:
                 # Suppose we have started at least one round
                 #self.slack = (ddl - self.predict_time - current_running_time_cost - (time.time() - self.arrival_time)
                 #                ) / unit_unet_time
-                self.slack = (ddl - current_running_time_cost - (time.time() - self.arrival_time)
-                                )
+                self.slack = (
+                    ddl - current_running_time_cost - (time.time() - self.arrival_time)
+                )
             else:
                 # Denoising not started yet
                 #self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
@@ -167,8 +168,12 @@ class WorkerOutput:
         # Performance recording
         self.req_output_dict = {}
         for req in worker_reqs:
-            self.req_output_dict[req.request_id] = req.output
-        
+            self.req_output_dict[req.request_id] = {
+                "output": req.output,
+                "worker_arrival_time": req.arrival_time,
+                "worker_finish_time": req.finish_time,
+            }
+
         abort_req_ids = []
         for req in aborted_reqs:
             abort_req_ids.append(req.request_id)

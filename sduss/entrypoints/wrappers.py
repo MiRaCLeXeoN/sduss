@@ -30,6 +30,9 @@ class ReqOutput:
         self.finish_datetime = datetime.datetime.fromtimestamp(request.finish_time)
         self.time_consumption = request.finish_time - request.arrival_time
 
+        self.worker_arrival_time = datetime.datetime.fromtimestamp(request.worker_arrival_time)
+        self.worker_finish_time = datetime.datetime.fromtimestamp(request.worker_finish_time)
+        self.worker_time_consumption = request.worker_finish_time - request.worker_arrival_time
         
     def __repr__(self) -> str:
         return (

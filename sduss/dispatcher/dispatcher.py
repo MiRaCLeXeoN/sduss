@@ -92,7 +92,7 @@ class Dispatcher:
     def process_worker_outputs(self, worker_outputs: 'List[WorkerOutput]') -> List[Request]:
         # 1. flatten
         req_ids = []
-        outputs = []
+        outputs: List[Dict] = []
         abort_req_ids = []
         for wo in worker_outputs:
             abort_req_ids.extend(wo.abort_req_ids)
@@ -104,9 +104,11 @@ class Dispatcher:
         finished_reqs = self.request_pool.remove_requests(req_ids)
         finish_time = time.time()
         for req, output in zip(finished_reqs, outputs):
-            req.output = output
+            req.output = output["output"]
             req.status = ReqStatus.FINISHED
             req.finish_time = finish_time
+            req.worker_arrival_time = output["worker_arrival_time"]
+            req.worker_finish_time = output["worker_finish_time"]
         
         # 3. Abort reqs
         aborted_reqs = self.abort_requests(abort_req_ids)

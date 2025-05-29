@@ -331,8 +331,8 @@ class Engine:
         # Request data
         for ro in req_outputs:
             self.request_logger.info(
-                f"{ro.request_id},{ro.normal_finished},{ro.start_datetime},{ro.finish_datetime},"
-                f"{ro.resolution},{ro.time_consumption}"
+                f"{ro.request_id},{ro.normal_finished},{ro.start_datetime},{ro.finish_datetime},{ro.worker_arrival_time},{ro.worker_finish_time},"
+                f"{ro.resolution},{ro.time_consumption},{ro.worker_time_consumption}"
             )
         num_reqs_by_dp_rank = self.dispatcher.get_num_unfinished_reqs_by_dp_rank()
         total = sum(list(num_reqs_by_dp_rank.values()))
@@ -365,7 +365,7 @@ class Engine:
 
         # Req data
         self.request_logger = prepare_logger(request_data_file_name)
-        self.request_logger.info("request_id,normal_finished,start_time,finish_time,resolution,time_consumption")
+        self.request_logger.info("request_id,normal_finished,start_time,finish_time,worker_start_time,worker_finish_time,resolution,time_consumption,worker_time_consumption")
         # Dispatch data
         self.dispatch_logger = prepare_logger(schedule_data_file_name)
         header = f"step_count,timestamp,total_running_reqs,"

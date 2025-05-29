@@ -85,6 +85,8 @@ class Request:
         # Set when requst is complete
         self.output = None
         self.finish_time = None
+        self.worker_arrival_time = None  # Time when the request is assigned to a worker
+        self.worker_finish_time = None  # Time when the worker finishes processing the request
 
 
     def is_finished(self):
