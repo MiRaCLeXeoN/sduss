@@ -304,7 +304,7 @@ class PatchSD3Attention(PatchAttention):
                     continue
                 bs = end - start
                 sparse_ratio = mask[start : end].sum() / bs
-                if sparse_ratio <= 1/4 and encoder_hidden_states is None:
+                if sparse_ratio <= 1/16 and encoder_hidden_states is None:
                     # print(sparse_ratio)
                     skip = True
                     for latent_index in range(resolution_offset[resolution_index], resolution_offset[resolution_index + 1]):

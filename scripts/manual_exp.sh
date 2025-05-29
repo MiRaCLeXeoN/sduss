@@ -1,5 +1,5 @@
-export MODEL="sdxl"
-export NUM=50
+export MODEL="sd3"
+export NUM=200
 
 if [[ $MODEL == "sd3" ]]; then
     export SLO="5"
@@ -7,15 +7,15 @@ elif [[ $MODEL == "sdxl" ]]; then
     export SLO="3"
 fi
 
-qps=0.9
+qps=0.5
 dp_size=1
 export GPUS="[7]"
 export DATA_PARALLEL_SIZE=${dp_size}
 export QPS=$(awk "BEGIN {printf \"%.1f\", $qps * $dp_size}")
 
 #export POLICY="orca_resbyres"
-#export POLICY="fcfs_mixed"
-export POLICY="esymred"
+export POLICY="fcfs_mixed"
+# export POLICY="esymred"
 
 if [[ $POLICY == "esymred" || $POLICY == "fcfs_mixed" ]]; then
     export USE_MIXED_PRECISION="--use_mixed_precision"
@@ -50,4 +50,4 @@ python ./tests/server/esymred_test.py \
 
 ps aux | grep sduss | grep -v grep | awk '{print $2}' | xargs kill -9
 # echo "cancelled job $job_num"
-cp -r "${result_dir_path}" /workspace/results/${MODEL}/
+# cp -r "${result_dir_path}" /workspace/results/${MODEL}/

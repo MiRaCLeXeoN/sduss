@@ -124,6 +124,7 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                 
                 for h in range((patch_on_height)):
                     for w in range((patch_on_width)):
+                        # Up, Left, Down, Right
                         paddings = torch.empty(4, device=sample.device, dtype=torch.int32)
                         # paddings = [None] * 4
                         if (patch_on_height) == 1:
@@ -135,9 +136,10 @@ class PatchUNet(BaseModel):  # for Patch Parallelism
                             patch_map.append(len(latent_offset)-1)
                             padding_idx.append(paddings)
                             continue
+
                         if w == 0:
                             paddings[1] = -1
-                            paddings[3] = len(new_sample) + 1
+                            paddings[3] = len(new_sample) + 1  # From right patch
                         elif w == (patch_on_width) - 1:
                             paddings[1] = len(new_sample) - 1
                             paddings[3] = -1

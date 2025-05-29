@@ -6,12 +6,12 @@ export ESYMRED_EXEC_TIME_DIR="./exp/profile"
 
 set -e
 
-DP_LIST="1 2 4 8"
+DP_LIST="1"
 SDXL_QPS="0.6 0.7 0.8 0.9 1"
 # POLICY_LIST="esymred fcfs_mixed orca_resbyres"
 
 export MODEL="sdxl"
-policy_name="orca_resbyres"
+policy_name="esymred"
 # for policy_name in $POLICY_LIST; do 
 for qps in $SDXL_QPS; do
     for dp_size in $DP_LIST; do

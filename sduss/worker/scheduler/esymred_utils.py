@@ -34,8 +34,11 @@ with open(path, "r") as f:
                 STANDALONE[model_name]["postprocessing"][res]) * SLO
             )
 
-    DENOISING_DDL = POSTPROCESSING_DDL.copy()
-    for model_name in DENOISING_DDL:
-        for res in DENOISING_DDL[model_name]:
-            # TODO: A fixed Hyperparameter here
-            DENOISING_DDL[model_name][res] *= 0.95
+    DENOISING_DDL = {}
+    for model_name in STANDALONE:
+        DENOISING_DDL[model_name] = { }
+        resolutions = list(STANDALONE[model_name]["denoising"].keys())
+        for res in resolutions:
+            DENOISING_DDL[model_name][res] = (
+                (STANDALONE[model_name]["denoising"][res]) * SLO
+            )

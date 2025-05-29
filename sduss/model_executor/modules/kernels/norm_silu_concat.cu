@@ -82,6 +82,7 @@ __global__ void RowwiseMomentsCUDAKernel(
 
 
 // grid_dim = num_groups_per_batch * batch_size
+// Only Norm and concat, no SiLU
 template <typename T>
 __global__ void NormSiluConcatCUDAKernel(
     torch::PackedTensorAccessor<T,4,torch::RestrictPtrTraits> X,
@@ -242,6 +243,7 @@ __global__ void NormSiluConcatCUDAKernel(
   }
 }
 
+// Filling up
 template <typename T>
 __global__ void MockNormSiluConcatCUDAKernel(
     torch::PackedTensorAccessor<T,4,torch::RestrictPtrTraits> X,

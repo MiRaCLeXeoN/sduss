@@ -9,7 +9,7 @@ export ESYMRED_UPSAMPLE_PATH="./exp/$MODEL-upsample-threshold0.01.pkl"
 export ESYMRED_DOWNSAMPLE_PATH="./exp/$MODEL-downsample-threshold0.01.pkl"
 export ESYMRED_TRANSFORMER_PATH="./exp/$MODEL-state-threshold0.01.pkl"
 
-export TORCH_INCLUDE_PATH="/root/miniconda3/envs/sduss/lib/python3.9/site-packages/torch/include"
+export TORCH_INCLUDE_PATH="/opt/conda/envs/sduss/lib/python3.9/site-packages/torch/include"
 
 if [ ${MODEL} == "sd1.5" ]; then
     export MODEL_PATH="/workspace/huggingface/hub/models--sd-legacy--stable-diffusion-v1-5/snapshots/f03de327dd89b501a01da37fc5240cf4fdba85a1"
@@ -25,7 +25,7 @@ python ./sduss/entrypoints/api_server.py \
     --dispatcher_policy greedy \
     ${USE_MIXED_PRECISION} \
     --use_esymred \
-    --max_batchsize 10 \
+    --max_batchsize 12 \
     --torch_dtype "float16" \
     --engine_use_mp \
     --worker_use_mp \

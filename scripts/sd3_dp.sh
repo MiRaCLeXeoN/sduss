@@ -4,15 +4,15 @@ export MODEL="sd3"
 # export NUM=""
 export NUM="--num 500"
 
-DP_LIST="1 2 4 8"
+DP_LIST="1"
 SDXL_QPS="0.1 0.2 0.3 0.4 0.5"
 # POLICY_LIST="esymred fcfs_mixed orca_resbyres"
-POLICY_LIST="fcfs_mixed orca_resbyres esymred"
+POLICY_LIST=" esymred "
 
 if [[ $MODEL == "sd3" ]]; then
     export SLO="5"
 elif [[ $MODEL == "sdxl" ]]; then
-    export SLO="3"
+    export SLO="5"
 fi
 
 for dp_size in $DP_LIST; do

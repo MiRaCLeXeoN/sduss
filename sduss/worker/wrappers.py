@@ -131,8 +131,8 @@ class WorkerRequest:
             ddl = POSTPROCESSING_DDL[model_name][str(resolution)]
         
         unit_unet_time = STANDALONE[model_name][stage][str(resolution)]
-        if "sdxl" in model_name and stage == "denoising":
-            unit_unet_time = unit_unet_time * 0.7
+        # if "sdxl" in model_name and stage == "denoising":
+        #     unit_unet_time = unit_unet_time * 0.7
         if stage == "postprocessing":
             self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
                             ) / (unit_unet_time * Hyper_Parameter[model_name][stage][str(resolution)])
@@ -143,13 +143,13 @@ class WorkerRequest:
                 #self.slack = (ddl - self.predict_time - current_running_time_cost - (time.time() - self.arrival_time)
                 #                ) / unit_unet_time
                 self.slack = (ddl - current_running_time_cost - (time.time() - self.arrival_time)
-                                ) / unit_unet_time
+                                )
             else:
                 # Denoising not started yet
                 #self.slack = (ddl - unit_unet_time - current_running_time_cost - (time.time() - self.arrival_time)
                 #                ) / unit_unet_time
                 self.slack = (ddl - unit_unet_time - (time.time() - self.arrival_time)
-                                ) / unit_unet_time
+                                )
         self.remain_time = ddl - current_running_time_cost - (time.time() - self.arrival_time)
 
     

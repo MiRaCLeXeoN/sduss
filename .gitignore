@@ -16,9 +16,13 @@ imgs/
 # tmp files
 *.swp
 *.swo
+*.out
 
 # output files
 /outputs
 
 # log files
 *.log
+
+# model weights
+*.pkl

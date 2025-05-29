@@ -71,7 +71,7 @@ async def get_image_from_session(
                 is_finished = response.headers.get("is_finished")
                 path = result_dir_path +  f"/imgs/client_" + img_name
                 # with open(path, "wb") as f:
-                #     f.write(img)
+                    # f.write(img)
                 logger.info(metric.get_str(
                     index=index,
                     request_id=os.path.splitext(img_name)[0],
