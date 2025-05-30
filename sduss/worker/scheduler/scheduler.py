@@ -78,7 +78,7 @@ class Scheduler:
         
         aborted_reqs = self.request_pool.remove_requests(request_ids)
         for req in aborted_reqs:
-            req.status = WorkerReqStatus.FINISHED_ABORTED
+            req.abort()
         return aborted_reqs
 
 

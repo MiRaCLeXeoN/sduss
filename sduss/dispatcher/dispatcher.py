@@ -58,25 +58,26 @@ class Dispatcher:
         return None
         
 
-    def abort_requests(self, request_ids: Union[int, Iterable[int]]) -> List[Request]:
+    def abort_requests(self, aborted_req_dict: Dict[int, Dict]) -> List[Request]:
         """Abort a handful of requests.
 
         Args:
             request_ids (Union[str, Iterable[str]]): Requests to be aborted.
         """
-        if isinstance(request_ids, int):
-            request_ids = [request_ids]
-        
-        if len(request_ids) == 0:
+        if len(aborted_req_dict) == 0:
             return []
         
-        aborted_reqs = self.request_pool.remove_requests(request_ids)
+        aborted_reqs = self.request_pool.remove_requests(aborted_req_dict.keys())
 
         finish_time = time.time()
         for req in aborted_reqs:
+            req_id = req.request_id
             req.output = None
             req.status = ReqStatus.ABORTED
             req.finish_time = finish_time
+            # The time range for aborted requests doesn't matter, so we just set them to e2e time
+            req.worker_arrival_time = aborted_req_dict[req_id]["worker_arrival_time"]
+            req.worker_finish_time = aborted_req_dict[req_id]["worker_finish_time"]
 
         return aborted_reqs
         
@@ -93,9 +94,9 @@ class Dispatcher:
         # 1. flatten
         req_ids = []
         outputs: List[Dict] = []
-        abort_req_ids = []
+        abort_req_dict: Dict = {}
         for wo in worker_outputs:
-            abort_req_ids.extend(wo.abort_req_ids)
+            abort_req_dict.update(wo.abort_req_dict)
             for req_id, output in wo.req_output_dict.items():
                 req_ids.append(req_id)
                 outputs.append(output)
@@ -111,7 +112,7 @@ class Dispatcher:
             req.worker_finish_time = output["worker_finish_time"]
         
         # 3. Abort reqs
-        aborted_reqs = self.abort_requests(abort_req_ids)
+        aborted_reqs = self.abort_requests(abort_req_dict)
         
         return finished_reqs, aborted_reqs
     

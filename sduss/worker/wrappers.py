@@ -174,7 +174,10 @@ class WorkerOutput:
                 "worker_finish_time": req.finish_time,
             }
 
-        abort_req_ids = []
+        abort_req_dict = {}
         for req in aborted_reqs:
-            abort_req_ids.append(req.request_id)
-        self.abort_req_ids = abort_req_ids
+            abort_req_dict[req.request_id] = {
+                "worker_arrival_time": req.arrival_time,
+                "worker_finish_time": req.finish_time,
+            }
+        self.abort_req_dict = abort_req_dict
