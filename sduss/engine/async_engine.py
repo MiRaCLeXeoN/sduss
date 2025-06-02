@@ -131,7 +131,7 @@ class RequestTracker:
         return stream
     
     
-    def abort_request(self, request_id: int, verbose: bool = False) -> None:
+    def finish_request(self, request_id: int, verbose: bool = False) -> None:
         """Abort a request during next background loop iteration."""
         if verbose:
             logger.info(f"Abort request {request_id}.")
@@ -146,6 +146,7 @@ class RequestTracker:
 
         # Finish request stream.
         self._request_streams_mapping[request_id].finish()
+        self._request_streams_mapping.pop(request_id, None)
 
     
     def get_new_and_finished_requests(self) -> Tuple[List[Dict], Set[int]]:
@@ -192,14 +193,17 @@ class RequestTracker:
         """Process a request output from the engine."""
         request_id = request_output.request_id
 
-        self._request_streams_mapping[request_id].put(request_output)
+        # self._request_streams_mapping[request_id].put(request_output)
+        self._request_streams_mapping[request_id].put(request_output.normal_finished)
         # Abort if finished
         if request_output.is_finished:
             if request_output.normal_finished:
                 logger.info(f"Finished request {request_id}.")
             elif not request_output.normal_finished:
                 logger.info(f"Abort request {request_id}.")
-            self.abort_request(request_id, verbose=False)
+            self.finish_request(request_id, verbose=False)
+        else:
+            logger.warning("Unexpected behavior: request output should be finished")
 
             
     def propagate_exception(
@@ -218,6 +222,10 @@ class RequestTracker:
     
     async def wait_for_new_requests(self):
         await self.new_requests_event.wait()
+    
+    def has_unfinished_requests(self) -> bool:
+        """Check if there are unfinished requests."""
+        return len(self._request_streams_mapping) > 0
 
 
 class AsyncEngine:
@@ -423,4 +431,7 @@ class AsyncEngine:
 
 
     async def clear(self):
+        while self._request_tracker.has_unfinished_requests():
+            # Wait for all requests to finish
+            await asyncio.sleep(3)
         await self.engine.execute_method_async("clear", True)

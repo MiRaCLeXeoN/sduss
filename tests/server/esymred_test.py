@@ -8,6 +8,7 @@ import logging
 import os
 import requests
 import time
+import json
 
 from typing import List
 
@@ -230,7 +231,10 @@ if __name__ == "__main__":
     # logger.info("---")
     # logger.info(f"Successful requests: {success_counter} / {args.num}")
 
+    time.sleep(60)
     print("start server clear")
-    response = requests.get(url=base_url + "clear", timeout=60)
+    response = requests.get(url=base_url + "clear", timeout=1200)
     if response.status_code == 200:
         print("finish server clear")
+    else:
+        print("Failed to clear server data, please check manually.")

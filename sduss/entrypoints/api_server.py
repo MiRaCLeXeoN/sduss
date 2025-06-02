@@ -16,6 +16,7 @@ from sduss.model_executor.diffusers import BasePipeline
 from sduss.utils import random_uuid
 from sduss.model_executor.model_loader import get_pipeline_cls
 from sduss.entrypoints.wrappers import ReqOutput
+from sduss.logger import init_logger
 
 TIMEOUT_KEEP_ALIVE = 5  # seconds.
 TIMEOUT_TO_PREVENT_DEADLOCK = 1  # seconds.
@@ -25,6 +26,8 @@ pipeline_cls = None
 sampling_param_cls = None
 
 image_paths = []
+
+logger = init_logger(__name__)
 
 @app.get("/health")
 async def health() -> Response:
@@ -49,29 +52,31 @@ async def generate(request: Request) -> Response:
     results_generator = engine.generate(request_id=request_id, sampling_params=sampling_params)
 
     # Non-streaming case. Iterate only once.
-    final_output: ReqOutput = None
+    # final_output: ReqOutput = None
     async for request_output in results_generator:
-        if await request.is_disconnected():
-            # Abort the request if the client disconnects.
-            await engine.abort_requests(request_id)
-            return Response(status_code=499)
+    #     if await request.is_disconnected():
+    #         # Abort the request if the client disconnects.
+    #         await engine.abort_requests(request_id)
+    #         return Response(status_code=499)
         final_output = request_output
     assert final_output is not None
     
-    if not final_output.normal_finished:
-        response = Response(status_code=400)
-        response.headers["request_id"] = str(request_id)
-        return response
+    # if not final_output.normal_finished:
+    #     response = Response(status_code=400)
+    #     response.headers["request_id"] = str(request_id)
+    #     return response
 
     # Store result in server
-    image_name = f"{request_id}.png"
-    path = "./outputs/imgs/" + image_name
-    final_output.output.images.save(path)
-    image_paths.append(path)
+    # image_name = f"{request_id}.png"
+    # path = "./outputs/imgs/" + image_name
+    # final_output.output.images.save(path)
+    # image_paths.append(path)
 
-    response =  FileResponse(path, media_type="image/png")
-    response.headers["image_name"] = image_name
-    response.headers["is_finished"] = str(final_output.normal_finished)
+    # response =  FileResponse(path, media_type="image/png")
+    response = Response(status_code=400)
+    response.headers["request_id"] = str(request_id)
+    # response.headers["image_name"] = image_name
+    # response.headers["is_finished"] = str(final_output.normal_finished)
 
     return response
 
