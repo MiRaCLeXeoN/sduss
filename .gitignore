@@ -9,7 +9,7 @@ dist
 
 # test files
 /local_tests
-/exp
+# /exp
 /results
 imgs/
 
@@ -25,4 +25,4 @@ imgs/
 *.log
 
 # model weights
-*.pkl
+# *.pkl
