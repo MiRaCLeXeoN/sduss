@@ -11,7 +11,6 @@ class PolicyFactory:
     # map: name -> (cls, support_mixed_precision)
     _POLICY_REGISTRY = {
         'fcfs_single': (FCFS_Single, False),
-        'fcfs_nirvana': (FCFS_Single, False),
         'fcfs_mixed' : (FCFS_Mixed, True),
         'orca_resbyres' : (OrcaResByRes, False),
         'orca_round_robin' : (OrcaRoundRobin, False),
