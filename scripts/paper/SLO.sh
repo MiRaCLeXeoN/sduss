@@ -6,18 +6,21 @@ MODEL_LIST=("sdxl" "sd3")
 DP_LIST="8"
 
 for model in "${MODEL_LIST[@]}"; do
+    # For other policies, which are SLO-agnostic, we can reuse SLO=5 settings.
+    # So we don't need to run those experiments again.
+    POLICY_LIST=("esymred")
     if [[ $model == "sd3" ]]; then
         QPS_LIST=(0.4)
-        POLICY_LIST=("esymred" "fcfs_mixed" "orca_resbyres")
+        # POLICY_LIST=("esymred" "fcfs_mixed" "orca_resbyres")
     elif [[ $model == "sdxl" ]]; then
         QPS_LIST=(1.1)
-        POLICY_LIST=("esymred" "fcfs_mixed" "orca_resbyres")
+        # POLICY_LIST=("esymred" "fcfs_mixed" "orca_resbyres")
     fi
 
     export MODEL=$model
     export NUM=$NUM
 
-    SLO_LIST=("3" "5" "10")
+    SLO_LIST=("3" "10")
 
     for dp_size in $DP_LIST; do
         for policy_name in $POLICY_LIST; do 

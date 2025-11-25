@@ -20,6 +20,8 @@ imgs/
 
 # output files
 /outputs
+/*.pdf
+/*.csv
 
 # log files
 *.log

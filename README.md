@@ -95,3 +95,14 @@ cd distrifuser
 conda activate distrifuser
 bash ./run_all.sh
 ```
+
+## Results
+
+You can draw diagrams to reproduce figure 12, 13, 14, and 15. 
+
+```
+python ./scripts/draw/get_metric.py
+python ./scripts/draw/figure.py
+```
+
+Figures will be generated at the project root path.
