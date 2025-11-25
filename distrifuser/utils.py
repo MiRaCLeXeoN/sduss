@@ -100,9 +100,9 @@ def get_pipeline(model):
 
 
 def get_csv_files(model, qps: str):
-    prompt_csv_path = f"./exp/0000.csv"
+    prompt_csv_path = f"../exp/0000.csv"
     prompt_csv = pd.read_csv(prompt_csv_path)
-    qps_csv_path = f"./exp/{model}/qps_{qps}.csv"
+    qps_csv_path = f"../exp/{model}/qps_{qps}.csv"
     qps_csv = pd.read_csv(qps_csv_path)
     return prompt_csv, qps_csv
 
@@ -123,7 +123,7 @@ class Request:
 
 
 class RequestPool:
-    def __init__(self, model, prompt_csv, qps_csv, init_time, world_size):
+    def __init__(self, model, prompt_csv, qps_csv, init_time, world_size, max):
         self.resolutions = [512, 768, 1024]
         self.pool: Dict[int, List[Request]] = {res: [] for res in self.resolutions}
 
@@ -133,7 +133,7 @@ class RequestPool:
         self.init_time = init_time
 
         self.index = 0
-        self.max = 500
+        self.max = max
 
         self.world_size = world_size
 

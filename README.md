@@ -1,34 +1,97 @@
 # Mixfusion
 
-## How to run
+## Hardware
 
-Clone the repo and run the following code to setup the environment
+Our project is based on NVIDIA H100 GPUs. Since the predictor (a small model) is trained based on the data collected on H100, the system can only perform normally on H100 machines. So a 8xH100 machine is required to reproduce the results.
+
+## Environment
+
+First download the docker image with appropriate CUDA version.
+
+To avoid re-downloding the model weights inside the container, you can reuse the model weights on your host machine if there is. Just replace the `<huggingace path>` below to the PARENT path of huggingface root path. (Inside this path, there should be a `hub` directory containing the models), like: 
 
 ```
-conda env create -f ./conda.yml
-conda activate sduss
+$ ls huggingface/hub/
+models--stabilityai--stable-diffusion-3.5-medium  models--stabilityai--stable-diffusion-xl-base-1.0  version_diffusers_cache.txt  version.txt
+```
+
+Two model weights are required: `models--stabilityai--stable-diffusion-3.5-medium` and `models--stabilityai--stable-diffusion-xl-base-1.0`. You can find both on huggingface. Follow the instructions on huggingface to download the weights.
+
+Run the docker containers. If you choose to download the model inside the container, then you don't need to impose `-v <>:<>` option.
+
+```
+docker run -d --name mixfusion --gpus all -v <huggingface path>:/workspace -it nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 bash
+```
+
+Attach to the container.
+
+```
+docker exec -it mixfusion bash
+```
+
+Then install the conda environment. (Remember to refresh your bash after installation)
+
+```
+cd ~
+apt-get update
+apt-get install -y wget git vim
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash ~/Miniconda3-latest-Linux-x86_64.sh
+source ~/.bashrc
+```
+
+Clone this repo into a specific path. Here we use `/root` directory. 
+
+
+And then we install the conda env. (This env name is sduss, not mixfusion!!!)
+
+```
+cd <repo path>
+conda env create -f conda.yml
+conda env activate sduss
+```
+
+`cuml-cu12` is commented out in `conda.yml`, since we find it sometimes trouble-raising. So we have to install it manually.
+
+```
+pip install \
+    --extra-index-url=https://pypi.nvidia.com \
+    "cuml-cu12==24.8.0"
+```
+
+Install this package.
+
+```
 pip install -e .
 ```
 
-You can run the scripts in [./scripts](./scripts/) to get the results presented in our paper.
+### Install env for distrifuser
 
-Or you can run commands like
+We compare our project against distrifuser. To achieve this goal, we made some modifications to the code and integrated their code here. Since it has different dependencies from ours, you should install a separate conda env for it.
 
 ```
-python ./sduss/entrypoints/api_server.py \
-    --model_name_or_pth {MODEL_NAME_OR_PATH} \
-    --policy esymred \
-    --dispatcher_policy greedy \
-    --mixed_precision \
-    --use_esymred \
-    --max_batchsize 10 \
-    --torch_dtype "float16" \
-    --engine_use_mp \
-    --worker_use_mp \
-    --data_parallel_size 2 \
-    --gpus [0-1]
+cd distrifuser
+conda env create -f distrifuser.yml
 ```
 
-to lunch a server and then send requests to it to start a job. 
+## Run
 
-Please replace the "MODEL_NAME_OR_PATH" with your model's path. Currently, we only support SDXL and SD3 from diffusers.
+Before running tests, you `MUST` update the paths inside `./scripts/env.sh`. Instructions are embedded there.
+
+Now we can run all the exp.
+
+```
+bash ./scripts/paper/run_all.sh
+```
+
+This script automatically runs results for Figure 12, 13, 14, and 15 presented in our paper.
+
+It takes roughly 25 hours to finish all the experiments. You can check the `run_all.sh` to see the guidance of adjusting experiment time.
+
+### Run results of distrifuser
+
+```
+cd distrifuser
+conda activate distrifuser
+bash ./run_all.sh
+```

@@ -10,7 +10,7 @@ dist
 # test files
 /local_tests
 # /exp
-/results
+results
 imgs/
 
 # tmp files

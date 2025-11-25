@@ -16,6 +16,7 @@ if __name__ == "__main__":
     slo = os.environ.get("SLO", "5")
     qps = os.environ.get("QPS", "8.0")
     model = os.environ.get("MODEL", "sdxl")
+    num = int(os.environ.get("NUM", "500"))
 
     # Get files
     distri_config, pipeline = get_pipeline(model)
@@ -45,7 +46,7 @@ if __name__ == "__main__":
     objs = [init_time, init_datetime]
     dist.broadcast_object_list(objs, src=0, group=gloo_pg)
     init_time, init_datetime = objs
-    request_pool = RequestPool(model, prompt_csv, qps_csv, init_time, world_size=world_size)
+    request_pool = RequestPool(model, prompt_csv, qps_csv, init_time, world_size=world_size, max=num)
 
     print(f"{rank=} ready, {init_time=}, {init_datetime=}")
     random.seed(10086)
