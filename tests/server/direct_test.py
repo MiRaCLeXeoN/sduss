@@ -119,7 +119,7 @@ def handle_args():
     )
     parser.add_argument(
         "--qps",
-        type=float,
+        type=str,
     )
     parser.add_argument(
         "--num",
@@ -191,8 +191,6 @@ if __name__ == "__main__":
             # steps = time_csv.iloc[i, 2] if policy == "orca_resbyres" else 50
             if policy == "orca_resbyres":
                 steps = time_csv.iloc[i, 2]
-            elif policy == "fcfs_nirvana":
-                steps = 40
             else:
                 steps = 50
             coros.append(get_image_from_engine(
