@@ -10,7 +10,7 @@ for MODEL in "${MODELS[@]}"; do
         export SLO="5"
     elif [[ ${MODEL} == "sdxl" ]]; then
         export QPS_LIST="8.8_large 8.8_medium 8.8_small"
-        export SLO="3"
+        export SLO="5"
     fi
     for qps in $QPS_LIST; do
         export MODEL=${MODEL}
