@@ -6,7 +6,7 @@ Our project is based on NVIDIA H100 GPUs. Since the predictor (a small model) is
 
 ## Environment
 
-First download the docker image with appropriate CUDA version.
+First download the docker image with appropriate CUDA version. We recommend using `nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04`.
 
 To avoid re-downloding the model weights inside the container, you can reuse the model weights on your host machine if there is. Just replace the `<huggingace path>` below to the PARENT path of huggingface root path. (Inside this path, there should be a `hub` directory containing the models), like: 
 
@@ -72,6 +72,7 @@ We compare our project against distrifuser. To achieve this goal, we made some m
 ```
 cd distrifuser
 conda env create -f distrifuser.yml
+pip install -e .
 ```
 
 ## Run
