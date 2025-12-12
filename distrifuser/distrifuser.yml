@@ -28,11 +28,18 @@ dependencies:
   - wheel=0.45.1=pyhd8ed1ab_1
   - pip:
       - accelerate==1.2.1
+      - anyio==4.11.0
       - certifi==2024.12.14
       - charset-normalizer==3.4.1
+      - click==8.3.1
       - diffusers==0.33.1
+      - exceptiongroup==1.3.1
       - filelock==3.16.1
       - fsspec==2024.12.0
+      - h11==0.16.0
+      - hf-xet==1.2.0
+      - httpcore==1.0.9
+      - httpx==0.28.1
       - huggingface-hub==0.27.0
       - idna==3.10
       - importlib-metadata==8.5.0
@@ -67,15 +74,18 @@ dependencies:
       - requests==2.32.3
       - safetensors==0.5.0
       - sentencepiece==0.2.0
+      - shellingham==1.5.4
       - six==1.17.0
+      - sniffio==1.3.1
       - sympy==1.14.0
       - tokenizers==0.21.0
       - torch==2.7.1
       - tqdm==4.67.1
       - transformers==4.47.1
       - triton==3.3.1
+      - typer-slim==0.20.0
       - typing-extensions==4.12.2
       - tzdata==2025.2
       - urllib3==2.3.0
       - zipp==3.21.0
-# prefix: /workspace/local_conda_env/opt/conda/envs/distrifuser
+# prefix: /root/miniconda3/envs/distrifuser

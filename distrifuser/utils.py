@@ -73,6 +73,7 @@ def get_pp(pipeline_cls, model_path, res, re_init):
         re_init=re_init,
         split_batch=False,
         do_classifier_free_guidance=True,
+        verbose=True,
     )
     pipeline = pipeline_cls.from_pretrained(
         distri_config=distri_config,
